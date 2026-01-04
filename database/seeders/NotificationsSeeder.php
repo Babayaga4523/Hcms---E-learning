@@ -1,0 +1,156 @@
+<?php
+
+namespace Database\Seeders;
+
+use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
+
+class NotificationsSeeder extends Seeder
+{
+    /**
+     * Run the database seeds.
+     */
+    public function run(): void
+    {
+        $now = Carbon::now();
+
+        $notifications = [
+            [
+                'module_id' => null,
+                'user_id' => null,
+                'type' => 'info',
+                'status' => 'sent',
+                'title' => 'Welcome to the Learning Platform!',
+                'message' => 'Selamat datang di platform e-learning kami! Mulai perjalanan belajar Anda dengan mengakses modul-modul pelatihan yang telah disiapkan.',
+                'recipients' => 'all',
+                'recipient_ids' => null,
+                'is_scheduled' => false,
+                'scheduled_at' => null,
+                'recipients_count' => 250,
+                'stats' => json_encode(['sent' => 250, 'read' => 178, 'clicked' => 42]),
+                'is_read' => false,
+                'read_at' => null,
+                'data' => null,
+                'created_at' => $now->copy()->subDays(5),
+                'updated_at' => $now->copy()->subDays(5),
+            ],
+            [
+                'module_id' => null,
+                'user_id' => null,
+                'type' => 'warning',
+                'status' => 'sent',
+                'title' => 'Training Deadline Approaching',
+                'message' => '⚠️ Reminder: Modul "Compliance Training" harus diselesaikan dalam 3 hari ke depan. Jangan sampai terlewat!',
+                'recipients' => 'all',
+                'recipient_ids' => null,
+                'is_scheduled' => false,
+                'scheduled_at' => null,
+                'recipients_count' => 180,
+                'stats' => json_encode(['sent' => 180, 'read' => 152, 'clicked' => 89]),
+                'is_read' => false,
+                'read_at' => null,
+                'data' => null,
+                'created_at' => $now->copy()->subDays(3),
+                'updated_at' => $now->copy()->subDays(3),
+            ],
+            [
+                'module_id' => null,
+                'user_id' => null,
+                'type' => 'success',
+                'status' => 'sent',
+                'title' => 'Congratulations! Certificate Earned',
+                'message' => '🎉 Selamat! Anda telah menyelesaikan modul "Advanced Excel" dengan nilai sempurna. Sertifikat sudah tersedia untuk diunduh.',
+                'recipients' => 'all',
+                'recipient_ids' => null,
+                'is_scheduled' => false,
+                'scheduled_at' => null,
+                'recipients_count' => 45,
+                'stats' => json_encode(['sent' => 45, 'read' => 43, 'clicked' => 38]),
+                'is_read' => false,
+                'read_at' => null,
+                'data' => null,
+                'created_at' => $now->copy()->subDays(2),
+                'updated_at' => $now->copy()->subDays(2),
+            ],
+            [
+                'module_id' => null,
+                'user_id' => null,
+                'type' => 'info',
+                'status' => 'sent',
+                'title' => 'New Learning Modules Available',
+                'message' => '📚 Modul baru telah ditambahkan: "Digital Marketing Fundamentals" dan "Project Management Basics". Mulai belajar sekarang!',
+                'recipients' => 'all',
+                'recipient_ids' => null,
+                'is_scheduled' => false,
+                'scheduled_at' => null,
+                'recipients_count' => 320,
+                'stats' => json_encode(['sent' => 320, 'read' => 198, 'clicked' => 67]),
+                'is_read' => false,
+                'read_at' => null,
+                'data' => null,
+                'created_at' => $now->copy()->subDays(1),
+                'updated_at' => $now->copy()->subDays(1),
+            ],
+            [
+                'module_id' => null,
+                'user_id' => null,
+                'type' => 'error',
+                'status' => 'sent',
+                'title' => 'Quiz Attempt Failed',
+                'message' => '❌ Sayang sekali, Anda belum berhasil melewati kuis "Risk Management". Nilai minimum: 70%. Silakan ulangi setelah mempelajari materi kembali.',
+                'recipients' => 'all',
+                'recipient_ids' => null,
+                'is_scheduled' => false,
+                'scheduled_at' => null,
+                'recipients_count' => 12,
+                'stats' => json_encode(['sent' => 12, 'read' => 11, 'clicked' => 9]),
+                'is_read' => false,
+                'read_at' => null,
+                'data' => null,
+                'created_at' => $now->copy()->subHours(12),
+                'updated_at' => $now->copy()->subHours(12),
+            ],
+            [
+                'module_id' => null,
+                'user_id' => null,
+                'type' => 'info',
+                'status' => 'scheduled',
+                'title' => 'System Maintenance Notice',
+                'message' => '🔧 Scheduled maintenance: Platform akan offline pada 31 Des 2025, 02:00-05:00 WIB untuk peningkatan sistem. Mohon rencanakan aktivitas belajar Anda.',
+                'recipients' => 'all',
+                'recipient_ids' => null,
+                'is_scheduled' => true,
+                'scheduled_at' => $now->copy()->addDays(1)->setTime(20, 0, 0),
+                'recipients_count' => 0,
+                'stats' => json_encode(['sent' => 0, 'read' => 0, 'clicked' => 0]),
+                'is_read' => false,
+                'read_at' => null,
+                'data' => null,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ],
+            [
+                'module_id' => null,
+                'user_id' => null,
+                'type' => 'success',
+                'status' => 'sent',
+                'title' => 'Monthly Progress Report',
+                'message' => '📊 Laporan bulanan Anda: 8 modul selesai, 450 XP earned, ranking #23 dari 250 peserta. Pertahankan konsistensi belajar Anda!',
+                'recipients' => 'all',
+                'recipient_ids' => null,
+                'is_scheduled' => false,
+                'scheduled_at' => null,
+                'recipients_count' => 250,
+                'stats' => json_encode(['sent' => 250, 'read' => 189, 'clicked' => 72]),
+                'is_read' => false,
+                'read_at' => null,
+                'data' => null,
+                'created_at' => $now->copy()->subDays(7),
+                'updated_at' => $now->copy()->subDays(7),
+            ],
+        ];
+
+        DB::table('program_notifications')->insert($notifications);
+    }
+}

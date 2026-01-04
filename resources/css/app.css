@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+/* Custom Scrollbar Styling */
+.scrollbar-hide::-webkit-scrollbar {
+    display: none;
+}
+
+.scrollbar-hide {
+    -ms-overflow-style: none;
+    /* scrollbar-width: none; */
+}
+
+/* Smooth Scrolling */
+html {
+    scroll-behavior: smooth;
+}
+
+/* Responsive Typography */
+@layer components {
+    /* Hide mobile elements on desktop */
+    .hide-mobile {
+        @apply hidden md:block;
+    }
+
+    /* Hide desktop elements on mobile */
+    .hide-desktop {
+        @apply md:hidden;
+    }
+
+    /* Responsive container */
+    .container-responsive {
+        @apply px-3 sm:px-4 md:px-6 lg:px-8;
+    }
+
+    /* Smooth transitions */
+    .transition-smooth {
+        @apply transition duration-300 ease-in-out;
+    }
+}
+
+/* Admin Dashboard Responsive */
+@media (max-width: 768px) {
+    .admin-main {
+        margin-left: 0;
+    }
+    
+    .sidebar-spacer {
+        margin-left: 0;
+    }
+}
+
+@media (min-width: 1024px) {
+    .admin-main {
+        margin-left: 16rem;
+    }
+    
+    .sidebar-spacer {
+        width: 16rem;
+    }
+}
+
+/* Tab scrolling on mobile */
+.tabs-scroll {
+    /* -webkit-overflow-scrolling: touch; */
+    overflow-x: auto;
+    /* scrollbar-width: thin; */
+    /* scrollbar-color: rgba(59, 130, 246, 0.5) rgba(229, 231, 235, 0.5); */
+}
+
+.tabs-scroll::-webkit-scrollbar {
+    height: 4px;
+}
+
+.tabs-scroll::-webkit-scrollbar-track {
+    background: #e5e7eb;
+    border-radius: 10px;
+}
+
+.tabs-scroll::-webkit-scrollbar-thumb {
+    background: #3b82f6;
+    border-radius: 10px;
+}
+
+.tabs-scroll::-webkit-scrollbar-thumb:hover {
+    background: #2563eb;
+}
+
+/* Grid Responsive Adjustments */
+@screen sm {
+    .grid-responsive {
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    }
+}
+
+@screen lg {
+    .grid-responsive {
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    }
+}

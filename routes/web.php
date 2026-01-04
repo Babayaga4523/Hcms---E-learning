@@ -1,0 +1,656 @@
+<?php
+
+use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\AdminDashboardController;
+use App\Http\Controllers\AdminTrainingProgramController;
+use App\Http\Controllers\AdminUserController;
+use App\Http\Controllers\AdminReportController;
+use App\Http\Controllers\Admin\DashboardMetricsController;
+use App\Http\Controllers\Admin\ReportingAnalyticsController;
+use App\Http\Controllers\Admin\ReportController;
+use App\Http\Controllers\Admin\ComplianceController;
+use App\Http\Controllers\Admin\PreTestPostTestController;
+use App\Http\Controllers\Admin\UserController;
+use App\Http\Controllers\Quiz\QuestionController;
+use Illuminate\Foundation\Application;
+use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Inertia\Inertia;
+
+Route::get('/', function () {
+    // Redirect ke dashboard jika sudah login
+    if (Auth::check()) {
+        if (Auth::user()->role === 'admin') {
+            return redirect('/admin/dashboard');
+        }
+        return redirect('/dashboard');
+    }
+    
+    return Inertia::render('Welcome', [
+        'canLogin' => Route::has('login'),
+        'canRegister' => Route::has('register'),
+        'laravelVersion' => Application::VERSION,
+        'phpVersion' => PHP_VERSION,
+    ]);
+});
+
+Route::middleware(['auth'])->group(function () {
+    // Dashboard
+    Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('/api/dashboard/statistics', [DashboardController::class, 'getStatistics'])->name('dashboard.statistics');
+    Route::get('/api/dashboard/training-cards', [DashboardController::class, 'getTrainingCards'])->name('dashboard.training-cards');
+
+    // Learner Performance & Analytics Routes
+    Route::get('/learner/performance', function() {
+        return Inertia::render('User/Learner/LearnerPerformance');
+    })->name('learner.performance');
+    Route::get('/learner/progress-detail', function() {
+        return Inertia::render('User/Learner/LearnerProgressDetail');
+    })->name('learner.progress-detail');
+    Route::get('/api/learner/performance', [\App\Http\Controllers\Learner\LearnerPerformanceController::class, 'getPerformance'])->name('learner.api.performance');
+    Route::get('/api/learner/progress', [\App\Http\Controllers\Learner\LearnerProgressController::class, 'getProgress'])->name('learner.api.progress');
+    Route::get('/api/learner/progress/{programId}', [\App\Http\Controllers\Learner\LearnerProgressController::class, 'getProgramProgress'])->name('learner.api.progress.program');
+    Route::get('/api/learner/certifications', [\App\Http\Controllers\Learner\LearnerPerformanceController::class, 'getCertifications'])->name('learner.api.certifications');
+    Route::get('/api/learner/time-analytics', [\App\Http\Controllers\Learner\LearnerPerformanceController::class, 'getTimeAnalytics'])->name('learner.api.time-analytics');
+
+    // Profile
+    Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
+    Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
+    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
+    
+    // ========================================
+    // USER TRAINING ROUTES
+    // ========================================
+    
+    // My Trainings - List all user's assigned trainings
+    Route::get('/my-trainings', function() {
+        return Inertia::render('User/Training/MyTrainings');
+    })->name('user.trainings');
+    
+    // Training Detail
+    Route::get('/training/{id}', function($id) {
+        return Inertia::render('User/Training/TrainingDetail', [
+            'trainingId' => $id
+        ]);
+    })->name('user.training.detail');
+    
+    // Training Certificate
+    Route::get('/training/{id}/certificate', function($id) {
+        return Inertia::render('User/Training/Certificate', [
+            'trainingId' => $id
+        ]);
+    })->name('user.training.certificate');
+    
+    // ========================================
+    // USER MATERIAL ROUTES
+    // ========================================
+    
+    // Material Viewer
+    Route::get('/training/{trainingId}/material/{materialId}', function($trainingId, $materialId) {
+        return Inertia::render('User/Material/MaterialViewer', [
+            'trainingId' => $trainingId,
+            'materialId' => $materialId
+        ]);
+    })->name('user.material.view');
+    
+    // ========================================
+    // USER QUIZ ROUTES
+    // ========================================
+    
+    // Take Quiz (Pretest/Posttest)
+    Route::get('/training/{id}/quiz/{type}', function($id, $type) {
+        return Inertia::render('User/Quiz/TakeQuiz', [
+            'trainingId' => $id,
+            'quizType' => $type
+        ]);
+    })->name('user.quiz.take')->where('type', 'pretest|posttest');
+    
+    // Quiz Result
+    Route::get('/training/{id}/quiz/{type}/result/{attemptId?}', function($id, $type, $attemptId = null) {
+        return Inertia::render('User/Quiz/QuizResult', [
+            'trainingId' => $id,
+            'quizType' => $type,
+            'attemptId' => $attemptId
+        ]);
+    })->name('user.quiz.result')->where('type', 'pretest|posttest');
+    
+    // ========================================
+    // USER REPORT ROUTES
+    // ========================================
+    
+    // My Reports - Learning reports and analytics
+    Route::get('/my-reports', function() {
+        return Inertia::render('User/Report/MyReports');
+    })->name('user.reports');
+    
+    // ========================================
+    // USER NOTIFICATION ROUTES
+    // ========================================
+    
+    // Notification Center - Full page notification management
+    Route::get('/notifications', function() {
+        return Inertia::render('User/Notifications/NotificationCenter');
+    })->name('user.notifications');
+    
+    // Bookmarks/Favorites - Save and manage favorite content
+    Route::get('/bookmarks', function() {
+        return Inertia::render('User/Bookmarks/MyBookmarks');
+    })->name('user.bookmarks');
+    
+    // Learning Goals - Set and track learning targets
+    Route::get('/goals', function() {
+        return Inertia::render('User/Goals/LearningGoals');
+    })->name('user.goals');
+    
+    // Learning Path/Roadmap - Visualize learning journey
+    Route::get('/learning-path', function() {
+        return Inertia::render('User/LearningPath/MyLearningPath');
+    })->name('user.learning-path');
+    
+    // ========================================
+    // USER API ROUTES
+    // ========================================
+    
+    // Training API
+    Route::get('/api/user/trainings', [\App\Http\Controllers\User\TrainingController::class, 'index'])->name('user.api.trainings');
+    Route::get('/api/user/trainings/{id}', [\App\Http\Controllers\User\TrainingController::class, 'show'])->name('user.api.training.show');
+    Route::post('/api/training/{id}/start', [\App\Http\Controllers\User\TrainingController::class, 'start'])->name('user.api.training.start');
+    
+    // Material API
+    Route::get('/api/training/{trainingId}/materials', [\App\Http\Controllers\User\MaterialController::class, 'index'])->name('user.api.materials');
+    Route::get('/api/training/{trainingId}/material/{materialId}', [\App\Http\Controllers\User\MaterialController::class, 'show'])->name('user.api.material.show');
+    Route::post('/api/training/{trainingId}/material/{materialId}/complete', [\App\Http\Controllers\User\MaterialController::class, 'complete'])->name('user.api.material.complete');
+    
+    // Quiz API
+    Route::get('/api/training/{trainingId}/quiz/{type}', [\App\Http\Controllers\User\QuizController::class, 'show'])->name('user.api.quiz.show');
+    Route::post('/api/training/{trainingId}/quiz/{type}/start', [\App\Http\Controllers\User\QuizController::class, 'start'])->name('user.api.quiz.start');
+    Route::post('/api/quiz/{attemptId}/submit', [\App\Http\Controllers\User\QuizController::class, 'submit'])->name('user.api.quiz.submit');
+    Route::get('/api/quiz/{attemptId}/result', [\App\Http\Controllers\User\QuizController::class, 'result'])->name('user.api.quiz.result');
+    
+    // Reports API
+    Route::get('/api/user/reports', [\App\Http\Controllers\User\ReportController::class, 'index'])->name('user.api.reports');
+    Route::get('/api/user/reports/export', [\App\Http\Controllers\User\ReportController::class, 'export'])->name('user.api.reports.export');
+    
+    // Certificate API
+    Route::get('/api/certificate/{id}', [\App\Http\Controllers\User\CertificateController::class, 'show'])->name('user.api.certificate.show');
+    Route::get('/api/certificate/{id}/download', [\App\Http\Controllers\User\CertificateController::class, 'download'])->name('user.api.certificate.download');
+    
+    // Public API Routes for User Access
+    Route::get('/api/announcements/active', [\App\Http\Controllers\Admin\AnnouncementController::class, 'getActiveAnnouncements'])->name('api.announcements.active');
+    Route::get('/api/user/notifications', [\App\Http\Controllers\Admin\NotificationController::class, 'getUserNotifications'])->name('api.user.notifications');
+    Route::patch('/api/user/notifications/{id}/read', [\App\Http\Controllers\Admin\NotificationController::class, 'markAsRead'])->name('api.user.notifications.read');
+    Route::delete('/api/user/notifications/{id}', [\App\Http\Controllers\Admin\NotificationController::class, 'deleteNotification'])->name('api.user.notifications.delete');
+    Route::get('/api/user/notifications/unread-count', [\App\Http\Controllers\Admin\NotificationController::class, 'getUnreadCount'])->name('api.user.notifications.unread-count');
+});
+
+// Admin Routes
+Route::middleware(['auth', 'admin'])->group(function () {
+    // Dashboard
+    Route::get('/admin/dashboard', [AdminDashboardController::class, 'index'])->name('admin.dashboard');
+    Route::get('/admin/search', [AdminDashboardController::class, 'search'])->name('admin.search');
+    
+    // User Management Routes
+    Route::get('/admin/users', [AdminUserController::class, 'index'])->name('admin.users.index');
+    Route::get('/admin/users/{id}', [AdminUserController::class, 'detail'])->name('admin.users.detail');
+    Route::post('/api/admin/users', [AdminUserController::class, 'store'])->name('admin.users.store');
+    Route::get('/api/admin/users/{id}', [AdminUserController::class, 'show'])->name('admin.users.show');
+    Route::put('/api/admin/users/{id}', [AdminUserController::class, 'update'])->name('admin.users.update');
+    Route::delete('/api/admin/users/{id}', [AdminUserController::class, 'destroy'])->name('admin.users.destroy');
+    Route::post('/api/admin/users/bulk/status', [AdminUserController::class, 'bulkUpdateStatus'])->name('admin.users.bulk-status');
+    Route::post('/api/admin/users/bulk/delete', [AdminUserController::class, 'bulkDelete'])->name('admin.users.bulk-delete');
+    Route::post('/api/admin/users/{id}/reset-password', [AdminUserController::class, 'resetPassword'])->name('admin.users.reset-password');
+    Route::post('/api/admin/users/import', [AdminUserController::class, 'import'])->name('admin.users.import');
+    Route::get('/api/admin/users/export', [AdminUserController::class, 'export'])->name('admin.users.export')->withoutMiddleware('throttle');
+    
+    // Training Programs Routes
+    Route::get('/admin/training-programs', [AdminTrainingProgramController::class, 'index'])->name('admin.training-programs.index');
+    Route::get('/admin/training-programs/create-with-steps', function() {
+        return Inertia::render('Admin/CreateProgramWithSteps');
+    })->name('admin.training-programs.create-with-steps');
+    Route::get('/admin/training-programs/{id}/edit', function($id) {
+        $program = \App\Models\Module::findOrFail($id);
+        return Inertia::render('Admin/TrainingProgramEdit', ['program' => $program]);
+    })->name('admin.training-programs.edit');
+    Route::get('/admin/training-programs/{id}/materials', function($id) {
+        $program = \App\Models\Module::with([
+            'trainingMaterials',
+            'questions' => function($query) {
+                $query->select('id', 'module_id', 'question_text', 'image_url', 'question_type', 
+                              'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer', 
+                              'difficulty', 'explanation', 'points', 'order', 'created_at', 'updated_at');
+            }
+        ])->findOrFail($id);
+        // Map trainingMaterials to materials for frontend compatibility
+        $program->materials = $program->trainingMaterials;
+        $program->pretest_questions = $program->questions->where('question_type', 'pretest')->values();
+        $program->posttest_questions = $program->questions->where('question_type', 'posttest')->values();
+        return Inertia::render('Admin/TrainingMaterialsManager', ['program' => $program]);
+    })->name('admin.training-programs.materials');
+    Route::get('/admin/training-materials-manager/{id}', function($id) {
+        $program = \App\Models\Module::with([
+            'trainingMaterials',
+            'questions' => function($query) {
+                $query->select('id', 'module_id', 'question_text', 'image_url', 'question_type', 
+                              'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer', 
+                              'difficulty', 'explanation', 'points', 'order', 'created_at', 'updated_at');
+            }
+        ])->findOrFail($id);
+        // Map trainingMaterials to materials for frontend compatibility
+        $program->materials = $program->trainingMaterials;
+        $program->pretest_questions = $program->questions->where('question_type', 'pretest')->values();
+        $program->posttest_questions = $program->questions->where('question_type', 'posttest')->values();
+        return Inertia::render('Admin/TrainingMaterialsManager', ['program' => $program]);
+    })->name('admin.training-materials-manager');
+    Route::get('/admin/training-programs/{id}/assign-users', function($id) {
+        $program = \App\Models\Module::findOrFail($id);
+        $users = \App\Models\User::where('role', 'user')->get(['id', 'name', 'email', 'nip', 'department']);
+        
+        // Get assigned users with proper mapping
+        $assignedUsers = \App\Models\ModuleAssignment::where('module_id', $id)
+            ->with('user:id,name,email,department')
+            ->get()
+            ->map(function($assignment) {
+                return [
+                    'id' => $assignment->id,
+                    'user_id' => $assignment->user_id,
+                    'user_name' => $assignment->user->name ?? 'Unknown User',
+                    'user_email' => $assignment->user->email ?? '',
+                    'department' => $assignment->user->department ?? $assignment->department,
+                    'assigned_date' => $assignment->assigned_date,
+                    'due_date' => $assignment->due_date,
+                    'status' => $assignment->status ?? 'not_started',
+                    'completion_percentage' => 0,
+                    'priority' => 'normal'
+                ];
+            });
+        
+        // Get unique departments from users
+        $departments = \App\Models\User::where('role', 'user')
+            ->whereNotNull('department')
+            ->distinct()
+            ->pluck('department')
+            ->map(function($dept, $index) {
+                return ['id' => $index + 1, 'name' => $dept];
+            })
+            ->values()
+            ->toArray();
+            
+        return Inertia::render('Admin/UserAssignment', [
+            'program' => [
+                'id' => $program->id,
+                'title' => $program->title,
+                'assigned_users' => $assignedUsers
+            ],
+            'users' => $users,
+            'departments' => $departments,
+        ]);
+    })->name('admin.training-programs.assign-users');
+
+    // Pretest, Posttest, Exam Attempts, Analytics Pages
+    Route::get('/admin/training-programs/{id}/pretest', function($id) {
+        $program = \App\Models\Module::findOrFail($id);
+        $questions = \App\Models\Question::where('module_id', $id)
+            ->where('question_type', 'pretest')
+            ->select('id', 'module_id', 'question_text', 'image_url', 'question_type', 
+                    'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer', 
+                    'difficulty', 'explanation', 'points', 'order', 'created_at', 'updated_at')
+            ->get();
+        return Inertia::render('Admin/TestManagement', ['program' => $program, 'questions' => $questions, 'testType' => 'pretest']);
+    })->name('admin.training-programs.pretest');
+
+    Route::get('/admin/training-programs/{id}/posttest', function($id) {
+        $program = \App\Models\Module::findOrFail($id);
+        $questions = \App\Models\Question::where('module_id', $id)
+            ->where('question_type', 'posttest')
+            ->select('id', 'module_id', 'question_text', 'image_url', 'question_type', 
+                    'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer', 
+                    'difficulty', 'explanation', 'points', 'order', 'created_at', 'updated_at')
+            ->get();
+        return Inertia::render('Admin/TestManagement', ['program' => $program, 'questions' => $questions, 'testType' => 'posttest']);
+    })->name('admin.training-programs.posttest');
+
+    Route::get('/admin/training-programs/{id}/exam-attempts', function($id) {
+        $program = \App\Models\Module::findOrFail($id);
+        $attempts = \App\Models\ExamAttempt::where('module_id', $id)
+            ->with('user')
+            ->orderBy('created_at', 'desc')
+            ->paginate(20);
+        return Inertia::render('Admin/ExamAttempts', ['program' => $program, 'attempts' => $attempts]);
+    })->name('admin.training-programs.exam-attempts');
+
+    Route::get('/admin/training-programs/{id}/analytics', function($id) {
+        $program = \App\Models\Module::findOrFail($id);
+        $enrollmentCount = DB::table('user_trainings')->where('module_id', $id)->count();
+        $completionCount = DB::table('user_trainings')->where('module_id', $id)->where('is_completed', true)->count();
+        $avgScore = DB::table('exam_attempts')->where('module_id', $id)->avg('score');
+        $passRate = DB::table('exam_attempts')->where('module_id', $id)->where('score', '>=', $program->passing_grade)->count();
+        
+        return Inertia::render('Admin/TrainingAnalytics', [
+            'program' => $program,
+            'stats' => [
+                'enrollment_count' => $enrollmentCount,
+                'completion_count' => $completionCount,
+                'completion_rate' => $enrollmentCount > 0 ? round(($completionCount / $enrollmentCount) * 100, 2) : 0,
+                'avg_score' => round($avgScore ?? 0, 2),
+                'pass_count' => $passRate,
+                'pass_rate' => $enrollmentCount > 0 ? round(($passRate / $enrollmentCount) * 100, 2) : 0,
+            ]
+        ]);
+    })->name('admin.training-programs.analytics');
+    Route::get('/admin/training-programs/{id}', [AdminTrainingProgramController::class, 'show'])->name('admin.training-programs.show');
+    Route::post('/api/admin/training-programs', [AdminTrainingProgramController::class, 'store'])->name('admin.training-programs.store');
+    Route::post('/api/admin/training-programs/with-questions', [AdminTrainingProgramController::class, 'storeWithQuestions'])->name('admin.training-programs.store-with-questions');
+    Route::put('/api/admin/training-programs/{id}', [AdminTrainingProgramController::class, 'update'])->name('admin.training-programs.update');
+    Route::delete('/api/admin/training-programs/{id}', [AdminTrainingProgramController::class, 'destroy'])->name('admin.training-programs.destroy');
+    Route::post('/api/admin/training-programs/{id}/duplicate', [AdminTrainingProgramController::class, 'duplicate'])->name('admin.training-programs.duplicate');
+    Route::post('/api/admin/training-programs/{id}/send-reminder', [AdminTrainingProgramController::class, 'sendReminder'])->name('admin.training-programs.send-reminder');
+    Route::post('/api/admin/training-programs/bulk/status', [AdminTrainingProgramController::class, 'bulkUpdateStatus'])->name('admin.training-programs.bulk-status');
+    Route::post('/api/admin/training-programs/bulk/delete', [AdminTrainingProgramController::class, 'bulkDelete'])->name('admin.training-programs.bulk-delete');
+
+    // Training Schedule Pages
+    Route::get('/admin/training-schedule', function() {
+        return Inertia::render('Admin/TrainingCalendar');
+    })->name('admin.training-schedule');
+
+    Route::get('/admin/schedule-manager', function() {
+        return Inertia::render('Admin/ScheduleManager');
+    })->name('admin.schedule-manager');
+
+    // Audit & Compliance Pages
+    Route::get('/admin/compliance', function() {
+        return Inertia::render('Admin/ComplianceTracker');
+    })->name('admin.compliance.tracker');
+
+    Route::get('/admin/audit-logs', function() {
+        return Inertia::render('Admin/AuditLogViewer');
+    })->name('admin.audit-logs');
+
+    Route::get('/admin/approval-workflow', function() {
+        return Inertia::render('Admin/ApprovalWorkflow');
+    })->name('admin.approval-workflow');
+    
+    // Training Materials Routes
+    Route::post('/api/admin/training-programs/{id}/upload-material', [AdminTrainingProgramController::class, 'uploadMaterial'])->name('admin.training-programs.upload-material');
+    Route::delete('/api/admin/training-programs/materials/{id}', [AdminTrainingProgramController::class, 'deleteMaterial'])->name('admin.training-programs.delete-material');
+    
+    // Training Questions Routes (Quiz Management)
+    Route::get('/admin/questions', function() {
+        return Inertia::render('Admin/QuestionBank');
+    })->name('admin.questions.index');
+    Route::get('/admin/questions/create', function() {
+        return Inertia::render('Admin/QuestionManagement');
+    })->name('admin.questions.create');
+    Route::get('/admin/questions/{question}/edit', function(\App\Models\Question $question) {
+        return Inertia::render('Admin/QuestionManagement', ['question' => $question]);
+    })->name('admin.questions.edit');
+    
+    // Alias routes for question-management (for pretest/posttest)
+    Route::get('/admin/question-management', function(\Illuminate\Http\Request $request) {
+        return Inertia::render('Admin/QuestionManagement', [
+            'module_id' => $request->query('module'),
+            'question_type' => $request->query('type'),
+            'returnUrl' => $request->query('returnUrl'),
+        ]);
+    })->name('admin.question-management.create');
+    Route::get('/admin/question-management/{id}', function($id, \Illuminate\Http\Request $request) {
+        try {
+            $question = \App\Models\Question::findOrFail($id);
+            $questionArray = $question->toArray();
+            // Ensure image_url uses accessor
+            $questionArray['image_url'] = $question->image_url;
+            return Inertia::render('Admin/QuestionManagement', [
+                'question' => $questionArray,
+                'returnUrl' => $request->query('returnUrl'),
+            ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return Inertia::render('Admin/QuestionManagement', [
+                'question' => null,
+                'returnUrl' => $request->query('returnUrl'),
+            ]);
+        }
+    })->name('admin.question-management.edit');
+    
+    // Question API Routes
+    Route::get('/api/questions', [QuestionController::class, 'index'])->name('questions.index');
+    Route::post('/api/questions', [QuestionController::class, 'store'])->name('questions.store');
+    Route::get('/api/questions/statistics', [QuestionController::class, 'statistics'])->name('questions.statistics');
+    Route::get('/api/questions/export', [QuestionController::class, 'export'])->name('questions.export')->withoutMiddleware('throttle');
+    Route::post('/api/questions/reorder', [QuestionController::class, 'reorder'])->name('questions.reorder');
+    Route::post('/api/questions/bulk-import', [QuestionController::class, 'bulkImport'])->name('questions.bulk-import');
+    Route::get('/api/questions/{question}', [QuestionController::class, 'show'])->name('questions.show');
+    Route::put('/api/questions/{question}', [QuestionController::class, 'update'])->name('questions.update');
+    Route::delete('/api/questions/{question}', [QuestionController::class, 'destroy'])->name('questions.destroy');
+    
+    // Training Schedule Routes
+    Route::get('/api/admin/training-schedules', [\App\Http\Controllers\Admin\TrainingScheduleController::class, 'index'])->name('admin.training-schedules.index');
+    Route::post('/api/admin/training-schedules', [\App\Http\Controllers\Admin\TrainingScheduleController::class, 'store'])->name('admin.training-schedules.store');
+    Route::get('/api/admin/training-schedules/instructors', [\App\Http\Controllers\Admin\TrainingScheduleController::class, 'getInstructors'])->name('admin.training-schedules.instructors');
+    Route::get('/api/admin/training-schedules/{trainingSchedule}', [\App\Http\Controllers\Admin\TrainingScheduleController::class, 'show'])->name('admin.training-schedules.show');
+    Route::put('/api/admin/training-schedules/{trainingSchedule}', [\App\Http\Controllers\Admin\TrainingScheduleController::class, 'update'])->name('admin.training-schedules.update');
+    Route::delete('/api/admin/training-schedules/{trainingSchedule}', [\App\Http\Controllers\Admin\TrainingScheduleController::class, 'destroy'])->name('admin.training-schedules.destroy');
+    Route::get('/api/admin/training-schedules/upcoming', [\App\Http\Controllers\Admin\TrainingScheduleController::class, 'upcoming'])->name('admin.training-schedules.upcoming');
+    Route::get('/api/admin/training-schedules-statistics', [\App\Http\Controllers\Admin\TrainingScheduleController::class, 'statistics'])->name('admin.training-schedules.statistics');
+    
+    // System Settings & Configuration Routes
+    Route::get('/admin/system-settings', function() {
+        return Inertia::render('Admin/SystemSettings');
+    })->name('admin.settings.system');
+    
+    Route::get('/admin/email-configuration', function() {
+        return Inertia::render('Admin/EmailConfiguration');
+    })->name('admin.settings.email');
+    
+    Route::get('/admin/notification-preferences', function() {
+        return Inertia::render('Admin/NotificationPreferences');
+    })->name('admin.settings.notifications');
+    
+    // System Settings API Routes
+    Route::get('/api/admin/settings', [\App\Http\Controllers\Admin\SettingsController::class, 'getSettings'])->name('admin.api.settings.get');
+    Route::post('/api/admin/settings', [\App\Http\Controllers\Admin\SettingsController::class, 'saveSettings'])->name('admin.api.settings.save');
+    Route::post('/api/admin/backup', [\App\Http\Controllers\Admin\SettingsController::class, 'createBackup'])->name('admin.api.backup.create');
+    Route::get('/api/admin/backups', [\App\Http\Controllers\Admin\SettingsController::class, 'getBackups'])->name('admin.api.backups.list');
+    Route::get('/api/admin/backup-download/{backupId}', [\App\Http\Controllers\Admin\SettingsController::class, 'downloadBackup'])->name('admin.api.backup.download');
+    
+    // Email Configuration API Routes
+    Route::get('/api/admin/email-config', [\App\Http\Controllers\Admin\EmailConfigurationController::class, 'getConfiguration'])->name('admin.api.email.get');
+    Route::post('/api/admin/email-config', [\App\Http\Controllers\Admin\EmailConfigurationController::class, 'saveConfiguration'])->name('admin.api.email.save');
+    Route::post('/api/admin/email-test', [\App\Http\Controllers\Admin\EmailConfigurationController::class, 'testEmail'])->name('admin.api.email.test');
+    
+    // Notification Preferences API Routes
+    Route::get('/api/admin/notification-preferences', [\App\Http\Controllers\Admin\NotificationPreferencesController::class, 'getPreferences'])->name('admin.api.notification-preferences.get');
+    Route::post('/api/admin/notification-preferences', [\App\Http\Controllers\Admin\NotificationPreferencesController::class, 'savePreferences'])->name('admin.api.notification-preferences.save');
+    Route::get('/api/admin/sms-config', [\App\Http\Controllers\Admin\NotificationPreferencesController::class, 'getSmsConfiguration'])->name('admin.api.sms.get');
+    Route::post('/api/admin/sms-config', [\App\Http\Controllers\Admin\NotificationPreferencesController::class, 'saveSmsConfiguration'])->name('admin.api.sms.save');
+    Route::post('/api/admin/sms-test', [\App\Http\Controllers\Admin\NotificationPreferencesController::class, 'testSms'])->name('admin.api.sms.test');
+    
+    // Legacy Training Questions Routes (keep for backward compatibility)
+    Route::post('/api/admin/training-programs/{id}/questions', [AdminTrainingProgramController::class, 'addQuestion'])->name('admin.training-programs.add-question');
+    Route::put('/api/admin/training-programs/questions/{id}', [AdminTrainingProgramController::class, 'updateQuestion'])->name('admin.training-programs.update-question');
+    Route::delete('/api/admin/training-programs/questions/{id}', [AdminTrainingProgramController::class, 'deleteQuestion'])->name('admin.training-programs.delete-question');
+    
+    // Training Assignment Routes
+    Route::post('/api/admin/training-programs/{id}/assign-users', [AdminTrainingProgramController::class, 'assignUsers'])->name('admin.training-programs.assign');
+    Route::get('/api/admin/training-programs/{id}/assigned-users', [AdminTrainingProgramController::class, 'getAssignedUsers'])->name('admin.training-programs.get-assigned');
+    Route::delete('/api/admin/training-programs/{id}/remove-users', [AdminTrainingProgramController::class, 'removeAssignedUsers'])->name('admin.training-programs.remove-assigned');
+    
+    // Reporting Routes
+    Route::get('/api/admin/training-programs/stats/reporting', [AdminTrainingProgramController::class, 'getReportingStats'])->name('admin.training-programs.reporting-stats');
+    Route::get('/api/admin/training-programs/analytics/overview', [AdminTrainingProgramController::class, 'getAnalytics'])->name('admin.training-programs.analytics');
+    Route::get('/api/admin/training-programs/reports/overview', [AdminTrainingProgramController::class, 'getReports'])->name('admin.training-programs.reports');
+    Route::get('/api/admin/training-programs/compliance/overview', [AdminTrainingProgramController::class, 'getCompliance'])->name('admin.training-programs.compliance');
+    
+    // Reports & Compliance Routes
+    Route::get('/admin/reports', [AdminReportController::class, 'index'])->name('admin.reports.index');
+    Route::post('/admin/reports/export', [AdminReportController::class, 'exportReport'])->name('admin.reports.export.post')->withoutMiddleware('throttle');
+    Route::get('/admin/reports/{id}/download', [AdminReportController::class, 'downloadReport'])->name('admin.reports.download')->withoutMiddleware('throttle');
+    Route::get('/api/admin/reports/export', [AdminReportController::class, 'export'])->name('admin.reports.export')->withoutMiddleware('throttle');
+    Route::get('/api/admin/reports/user/{id}', [AdminReportController::class, 'getUserCompliance'])->name('admin.reports.user');
+    
+    // Dashboard Metrics Routes (HIGH PRIORITY)
+    Route::get('/api/admin/metrics/dashboard-stats', [DashboardMetricsController::class, 'getDashboardStats'])->name('admin.metrics.dashboard-stats');
+    Route::get('/api/admin/metrics/enrollment-trend', [DashboardMetricsController::class, 'getEnrollmentTrend'])->name('admin.metrics.enrollment-trend');
+    Route::get('/api/admin/metrics/program/{id}', [DashboardMetricsController::class, 'getProgramMetrics'])->name('admin.metrics.program');
+    Route::get('/api/admin/metrics/learner-performance/{id}', [DashboardMetricsController::class, 'getLearnerPerformance'])->name('admin.metrics.learner-performance');
+    Route::get('/api/admin/metrics/export', [DashboardMetricsController::class, 'exportMetrics'])->name('admin.metrics.export')->withoutMiddleware('throttle');
+    
+    // Reporting & Analytics Routes (HIGH PRIORITY)
+    Route::get('/api/admin/reporting/learning-effectiveness', [ReportingAnalyticsController::class, 'getLearningEffectiveness'])->name('admin.reporting.learning-effectiveness');
+    Route::get('/api/admin/reporting/learning-effectiveness/{id}', [ReportingAnalyticsController::class, 'getLearningEffectiveness'])->name('admin.reporting.program-effectiveness');
+    Route::get('/api/admin/reporting/question-analysis/{id}', [ReportingAnalyticsController::class, 'getQuestionAnalysis'])->name('admin.reporting.question-analysis');
+    Route::get('/api/admin/reporting/time-spent/{id}', [ReportingAnalyticsController::class, 'getTimeSpentAnalysis'])->name('admin.reporting.time-spent');
+    Route::get('/api/admin/reporting/program-report/{id}', [ReportingAnalyticsController::class, 'generateProgramReport'])->name('admin.reporting.program-report');
+    Route::get('/api/admin/reporting/export-pdf/{id}', [ReportingAnalyticsController::class, 'exportReportPDF'])->name('admin.reporting.export-pdf')->withoutMiddleware('throttle');
+    Route::get('/api/admin/reporting/export-excel/{id}', [ReportingAnalyticsController::class, 'exportReportExcel'])->name('admin.reporting.export-excel')->withoutMiddleware('throttle');
+    
+    // Compliance Routes (HIGH PRIORITY)
+    Route::post('/api/admin/compliance/programs/{id}/request-approval', [ComplianceController::class, 'requestApproval'])->name('admin.compliance.request-approval');
+    Route::post('/api/admin/compliance/approvals/{id}/approve', [ComplianceController::class, 'approveProgram'])->name('admin.compliance.approve');
+    Route::post('/api/admin/compliance/approvals/{id}/reject', [ComplianceController::class, 'rejectProgram'])->name('admin.compliance.reject');
+    Route::get('/api/admin/compliance/programs/{id}/approval-history', [ComplianceController::class, 'getApprovalHistory'])->name('admin.compliance.approval-history');
+    Route::post('/api/admin/compliance/programs/{id}/upload-evidence', [ComplianceController::class, 'uploadEvidence'])->name('admin.compliance.upload-evidence');
+    Route::post('/api/admin/compliance/evidences/{id}/verify', [ComplianceController::class, 'verifyEvidence'])->name('admin.compliance.verify-evidence');
+    Route::get('/api/admin/compliance/programs/{id}/evidences', [ComplianceController::class, 'getEvidences'])->name('admin.compliance.get-evidences');
+    Route::get('/api/admin/compliance/programs/{id}/audit-log', [ComplianceController::class, 'getAuditLog'])->name('admin.compliance.audit-log');
+    Route::get('/api/admin/compliance/programs/{id}/compliance-report', [ComplianceController::class, 'generateComplianceReport'])->name('admin.compliance.compliance-report');
+    
+    // Pre-Test & Post-Test Routes
+    Route::get('/api/admin/pretest-posttest/questions/{moduleId}/{examType}', [PreTestPostTestController::class, 'getQuestions'])->name('admin.pretest-posttest.questions');
+    Route::post('/api/admin/pretest-posttest/start/{moduleId}', [PreTestPostTestController::class, 'startExam'])->name('admin.pretest-posttest.start');
+    Route::post('/api/admin/pretest-posttest/submit/{examAttemptId}', [PreTestPostTestController::class, 'submitExam'])->name('admin.pretest-posttest.submit');
+    Route::get('/api/admin/pretest-posttest/result/{examAttemptId}', [PreTestPostTestController::class, 'getExamResult'])->name('admin.pretest-posttest.result');
+    Route::get('/api/admin/pretest-posttest/module-progress/{moduleId}', [PreTestPostTestController::class, 'getModuleProgress'])->name('admin.pretest-posttest.module-progress');
+    Route::get('/api/admin/pretest-posttest/module-attempts/{moduleId}', [PreTestPostTestController::class, 'getModuleAttempts'])->name('admin.pretest-posttest.module-attempts');
+    
+    // User Management - Roles & Permissions
+    Route::get('/admin/roles-permissions', [UserController::class, 'getRoles'])->name('admin.roles.index');
+    Route::post('/api/admin/roles', [UserController::class, 'storeRole'])->name('admin.roles.store');
+    Route::put('/api/admin/roles/{id}', [UserController::class, 'updateRole'])->name('admin.roles.update');
+    Route::delete('/api/admin/roles/{id}', [UserController::class, 'deleteRole'])->name('admin.roles.delete');
+    Route::post('/api/admin/permissions', [UserController::class, 'storePermission'])->name('admin.permissions.store');
+    Route::put('/api/admin/permissions/{id}', [UserController::class, 'updatePermission'])->name('admin.permissions.update');
+    Route::delete('/api/admin/permissions/{id}', [UserController::class, 'deletePermission'])->name('admin.permissions.delete');
+    
+    // User Activity Logs
+    Route::get('/admin/activity-logs', [UserController::class, 'getActivityLogs'])->name('admin.activity-logs');
+    Route::get('/api/admin/activity-logs', [UserController::class, 'getActivityLogs'])->name('admin.activity-logs.api');
+    Route::get('/api/admin/activity-logs/export', [UserController::class, 'exportActivityLogs'])->name('admin.activity-logs.export')->withoutMiddleware('throttle');
+    
+    // Department Management
+    Route::get('/admin/departments', [UserController::class, 'getDepartments'])->name('admin.departments.index');
+    Route::post('/api/admin/departments', [UserController::class, 'storeDepartment'])->name('admin.departments.store');
+    Route::put('/api/admin/departments/{id}', [UserController::class, 'updateDepartment'])->name('admin.departments.update');
+    Route::delete('/api/admin/departments/{id}', [UserController::class, 'deleteDepartment'])->name('admin.departments.delete');
+    
+    // User Enrollment History
+    Route::get('/admin/enrollment-history', [UserController::class, 'getEnrollmentHistory'])->name('admin.enrollment-history');
+    Route::get('/api/admin/enrollment-history', [UserController::class, 'getEnrollmentHistory'])->name('admin.enrollment-history.api');
+    Route::get('/api/admin/enrollment-history/export', [UserController::class, 'exportEnrollmentHistory'])->name('admin.enrollment-history.export')->withoutMiddleware('throttle');
+    
+    // Reports & Compliance Routes (using AdminReportController - duplicate routes removed)
+    // The main route is already defined at line ~337: Route::get('/admin/reports', [AdminReportController::class, 'index'])->name('admin.reports.index');
+    Route::get('/api/admin/reports/dashboard', [AdminReportController::class, 'index'])->name('admin.reports.dashboard');
+    Route::get('/admin/learner-progress', [AdminReportController::class, 'index'])->name('admin.reports.learner-progress');
+    Route::get('/api/admin/reports/learner-progress', [AdminReportController::class, 'index'])->name('admin.reports.learner-progress.api');
+    Route::get('/api/admin/reports/learner-progress/export', [AdminReportController::class, 'exportReport'])->name('admin.reports.learner-progress.export')->withoutMiddleware('throttle');
+    Route::get('/admin/question-performance', [AdminReportController::class, 'index'])->name('admin.reports.question-performance');
+    Route::get('/api/admin/reports/question-performance', [AdminReportController::class, 'index'])->name('admin.reports.question-performance.api');
+    Route::get('/api/admin/reports/question-performance/export', [AdminReportController::class, 'exportReport'])->name('admin.reports.question-performance.export')->withoutMiddleware('throttle');
+    Route::get('/admin/compliance-audit-trail', [AdminReportController::class, 'index'])->name('admin.reports.compliance-audit');
+    Route::get('/api/admin/reports/compliance-audit', [AdminReportController::class, 'index'])->name('admin.reports.compliance-audit.api');
+    Route::get('/api/admin/reports/compliance-audit/export', [AdminReportController::class, 'exportReport'])->name('admin.reports.compliance-audit.export')->withoutMiddleware('throttle');
+    Route::get('/admin/comparison-report', [AdminReportController::class, 'index'])->name('admin.reports.comparison');
+    Route::get('/api/admin/reports/comparison', [AdminReportController::class, 'index'])->name('admin.reports.comparison.api');
+    Route::get('/api/admin/reports/comparison/export', [AdminReportController::class, 'exportReport'])->name('admin.reports.comparison.export')->withoutMiddleware('throttle');
+    Route::get('/admin/custom-report-builder', [AdminReportController::class, 'index'])->name('admin.reports.custom-builder');
+    Route::post('/api/admin/reports/custom', [AdminReportController::class, 'exportReport'])->name('admin.reports.custom.generate');
+    // Route::get('/api/admin/reports/export/{type}', [AdminReportController::class, 'export'])->name('admin.reports.export')->withoutMiddleware('throttle'); // Already defined above
+    
+    // Smart Reminders Routes
+    Route::get('/api/admin/reminders', [\App\Http\Controllers\Admin\ReminderController::class, 'index'])->name('admin.reminders.index');
+    Route::post('/api/admin/reminders', [\App\Http\Controllers\Admin\ReminderController::class, 'store'])->name('admin.reminders.store');
+    Route::put('/api/admin/reminders/{id}', [\App\Http\Controllers\Admin\ReminderController::class, 'update'])->name('admin.reminders.update');
+    Route::post('/api/admin/reminders/{id}/send', [\App\Http\Controllers\Admin\ReminderController::class, 'send'])->name('admin.reminders.send');
+    Route::delete('/api/admin/reminders/{id}', [\App\Http\Controllers\Admin\ReminderController::class, 'destroy'])->name('admin.reminders.destroy');
+    
+    // Auto Quiz Generator Routes
+    Route::post('/api/admin/quizzes/generate', [\App\Http\Controllers\Admin\QuizGeneratorController::class, 'generate'])->name('admin.quizzes.generate');
+    Route::get('/api/admin/quizzes/modules', [\App\Http\Controllers\Admin\QuizGeneratorController::class, 'getModules'])->name('admin.quizzes.modules');
+    Route::post('/api/admin/quizzes/{id}/publish', [\App\Http\Controllers\Admin\QuizGeneratorController::class, 'publish'])->name('admin.quizzes.publish');
+    
+    // Smart Content Ingestion Routes
+    Route::post('/api/admin/content/upload', [\App\Http\Controllers\Admin\ContentIngestionController::class, 'upload'])->name('admin.content.upload');
+    Route::get('/api/admin/content/uploads', [\App\Http\Controllers\Admin\ContentIngestionController::class, 'index'])->name('admin.content.index');
+    Route::get('/api/admin/content/uploads/{id}', [\App\Http\Controllers\Admin\ContentIngestionController::class, 'show'])->name('admin.content.show');
+    Route::delete('/api/admin/content/uploads/{id}', [\App\Http\Controllers\Admin\ContentIngestionController::class, 'destroy'])->name('admin.content.destroy');
+    
+    // Notifications & Announcements Routes
+    Route::get('/admin/notifications', function() {
+        return Inertia::render('Admin/Notifications');
+    })->name('admin.notifications.index');
+    
+    Route::get('/admin/announcements', function() {
+        return Inertia::render('Admin/AnnouncementManager');
+    })->name('admin.announcements.index');
+
+    // Advanced Analytics Pages
+    Route::get('/admin/analytics', function() {
+        return Inertia::render('Admin/AdvancedAnalytics');
+    })->name('admin.analytics.index');
+
+    Route::get('/admin/analytics/trends', function() {
+        return Inertia::render('Admin/TrendAnalysis');
+    })->name('admin.analytics.trends');
+    
+    // Notifications API Routes
+    Route::get('/api/admin/notifications', [\App\Http\Controllers\Admin\NotificationController::class, 'index'])->name('admin.api.notifications.index');
+    Route::post('/api/admin/notifications/send', [\App\Http\Controllers\Admin\NotificationController::class, 'send'])->name('admin.api.notifications.send');
+    Route::get('/api/admin/notifications/{id}', [\App\Http\Controllers\Admin\NotificationController::class, 'show'])->name('admin.api.notifications.show');
+    Route::delete('/api/admin/notifications/{id}', [\App\Http\Controllers\Admin\NotificationController::class, 'destroy'])->name('admin.api.notifications.destroy');
+
+    // Analytics API Routes
+    Route::get('/api/admin/analytics/overview', [\App\Http\Controllers\Admin\AnalyticsController::class, 'overview'])->name('admin.api.analytics.overview');
+    Route::get('/api/admin/analytics/trends', [\App\Http\Controllers\Admin\AnalyticsController::class, 'trends'])->name('admin.api.analytics.trends');
+    Route::get('/api/admin/analytics/engagement', [\App\Http\Controllers\Admin\AnalyticsController::class, 'engagement'])->name('admin.api.analytics.engagement');
+    Route::get('/api/admin/analytics/skills-radar', [\App\Http\Controllers\Admin\AnalyticsController::class, 'skillsRadar'])->name('admin.api.analytics.skills');
+    Route::get('/api/admin/analytics/cohort', [\App\Http\Controllers\Admin\AnalyticsController::class, 'cohortAnalysis'])->name('admin.api.analytics.cohorts');
+    Route::get('/api/admin/analytics/at-risk', [\App\Http\Controllers\Admin\AnalyticsController::class, 'predictiveAtRisk'])->name('admin.api.analytics.at-risk');
+    Route::get('/api/admin/analytics/effectiveness', [\App\Http\Controllers\Admin\AnalyticsController::class, 'learningEffectiveness'])->name('admin.api.analytics.effectiveness');
+    Route::get('/api/admin/analytics/top-performers', [UserController::class, 'getTopPerformers'])->name('admin.api.analytics.top-performers');
+    
+    // Announcements API Routes
+    Route::get('/api/admin/announcements', [\App\Http\Controllers\Admin\AnnouncementController::class, 'index'])->name('admin.api.announcements.index');
+    Route::post('/api/admin/announcements', [\App\Http\Controllers\Admin\AnnouncementController::class, 'store'])->name('admin.api.announcements.store');
+    Route::get('/api/admin/announcements/{id}', [\App\Http\Controllers\Admin\AnnouncementController::class, 'show'])->name('admin.api.announcements.show');
+    Route::put('/api/admin/announcements/{id}', [\App\Http\Controllers\Admin\AnnouncementController::class, 'update'])->name('admin.api.announcements.update');
+    Route::delete('/api/admin/announcements/{id}', [\App\Http\Controllers\Admin\AnnouncementController::class, 'destroy'])->name('admin.api.announcements.destroy');
+    Route::patch('/api/admin/announcements/{id}/toggle-status', [\App\Http\Controllers\Admin\AnnouncementController::class, 'toggleStatus'])->name('admin.api.announcements.toggle-status');
+    // System test endpoint
+    Route::get('/test-system/notifications-announcements', [\App\Http\Controllers\TestSystemController::class, 'testAnnouncementsNotifications']);
+    
+    // Command Palette Routes
+    Route::post('/api/admin/commands/bulk-reminder', [\App\Http\Controllers\Admin\CommandController::class, 'sendBulkReminder'])->name('admin.commands.bulk-reminder');
+    Route::post('/api/admin/commands/generate-report', [\App\Http\Controllers\Admin\CommandController::class, 'generateReport'])->name('admin.commands.generate-report');
+    Route::post('/api/admin/commands/health-check', [\App\Http\Controllers\Admin\CommandController::class, 'runHealthCheck'])->name('admin.commands.health-check');
+    Route::post('/api/admin/commands/backup-database', [\App\Http\Controllers\Admin\CommandController::class, 'backupDatabase'])->name('admin.commands.backup-database');
+    Route::get('/api/admin/commands/search', [\App\Http\Controllers\Admin\CommandController::class, 'search'])->name('admin.commands.search');
+    
+    // Smart Content Ingestion Routes
+    Route::post('/api/admin/smart-content/upload', [\App\Http\Controllers\Admin\SmartContentController::class, 'uploadContent'])->name('admin.smart-content.upload');
+    Route::get('/api/admin/smart-content/progress/{uploadId}', [\App\Http\Controllers\Admin\SmartContentController::class, 'getUploadProgress'])->name('admin.smart-content.progress');
+    Route::get('/api/admin/smart-content/uploads', [\App\Http\Controllers\Admin\SmartContentController::class, 'listUploads'])->name('admin.smart-content.uploads');
+    Route::delete('/api/admin/smart-content/upload/{id}', [\App\Http\Controllers\Admin\SmartContentController::class, 'deleteUpload'])->name('admin.smart-content.delete');
+    Route::post('/api/admin/smart-content/retry/{id}', [\App\Http\Controllers\Admin\SmartContentController::class, 'retryProcessing'])->name('admin.smart-content.retry');
+    Route::get('/api/admin/smart-content/preview/{id}', [\App\Http\Controllers\Admin\SmartContentController::class, 'previewContent'])->name('admin.smart-content.preview');
+    
+    // Material Bookmark & Share Routes (User)
+    Route::post('/api/training/{trainingId}/material/{materialId}/complete', [\App\Http\Controllers\MaterialController::class, 'markComplete'])->name('material.mark-complete');
+    Route::post('/api/training/{trainingId}/material/{materialId}/bookmark', [\App\Http\Controllers\MaterialController::class, 'addBookmark'])->name('material.add-bookmark');
+    Route::delete('/api/training/{trainingId}/material/{materialId}/bookmark', [\App\Http\Controllers\MaterialController::class, 'removeBookmark'])->name('material.remove-bookmark');
+    Route::post('/api/training/{trainingId}/material/{materialId}/share', [\App\Http\Controllers\MaterialController::class, 'shareMaterial'])->name('material.share');
+    Route::get('/api/training/{trainingId}/material/{materialId}/stats', [\App\Http\Controllers\MaterialController::class, 'getSharingStats'])->name('material.stats');
+    Route::get('/api/user/bookmarks', [\App\Http\Controllers\MaterialController::class, 'getBookmarks'])->name('user.bookmarks');
+});
+
+require __DIR__.'/auth.php';
