@@ -243,7 +243,7 @@ export default function TrendAnalysis() {
                                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#005E54]"></div>
                                 </div>
                             ) : (
-                                <ResponsiveContainer width="100%" height="100%">
+                                <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={300}>
                                     {chartType === 'area' ? (
                                         <AreaChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                                             <defs>

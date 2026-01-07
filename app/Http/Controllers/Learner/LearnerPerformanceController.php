@@ -60,6 +60,9 @@ class LearnerPerformanceController extends Controller
         $scoreChange = $this->calculateScoreChange($userId);
         $completionChange = $this->calculateCompletionChange($userId);
 
+        // Get recent activities
+        $recentActivities = $this->getRecentActivities($userId);
+
         return response()->json([
             'averageScore' => $averageScore,
             'completionRate' => $completionRate,
@@ -72,6 +75,7 @@ class LearnerPerformanceController extends Controller
             'scoresTrend' => $scoresTrend,
             'performanceByProgram' => $performanceByProgram,
             'engagement' => $engagement,
+            'recentActivities' => $recentActivities,
         ]);
     }
 
@@ -84,13 +88,13 @@ class LearnerPerformanceController extends Controller
 
         $certifications = UserTraining::where('user_id', $userId)
             ->where('is_certified', true)
-            ->with('module:id,name,description')
+            ->with('module:id,title,description')
             ->orderBy('completed_at', 'desc')
             ->get()
             ->map(function ($training) {
                 return [
                     'id' => $training->id,
-                    'programName' => $training->module->name,
+                    'programName' => $training->module->title ?? 'Unknown',
                     'completedDate' => $training->completed_at->format('Y-m-d'),
                     'score' => $training->final_score,
                     'certificateUrl' => route('certificates.download', $training->id),
@@ -112,12 +116,12 @@ class LearnerPerformanceController extends Controller
 
         // Get time spent per program
         $timeByProgram = UserTraining::where('user_id', $userId)
-            ->with('module:id,name')
+            ->with('module:id,title')
             ->get()
             ->map(function ($training) {
                 $hours = $this->calculateProgramHours($training->module_id, $training->user_id);
                 return [
-                    'programName' => $training->module->name,
+                    'programName' => $training->module->title ?? 'Unknown',
                     'hours' => $hours,
                 ];
             });
@@ -141,12 +145,14 @@ class LearnerPerformanceController extends Controller
      */
     private function calculateHoursSpent($userId)
     {
-        return ModuleProgress::where('user_id', $userId)
+        $totalMinutes = ModuleProgress::where('user_id', $userId)
             ->whereHas('module')
             ->join('modules', 'module_progress.module_id', '=', 'modules.id')
-            ->selectRaw('COALESCE(SUM(modules.duration), 0) as total_hours')
+            ->selectRaw('COALESCE(SUM(modules.duration_minutes), 0) as total_minutes')
             ->first()
-            ->total_hours ?? 0;
+            ->total_minutes ?? 0;
+        
+        return round($totalMinutes / 60, 1);
     }
 
     /**
@@ -177,19 +183,23 @@ class LearnerPerformanceController extends Controller
     private function getPerformanceByProgram($userId)
     {
         return UserTraining::where('user_id', $userId)
-            ->with('module:id,name')
+            ->with('module:id,title')
             ->get()
             ->map(function ($training) {
+                if (!$training->module) {
+                    return null;
+                }
                 $moduleProgress = ModuleProgress::where('user_id', $training->user_id)
                     ->where('module_id', $training->module_id)
                     ->first();
 
                 return [
-                    'name' => $training->module->name,
+                    'name' => $training->module->title ?? 'Unknown Program',
                     'score' => $training->final_score ?? 0,
                     'completion' => $moduleProgress->progress_percentage ?? 0,
                 ];
             })
+            ->filter()
             ->sortByDesc('score')
             ->take(5)
             ->values();
@@ -228,9 +238,10 @@ class LearnerPerformanceController extends Controller
      */
     private function calculateProgramHours($moduleId, $userId)
     {
-        return DB::table('modules')
+        $minutes = DB::table('modules')
             ->where('id', $moduleId)
-            ->value('duration') ?? 0;
+            ->value('duration_minutes') ?? 0;
+        return round($minutes / 60, 1);
     }
 
     /**
@@ -295,5 +306,107 @@ class LearnerPerformanceController extends Controller
             ->count();
 
         return round($currentMonth - $previousMonth, 2);
+    }
+
+    /**
+     * Helper method: Get recent activities
+     */
+    private function getRecentActivities($userId)
+    {
+        $activities = [];
+
+        // Get recently completed trainings
+        $completedTrainings = UserTraining::where('user_id', $userId)
+            ->where('status', 'completed')
+            ->with('module:id,title')
+            ->orderBy('completed_at', 'desc')
+            ->take(2)
+            ->get();
+
+        foreach ($completedTrainings as $training) {
+            if (!$training->module) continue;
+            $activities[] = [
+                'type' => 'completed',
+                'icon' => 'Target',
+                'iconBg' => 'bg-green-100',
+                'iconColor' => 'text-green-600',
+                'title' => 'Menyelesaikan Program "' . ($training->module->title ?? 'Unknown') . '"',
+                'time' => $training->completed_at?->diffForHumans() ?? 'Baru saja',
+                'badge' => '+10 poin',
+                'badgeColor' => 'text-green-600',
+            ];
+        }
+
+        // Get recent certifications
+        $certifications = UserTraining::where('user_id', $userId)
+            ->where('is_certified', true)
+            ->with('module:id,title')
+            ->orderBy('completed_at', 'desc')
+            ->take(2)
+            ->get();
+
+        foreach ($certifications as $cert) {
+            if (!$cert->module) continue;
+            $activities[] = [
+                'type' => 'certificate',
+                'icon' => 'Award',
+                'iconBg' => 'bg-blue-100',
+                'iconColor' => 'text-blue-600',
+                'title' => 'Mendapatkan Sertifikat "' . ($cert->module->title ?? 'Unknown') . '"',
+                'time' => $cert->completed_at?->diffForHumans() ?? 'Baru saja',
+                'badge' => 'Sertifikat',
+                'badgeColor' => 'text-blue-600',
+            ];
+        }
+
+        // Get recent exam attempts
+        $exams = ExamAttempt::where('user_id', $userId)
+            ->where('is_passed', true)
+            ->with('module:id,title')
+            ->orderBy('finished_at', 'desc')
+            ->take(2)
+            ->get();
+
+        foreach ($exams as $exam) {
+            if (!$exam->module) continue;
+            $activities[] = [
+                'type' => 'exam',
+                'icon' => 'TrendingUp',
+                'iconBg' => 'bg-yellow-100',
+                'iconColor' => 'text-yellow-600',
+                'title' => 'Lulus Ujian "' . ($exam->module->title ?? 'Unknown') . '" dengan nilai ' . $exam->percentage . '%',
+                'time' => $exam->finished_at?->diffForHumans() ?? 'Baru saja',
+                'badge' => 'Pencapaian',
+                'badgeColor' => 'text-yellow-600',
+            ];
+        }
+
+        // Get recent learning sessions (module progress updates)
+        $progressUpdates = ModuleProgress::where('user_id', $userId)
+            ->with('module:id,title,duration_minutes')
+            ->orderBy('updated_at', 'desc')
+            ->take(2)
+            ->get();
+
+        foreach ($progressUpdates as $progress) {
+            if (!$progress->module) continue;
+            $activities[] = [
+                'type' => 'learning',
+                'icon' => 'Clock',
+                'iconBg' => 'bg-purple-100',
+                'iconColor' => 'text-purple-600',
+                'title' => 'Melanjutkan pembelajaran "' . ($progress->module->title ?? 'Unknown') . '"',
+                'time' => $progress->updated_at?->diffForHumans() ?? 'Baru saja',
+                'badge' => $progress->progress_percentage . '% selesai',
+                'badgeColor' => 'text-purple-600',
+            ];
+        }
+
+        // Sort by newest and take top 4
+        usort($activities, function ($a, $b) {
+            return 0; // Keep original order since already sorted
+        });
+
+        return array_slice($activities, 0, 4);
     }
 }

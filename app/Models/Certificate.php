@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 
 class Certificate extends Model
 {
@@ -11,23 +12,24 @@ class Certificate extends Model
 
     protected $fillable = [
         'user_id',
-        'training_program_id',
+        'module_id',
         'certificate_number',
-        'final_score',
+        'user_name',
+        'training_title',
+        'score',
         'materials_completed',
-        'learning_hours',
+        'hours',
         'issued_at',
         'completed_at',
-        'expires_at',
+        'instructor_name',
+        'status',
+        'metadata',
     ];
 
     protected $casts = [
         'issued_at' => 'datetime',
         'completed_at' => 'datetime',
-        'expires_at' => 'datetime',
-        'final_score' => 'integer',
-        'materials_completed' => 'integer',
-        'learning_hours' => 'decimal:2',
+        'metadata' => 'array',
     ];
 
     /**
@@ -39,33 +41,115 @@ class Certificate extends Model
     }
 
     /**
-     * Get the training program for the certificate
+     * Get the module/training for this certificate
      */
-    public function trainingProgram()
+    public function module()
     {
-        return $this->belongsTo(TrainingProgram::class);
+        return $this->belongsTo(Module::class);
     }
 
     /**
      * Generate a unique certificate number
      */
-    public static function generateCertificateNumber()
+    public static function generateCertificateNumber($userId = null, $moduleId = null)
     {
-        $prefix = 'CERT';
         $year = date('Y');
-        $random = strtoupper(substr(md5(uniqid()), 0, 6));
+        $month = date('m');
+        $userPad = str_pad($userId ?? rand(1, 9999), 4, '0', STR_PAD_LEFT);
+        $modulePad = str_pad($moduleId ?? rand(1, 999), 3, '0', STR_PAD_LEFT);
+        $random = strtoupper(substr(md5(uniqid()), 0, 4));
         
-        return "{$prefix}-{$year}-{$random}";
+        return "CERT-{$year}{$month}-{$userPad}-{$modulePad}-{$random}";
     }
 
     /**
-     * Scope for valid (non-expired) certificates
+     * Create certificate for a user who completed training
      */
-    public function scopeValid($query)
+    public static function createForUser($userId, $moduleId)
     {
-        return $query->where(function($q) {
-            $q->whereNull('expires_at')
-              ->orWhere('expires_at', '>', now());
-        });
+        $user = User::find($userId);
+        $module = Module::find($moduleId);
+        
+        if (!$user || !$module) {
+            return null;
+        }
+
+        // Check if certificate already exists
+        $existing = self::where('user_id', $userId)->where('module_id', $moduleId)->first();
+        if ($existing) {
+            return $existing;
+        }
+
+        // Get exam attempts to calculate score
+        $pretest = ExamAttempt::where('user_id', $userId)
+            ->where('module_id', $moduleId)
+            ->where('exam_type', 'pre_test')
+            ->where('is_passed', true)
+            ->orderBy('created_at', 'desc')
+            ->first();
+            
+        $posttest = ExamAttempt::where('user_id', $userId)
+            ->where('module_id', $moduleId)
+            ->where('exam_type', 'post_test')
+            ->where('is_passed', true)
+            ->orderBy('created_at', 'desc')
+            ->first();
+
+        // Calculate average score
+        $scores = [];
+        if ($pretest) $scores[] = $pretest->score;
+        if ($posttest) $scores[] = $posttest->score;
+        $avgScore = count($scores) > 0 ? array_sum($scores) / count($scores) : 0;
+
+        // Count materials
+        $materialsCount = 0;
+        if ($module->video_url) $materialsCount++;
+        if ($module->document_url) $materialsCount++;
+        if ($module->presentation_url) $materialsCount++;
+        if ($materialsCount === 0) $materialsCount = 1;
+
+        // Calculate hours
+        $hours = ceil(($module->duration_minutes ?? 60) / 60);
+
+        // Get instructor name
+        $instructor = $module->instructor_id ? User::find($module->instructor_id) : null;
+        $instructorName = $instructor ? $instructor->name : 'Admin LMS';
+
+        // Create certificate
+        $certificate = self::create([
+            'user_id' => $userId,
+            'module_id' => $moduleId,
+            'certificate_number' => self::generateCertificateNumber($userId, $moduleId),
+            'user_name' => $user->name,
+            'training_title' => $module->title,
+            'score' => round($avgScore),
+            'materials_completed' => $materialsCount,
+            'hours' => $hours,
+            'issued_at' => now(),
+            'completed_at' => now(),
+            'instructor_name' => $instructorName,
+            'status' => 'active',
+            'metadata' => json_encode([
+                'pretest_score' => $pretest ? $pretest->score : null,
+                'posttest_score' => $posttest ? $posttest->score : null,
+                'duration_minutes' => $module->duration_minutes,
+            ]),
+        ]);
+
+        // Update user_trainings with certificate_id
+        DB::table('user_trainings')
+            ->where('user_id', $userId)
+            ->where('module_id', $moduleId)
+            ->update(['certificate_id' => $certificate->id]);
+
+        return $certificate;
+    }
+
+    /**
+     * Scope for valid (active) certificates
+     */
+    public function scopeActive($query)
+    {
+        return $query->where('status', 'active');
     }
 }

@@ -1113,23 +1113,32 @@ class AdminTrainingProgramController extends Controller
         try {
             $validated = $request->validate([
                 'user_ids' => 'required|array',
-                'user_ids.*' => 'integer|exists:users,id'
+                'user_ids.*' => 'integer|exists:users,id',
+                'force' => 'nullable|boolean' // Force delete even if in_progress/completed
             ]);
+
+            $forceDelete = $validated['force'] ?? true; // Default to force delete
 
             // Remove from ModuleAssignment
             ModuleAssignment::where('module_id', $id)
                 ->whereIn('user_id', $validated['user_ids'])
                 ->delete();
 
-            // Also remove from UserTraining (only if not started/in_progress/completed)
-            UserTraining::where('module_id', $id)
-                ->whereIn('user_id', $validated['user_ids'])
-                ->where('status', 'enrolled')
-                ->delete();
+            // Remove from UserTraining
+            // If force = true, delete regardless of status
+            // If force = false, only delete if status = enrolled
+            $query = UserTraining::where('module_id', $id)
+                ->whereIn('user_id', $validated['user_ids']);
+            
+            if (!$forceDelete) {
+                $query->where('status', 'enrolled');
+            }
+            
+            $deletedCount = $query->delete();
 
             return response()->json([
                 'success' => true,
-                'message' => 'User berhasil dihapus dari program',
+                'message' => "User berhasil dihapus dari program ({$deletedCount} record)",
             ]);
         } catch (\Exception $e) {
             Log::error('Remove Assigned Users Error: ' . $e->getMessage());
@@ -1441,8 +1450,13 @@ class AdminTrainingProgramController extends Controller
                 'user_ids.*' => 'exists:users,id',
             ]);
 
-            // Remove specific user assignments
+            // Remove specific user assignments from ModuleAssignment
             ModuleAssignment::where('module_id', $id)
+                ->whereIn('user_id', $validated['user_ids'])
+                ->delete();
+
+            // ALSO remove from UserTraining to fully revoke access
+            UserTraining::where('module_id', $id)
                 ->whereIn('user_id', $validated['user_ids'])
                 ->delete();
 

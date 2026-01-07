@@ -346,14 +346,14 @@ class UserController
 
         $topPerformers = User::select('users.id', 'users.name', 'users.email', 'users.department')
             ->withCount('completedModules')
-            ->withSum('userTrainings', 'final_score')
-            ->orderByDesc('user_trainings_sum_final_score')
+            ->withSum('trainings', 'final_score')
+            ->orderByRaw('COALESCE(trainings_sum_final_score, 0) DESC')
             ->limit($limit)
             ->get()
             ->map(function ($user) {
-                $xpEarned = $user->user_trainings_sum_final_score ?? 0;
+                $xpEarned = $user->trainings_sum_final_score ?? 0;
                 $badge = $xpEarned >= 50000 ? 'PRO' : ($xpEarned >= 30000 ? 'ADVANCED' : 'MEMBER');
-                
+
                 return [
                     'id' => $user->id,
                     'name' => $user->name,

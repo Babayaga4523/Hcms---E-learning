@@ -28,11 +28,17 @@ class DashboardController extends Controller
                 return $training->module !== null;
             })
             ->map(function ($training) use ($userId) {
+                $status = $training->status;
+                // Ensure status is not empty, default to 'enrolled' if empty
+                if (empty($status)) {
+                    $status = 'enrolled';
+                }
+                
                 return [
                     'id' => $training->id,
                     'title' => $training->module->title ?? 'Unknown Training',
                     'description' => $training->module->description ?? '',
-                    'status' => $training->status,
+                    'status' => $status,
                     'final_score' => $training->final_score,
                     'is_certified' => $training->is_certified,
                     'passing_grade' => $training->module->passing_grade ?? 70,
@@ -47,11 +53,20 @@ class DashboardController extends Controller
         // Get completed trainings
         $completedTrainings = $trainings->filter(fn($t) => $t['status'] === 'completed');
 
-        // Get upcoming trainings (not yet enrolled)
+        // Get upcoming trainings (assigned but not yet enrolled)
+        // Only show modules that user has access to via ModuleAssignment
         $enrolledModuleIds = UserTraining::where('user_id', $userId)
             ->pluck('module_id')
             ->toArray();
-        $upcomingTrainings = Module::whereNotIn('id', $enrolledModuleIds)
+        
+        // Get module IDs that user is assigned to (has access)
+        $assignedModuleIds = \App\Models\ModuleAssignment::where('user_id', $userId)
+            ->pluck('module_id')
+            ->toArray();
+        
+        // Upcoming = assigned modules that are not yet in user_trainings
+        $upcomingTrainings = Module::whereIn('id', $assignedModuleIds)
+            ->whereNotIn('id', $enrolledModuleIds)
             ->where('is_active', true)
             ->limit(5)
             ->get()

@@ -46,9 +46,6 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/learner/performance', function() {
         return Inertia::render('User/Learner/LearnerPerformance');
     })->name('learner.performance');
-    Route::get('/learner/progress-detail', function() {
-        return Inertia::render('User/Learner/LearnerProgressDetail');
-    })->name('learner.progress-detail');
     Route::get('/api/learner/performance', [\App\Http\Controllers\Learner\LearnerPerformanceController::class, 'getPerformance'])->name('learner.api.performance');
     Route::get('/api/learner/progress', [\App\Http\Controllers\Learner\LearnerProgressController::class, 'getProgress'])->name('learner.api.progress');
     Route::get('/api/learner/progress/{programId}', [\App\Http\Controllers\Learner\LearnerProgressController::class, 'getProgramProgress'])->name('learner.api.progress.program');
@@ -64,24 +61,19 @@ Route::middleware(['auth'])->group(function () {
     // USER TRAINING ROUTES
     // ========================================
     
+    // Training Catalog - Browse all available trainings
+    Route::get('/catalog', [\App\Http\Controllers\User\TrainingController::class, 'catalog'])->name('user.catalog');
+    
     // My Trainings - List all user's assigned trainings
     Route::get('/my-trainings', function() {
         return Inertia::render('User/Training/MyTrainings');
     })->name('user.trainings');
     
     // Training Detail
-    Route::get('/training/{id}', function($id) {
-        return Inertia::render('User/Training/TrainingDetail', [
-            'trainingId' => $id
-        ]);
-    })->name('user.training.detail');
+    Route::get('/training/{id}', [\App\Http\Controllers\User\TrainingController::class, 'show'])->name('user.training.detail');
     
-    // Training Certificate
-    Route::get('/training/{id}/certificate', function($id) {
-        return Inertia::render('User/Training/Certificate', [
-            'trainingId' => $id
-        ]);
-    })->name('user.training.certificate');
+    // Training Certificate - uses controller to fetch real data
+    Route::get('/training/{id}/certificate', [\App\Http\Controllers\User\CertificateController::class, 'showPage'])->name('user.training.certificate');
     
     // ========================================
     // USER MATERIAL ROUTES
@@ -100,30 +92,19 @@ Route::middleware(['auth'])->group(function () {
     // ========================================
     
     // Take Quiz (Pretest/Posttest)
-    Route::get('/training/{id}/quiz/{type}', function($id, $type) {
-        return Inertia::render('User/Quiz/TakeQuiz', [
-            'trainingId' => $id,
-            'quizType' => $type
-        ]);
-    })->name('user.quiz.take')->where('type', 'pretest|posttest');
+    Route::get('/training/{id}/quiz/{type}', [\App\Http\Controllers\User\QuizController::class, 'take'])->name('user.quiz.take')->where('type', 'pretest|posttest');
     
     // Quiz Result
-    Route::get('/training/{id}/quiz/{type}/result/{attemptId?}', function($id, $type, $attemptId = null) {
-        return Inertia::render('User/Quiz/QuizResult', [
-            'trainingId' => $id,
-            'quizType' => $type,
-            'attemptId' => $attemptId
-        ]);
-    })->name('user.quiz.result')->where('type', 'pretest|posttest');
+    Route::get('/training/{id}/quiz/{type}/result/{attemptId?}', [\App\Http\Controllers\User\QuizController::class, 'showResult'])->name('user.quiz.result')->where('type', 'pretest|posttest');
     
     // ========================================
     // USER REPORT ROUTES
     // ========================================
     
     // My Reports - Learning reports and analytics
-    Route::get('/my-reports', function() {
-        return Inertia::render('User/Report/MyReports');
-    })->name('user.reports');
+    Route::get('/my-reports', [\App\Http\Controllers\Learner\LearnerReportController::class, 'index'])->name('user.reports');
+    Route::get('/api/learner/reports', [\App\Http\Controllers\Learner\LearnerReportController::class, 'getReportsData'])->name('api.learner.reports');
+    Route::get('/api/learner/reports/export-pdf', [\App\Http\Controllers\Learner\LearnerReportController::class, 'exportPdf'])->name('api.learner.reports.export-pdf');
     
     // ========================================
     // USER NOTIFICATION ROUTES
@@ -134,28 +115,13 @@ Route::middleware(['auth'])->group(function () {
         return Inertia::render('User/Notifications/NotificationCenter');
     })->name('user.notifications');
     
-    // Bookmarks/Favorites - Save and manage favorite content
-    Route::get('/bookmarks', function() {
-        return Inertia::render('User/Bookmarks/MyBookmarks');
-    })->name('user.bookmarks');
-    
-    // Learning Goals - Set and track learning targets
-    Route::get('/goals', function() {
-        return Inertia::render('User/Goals/LearningGoals');
-    })->name('user.goals');
-    
-    // Learning Path/Roadmap - Visualize learning journey
-    Route::get('/learning-path', function() {
-        return Inertia::render('User/LearningPath/MyLearningPath');
-    })->name('user.learning-path');
-    
     // ========================================
     // USER API ROUTES
     // ========================================
     
     // Training API
     Route::get('/api/user/trainings', [\App\Http\Controllers\User\TrainingController::class, 'index'])->name('user.api.trainings');
-    Route::get('/api/user/trainings/{id}', [\App\Http\Controllers\User\TrainingController::class, 'show'])->name('user.api.training.show');
+    Route::get('/api/user/trainings/{id}', [\App\Http\Controllers\User\TrainingController::class, 'showApi'])->name('user.api.training.show');
     Route::post('/api/training/{id}/start', [\App\Http\Controllers\User\TrainingController::class, 'start'])->name('user.api.training.start');
     
     // Material API
@@ -644,13 +610,13 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::post('/api/admin/smart-content/retry/{id}', [\App\Http\Controllers\Admin\SmartContentController::class, 'retryProcessing'])->name('admin.smart-content.retry');
     Route::get('/api/admin/smart-content/preview/{id}', [\App\Http\Controllers\Admin\SmartContentController::class, 'previewContent'])->name('admin.smart-content.preview');
     
-    // Material Bookmark & Share Routes (User)
-    Route::post('/api/training/{trainingId}/material/{materialId}/complete', [\App\Http\Controllers\MaterialController::class, 'markComplete'])->name('material.mark-complete');
-    Route::post('/api/training/{trainingId}/material/{materialId}/bookmark', [\App\Http\Controllers\MaterialController::class, 'addBookmark'])->name('material.add-bookmark');
-    Route::delete('/api/training/{trainingId}/material/{materialId}/bookmark', [\App\Http\Controllers\MaterialController::class, 'removeBookmark'])->name('material.remove-bookmark');
-    Route::post('/api/training/{trainingId}/material/{materialId}/share', [\App\Http\Controllers\MaterialController::class, 'shareMaterial'])->name('material.share');
-    Route::get('/api/training/{trainingId}/material/{materialId}/stats', [\App\Http\Controllers\MaterialController::class, 'getSharingStats'])->name('material.stats');
-    Route::get('/api/user/bookmarks', [\App\Http\Controllers\MaterialController::class, 'getBookmarks'])->name('user.bookmarks');
+    // Material Bookmark & Share Routes (User) - Moved to user route group
+    // Route::post('/api/training/{trainingId}/material/{materialId}/complete', [\App\Http\Controllers\MaterialController::class, 'markComplete'])->name('material.mark-complete');
+    // Route::post('/api/training/{trainingId}/material/{materialId}/bookmark', [\App\Http\Controllers\MaterialController::class, 'addBookmark'])->name('material.add-bookmark');
+    // Route::delete('/api/training/{trainingId}/material/{materialId}/bookmark', [\App\Http\Controllers\MaterialController::class, 'removeBookmark'])->name('material.remove-bookmark');
+    // Route::post('/api/training/{trainingId}/material/{materialId}/share', [\App\Http\Controllers\MaterialController::class, 'shareMaterial'])->name('material.share');
+    // Route::get('/api/training/{trainingId}/material/{materialId}/stats', [\App\Http\Controllers\MaterialController::class, 'getSharingStats'])->name('material.stats');
+    // Route::get('/api/user/bookmarks', [\App\Http\Controllers\MaterialController::class, 'getBookmarks'])->name('user.bookmarks');
 });
 
 require __DIR__.'/auth.php';

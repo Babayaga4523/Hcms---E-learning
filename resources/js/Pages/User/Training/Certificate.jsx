@@ -1,278 +1,579 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { Head, Link } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
     Award, Download, Share2, Printer, ArrowLeft,
     Calendar, User, BookOpen, CheckCircle2, Star,
-    Shield, QrCode
+    Shield, QrCode, Copy, Sparkles, X, Loader2
 } from 'lucide-react';
 
-// Main Component
-export default function Certificate({ auth, certificate = {}, training = {} }) {
+// --- Wondr & Certificate Styles ---
+const CertificateStyles = () => (
+    <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&display=swap');
+        
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+        
+        .font-serif { font-family: 'Playfair Display', serif; }
+        
+        .wondr-green { color: #005E54; }
+        .bg-wondr-green { background-color: #005E54; }
+        
+        .certificate-container {
+            width: 100%;
+            max-width: 1200px;
+            aspect-ratio: 1.414 / 1; /* A4 Landscape */
+            margin: 0 auto;
+            position: relative;
+            background: white;
+            box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.15);
+            overflow: hidden;
+            color: #1e293b;
+            border-radius: 8px;
+        }
+
+        /* Guilloche Pattern Simulation */
+        .guilloche-bg {
+            position: absolute;
+            inset: 0;
+            background-image: 
+                radial-gradient(circle at 0% 0%, transparent 45%, rgba(0, 94, 84, 0.03) 46%, transparent 47%),
+                radial-gradient(circle at 100% 0%, transparent 45%, rgba(0, 94, 84, 0.03) 46%, transparent 47%),
+                radial-gradient(circle at 100% 100%, transparent 45%, rgba(0, 94, 84, 0.03) 46%, transparent 47%),
+                radial-gradient(circle at 0% 100%, transparent 45%, rgba(0, 94, 84, 0.03) 46%, transparent 47%);
+            background-size: 60px 60px;
+            opacity: 0.6;
+            pointer-events: none;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        .border-ornament {
+            position: absolute;
+            inset: 15px;
+            border: 2px solid #D4AF37; /* Gold */
+            outline: 10px solid #005E54; /* BNI Green */
+            z-index: 10;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        .gold-seal {
+            background: radial-gradient(circle, #FFD700 0%, #D4AF37 100%) !important;
+            box-shadow: 0 4px 10px rgba(212, 175, 55, 0.4);
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        .glass-modal {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+        }
+
+        /* Force colors in print */
+        .print-color {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            color-adjust: exact !important;
+        }
+
+        @media print {
+            * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                color-adjust: exact !important;
+            }
+            
+            html, body {
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+                background: white !important;
+            }
+            
+            body * { visibility: hidden; }
+            
+            .certificate-wrapper, 
+            .certificate-wrapper * { 
+                visibility: visible !important; 
+            }
+            
+            .certificate-wrapper { 
+                position: absolute; 
+                left: 0; 
+                top: 0; 
+                width: 100%; 
+                height: 100%; 
+                margin: 0; 
+                padding: 0;
+                box-shadow: none !important;
+                transform: none !important;
+            }
+            
+            .certificate-container {
+                width: 100% !important;
+                max-width: 100% !important;
+                height: 100% !important;
+                border-radius: 0 !important;
+                box-shadow: none !important;
+            }
+            
+            .border-ornament {
+                border: 2px solid #D4AF37 !important;
+                outline: 10px solid #005E54 !important;
+            }
+            
+            .bg-\\[\\#005E54\\], .bg-wondr-green {
+                background-color: #005E54 !important;
+            }
+            
+            .bg-\\[\\#D6F84C\\] {
+                background-color: #D6F84C !important;
+            }
+            
+            .bg-\\[\\#F15A23\\] {
+                background-color: #F15A23 !important;
+            }
+            
+            .text-\\[\\#005E54\\] {
+                color: #005E54 !important;
+            }
+            
+            .text-\\[\\#D6F84C\\] {
+                color: #D6F84C !important;
+            }
+            
+            .bg-slate-100 {
+                background-color: #f1f5f9 !important;
+            }
+            
+            .no-print { 
+                display: none !important; 
+            }
+            
+            @page { 
+                size: A4 landscape; 
+                margin: 0; 
+            }
+        }
+    `}</style>
+);
+
+
+// Main Component - All data comes from backend via Inertia props
+export default function Certificate({ auth, trainingId, training, certificate }) {
     const user = auth?.user || {};
     const certificateRef = useRef(null);
+    const [showAIModal, setShowAIModal] = useState(false);
+    const [aiContent, setAiContent] = useState('');
+    const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+
+    // Gemini API Key - should be from environment variable in production
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
 
     const handlePrint = () => {
         window.print();
     };
 
     const handleDownload = async () => {
-        // In production, this would call an API to generate PDF
-        alert('Downloading certificate as PDF...');
+        // For now, use print as PDF workaround
+        // In production, this would call a PDF generation API
+        alert('Gunakan fitur Print (Ctrl+P) dan pilih "Save as PDF" untuk mengunduh sertifikat.');
+        window.print();
     };
 
     const handleShare = async () => {
+        const shareText = `Saya telah menyelesaikan training "${training?.title || 'Training'}" dengan nilai ${certificate?.score || 85}!`;
+        
         if (navigator.share) {
-            await navigator.share({
-                title: `Sertifikat ${training.title}`,
-                text: `Saya telah menyelesaikan training ${training.title}!`,
-                url: window.location.href
-            });
+            try {
+                await navigator.share({
+                    title: `Sertifikat ${training?.title || 'Training'}`,
+                    text: shareText,
+                    url: window.location.href
+                });
+            } catch (e) {
+                // User cancelled or error
+                console.log('Share cancelled');
+            }
         } else {
             // Fallback: copy link
-            navigator.clipboard.writeText(window.location.href);
-            alert('Link berhasil disalin!');
+            try {
+                await navigator.clipboard.writeText(window.location.href);
+                alert('Link sertifikat berhasil disalin!');
+            } catch (e) {
+                alert('Gagal menyalin link');
+            }
         }
+    };
+    
+    // Generate certificate number
+    const certNumber = certificate?.certificate_number || 
+        `BNIF-${new Date().getFullYear()}-${String(trainingId || 0).padStart(3, '0')}-${String(user?.id || 0).padStart(4, '0')}`;
+    
+    // Get display values with fallbacks (all data from backend)
+    const displayName = certificate?.user_name || user?.name || 'Peserta Training';
+    const displayScore = certificate?.score || 85;
+    const displayMaterials = certificate?.materials_completed || training?.materials_count || 3;
+    const displayHours = certificate?.hours || Math.round((training?.duration_minutes || 120) / 60);
+    const displayDate = certificate?.issued_at || certificate?.completed_at || new Date().toISOString();
+    const displayTrainingTitle = training?.title || certificate?.training_title || 'Training Program';
+    const displayInstructor = certificate?.instructor_name || training?.instructor_name || training?.instructor?.name || 'Dr. Budi Santoso';
+    const displayInstructorTitle = training?.instructor?.title || 'Head of Digital Learning';
+
+    // --- GEMINI API FUNCTION ---
+    const generateAICaption = async () => {
+        if (!apiKey) {
+            alert('API Key Gemini belum dikonfigurasi. Hubungi administrator.');
+            return;
+        }
+
+        setIsGeneratingAI(true);
+        setShowAIModal(true);
+        setAiContent('');
+
+        const prompt = `Buatkan caption LinkedIn profesional, inspiratif, dan antusias dalam Bahasa Indonesia untuk ${displayName} yang baru saja menyelesaikan pelatihan "${displayTrainingTitle}" dengan nilai ${displayScore}/100. Pelatihnya adalah ${displayInstructor}. Tambahkan emoji yang relevan dan hashtag seperti #BNIFinance #WondrLearning #ProfessionalDevelopment. Jangan terlalu panjang, cukup 2-3 paragraf.`;
+
+        try {
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }]
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Gagal menghubungi AI');
+            }
+            
+            const data = await response.json();
+            const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "Maaf, gagal membuat caption.";
+            setAiContent(text);
+        } catch (error) {
+            console.error("AI Error:", error);
+            setAiContent("Terjadi kesalahan saat membuat caption. Silakan coba lagi nanti.");
+        } finally {
+            setIsGeneratingAI(false);
+        }
+    };
+
+    const copyAIContent = () => {
+        navigator.clipboard.writeText(aiContent);
+        alert("Caption berhasil disalin ke clipboard!");
     };
 
     return (
         <AppLayout user={user}>
-            <Head title={`Sertifikat - ${training.title}`} />
+            <CertificateStyles />
+            <Head title={`Sertifikat - ${displayTrainingTitle}`} />
 
-            {/* Header */}
-            <div className="mb-8">
-                <Link 
-                    href={`/training/${training.id}`}
-                    className="inline-flex items-center gap-2 text-slate-600 hover:text-blue-600 transition mb-4"
-                >
-                    <ArrowLeft size={18} />
-                    Kembali ke Training
-                </Link>
+            <div className="min-h-screen py-6 md:py-8 px-4 flex flex-col items-center justify-start bg-slate-100">
                 
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                    <div>
-                        <h1 className="text-3xl font-black text-slate-900">Sertifikat Kelulusan</h1>
-                        <p className="text-slate-500 mt-1">{training.title}</p>
-                    </div>
-                    
-                    <div className="flex items-center gap-3">
+                {/* --- Top Action Bar --- */}
+                <div className="w-full max-w-[1200px] mb-6 flex flex-col md:flex-row justify-between items-center gap-4 no-print">
+                    <Link 
+                        href={`/training/${trainingId || training?.id}`}
+                        className="flex items-center gap-2 text-slate-500 hover:text-[#005E54] transition font-bold"
+                    >
+                        <div className="p-2 bg-white rounded-full shadow-sm hover:shadow-md transition">
+                            <ArrowLeft size={20} />
+                        </div>
+                        <span className="text-sm">Kembali ke Training</span>
+                    </Link>
+
+                    <div className="flex gap-3 bg-white p-2 rounded-2xl shadow-sm border border-slate-200">
+                        {/* AI Smart Caption Button */}
+                        <button 
+                            onClick={generateAICaption}
+                            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white hover:opacity-90 rounded-xl transition font-bold text-sm shadow-md"
+                        >
+                            <Sparkles size={16} /> Buat Caption AI
+                        </button>
+                        
+                        <div className="w-[1px] h-8 bg-slate-200 mx-1"></div>
+
                         <button 
                             onClick={handleShare}
-                            className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition"
+                            className="flex items-center gap-2 px-4 py-2 text-slate-600 hover:bg-slate-50 rounded-xl transition font-medium text-sm"
                         >
-                            <Share2 size={18} />
-                            Share
-                        </button>
-                        <button 
-                            onClick={handlePrint}
-                            className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition"
-                        >
-                            <Printer size={18} />
-                            Print
+                            <Share2 size={16} /> Share
                         </button>
                         <button 
                             onClick={handleDownload}
-                            className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-200"
+                            className="flex items-center gap-2 px-4 py-2 bg-[#005E54] hover:bg-[#004b43] text-white rounded-xl transition font-bold text-sm shadow-lg shadow-[#005E54]/20"
                         >
-                            <Download size={18} />
-                            Download PDF
+                            <Download size={16} /> Download PDF
                         </button>
                     </div>
                 </div>
-            </div>
 
-            {/* Certificate Preview */}
-            <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-white rounded-3xl border border-slate-200 p-4 md:p-8 shadow-xl print:shadow-none print:border-0"
-            >
-                <div 
-                    ref={certificateRef}
-                    className="relative aspect-[1.414/1] bg-gradient-to-br from-slate-50 to-white rounded-2xl border-4 border-amber-200 p-8 md:p-12 overflow-hidden"
-                >
-                    {/* Decorative Elements */}
-                    <div className="absolute top-0 left-0 w-32 h-32 bg-gradient-to-br from-amber-100 to-transparent rounded-br-full opacity-50" />
-                    <div className="absolute bottom-0 right-0 w-32 h-32 bg-gradient-to-tl from-amber-100 to-transparent rounded-tl-full opacity-50" />
-                    <div className="absolute top-4 right-4 w-20 h-20 border-2 border-amber-300 rounded-full opacity-30" />
-                    <div className="absolute bottom-4 left-4 w-16 h-16 border-2 border-amber-300 rounded-full opacity-30" />
-                    
-                    {/* Certificate Content */}
-                    <div className="relative h-full flex flex-col items-center justify-between text-center">
-                        {/* Header */}
-                        <div>
-                            <div className="flex items-center justify-center gap-3 mb-4">
-                                <Shield className="text-amber-500" size={32} />
-                                <span className="text-xl font-bold text-slate-400 tracking-widest uppercase">
-                                    Certificate
-                                </span>
-                                <Shield className="text-amber-500" size={32} />
-                            </div>
-                            <h2 className="text-4xl md:text-5xl font-black text-slate-900 mb-2">
-                                Certificate of Completion
-                            </h2>
-                            <p className="text-lg text-slate-500">Sertifikat Kelulusan Training</p>
-                        </div>
+                {/* --- Certificate Preview Wrapper --- */}
+                <div className="certificate-wrapper w-full flex justify-center px-4">
+                    <motion.div 
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.5 }}
+                        ref={certificateRef}
+                        className="certificate-container print-color"
+                    >
+                        {/* Background Patterns */}
+                        <div className="guilloche-bg print-color"></div>
+                        <div className="border-ornament print-color"></div>
+                        
+                        {/* Top Left Decoration */}
+                        <div className="absolute top-0 left-0 w-64 h-64 bg-[#D6F84C] opacity-10 rounded-br-full z-0 print-color"></div>
+                        <div className="absolute bottom-0 right-0 w-80 h-80 bg-[#005E54] opacity-5 rounded-tl-full z-0 print-color"></div>
 
-                        {/* Main Content */}
-                        <div className="my-8">
-                            <p className="text-slate-500 mb-4">Dengan ini dinyatakan bahwa</p>
-                            <h3 className="text-3xl md:text-4xl font-black text-blue-600 mb-4 border-b-2 border-amber-300 pb-2 inline-block">
-                                {certificate.user_name || user.name}
-                            </h3>
-                            <p className="text-slate-500 mb-4">telah berhasil menyelesaikan training</p>
-                            <h4 className="text-2xl md:text-3xl font-bold text-slate-900 mb-6">
-                                {training.title}
-                            </h4>
+                        {/* Content Layer */}
+                        <div className="relative z-20 flex flex-col h-full p-12 md:p-16 justify-between text-center print-color">
                             
-                            {/* Stats */}
-                            <div className="flex items-center justify-center gap-8 mb-6">
-                                <div className="text-center">
-                                    <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                                        <CheckCircle2 className="text-emerald-600" size={32} />
+                            {/* Header: Logos */}
+                            <div className="flex justify-between items-center mb-4 px-4 print-color">
+                                <div className="flex items-center gap-3">
+                                    {/* BNI Logo Simulation */}
+                                    <div className="flex flex-col items-start print-color">
+                                        <div className="flex items-center gap-1">
+                                            <div className="h-6 w-2 bg-[#F15A23] print-color"></div>
+                                            <h1 className="text-2xl font-bold tracking-tighter text-[#005E54] print-color">BNI</h1>
+                                        </div>
+                                        <span className="text-[10px] tracking-[0.2em] font-bold text-[#005E54] uppercase ml-3 print-color">Finance</span>
                                     </div>
-                                    <p className="text-2xl font-bold text-emerald-600">{certificate.score || 95}</p>
-                                    <p className="text-xs text-slate-500">Nilai Akhir</p>
                                 </div>
-                                <div className="text-center">
-                                    <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                                        <BookOpen className="text-blue-600" size={32} />
-                                    </div>
-                                    <p className="text-2xl font-bold text-blue-600">{certificate.materials_completed || 10}</p>
-                                    <p className="text-xs text-slate-500">Materi Selesai</p>
-                                </div>
-                                <div className="text-center">
-                                    <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                                        <Star className="text-amber-600" size={32} fill="currentColor" />
-                                    </div>
-                                    <p className="text-2xl font-bold text-amber-600">{certificate.hours || 8}</p>
-                                    <p className="text-xs text-slate-500">Jam Belajar</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Footer */}
-                        <div className="w-full">
-                            <div className="flex items-center justify-between">
-                                <div className="text-left">
-                                    <p className="text-xs text-slate-400 mb-1">Tanggal Terbit</p>
-                                    <p className="font-bold text-slate-700">
-                                        {new Date(certificate.issued_at || new Date()).toLocaleDateString('id-ID', {
-                                            day: 'numeric',
-                                            month: 'long',
-                                            year: 'numeric'
-                                        })}
-                                    </p>
-                                </div>
-                                
-                                <div className="text-center">
-                                    <div className="w-20 h-20 bg-slate-100 rounded-lg flex items-center justify-center mb-2 mx-auto">
-                                        <QrCode className="text-slate-400" size={48} />
-                                    </div>
-                                    <p className="text-xs text-slate-400">
-                                        ID: {certificate.certificate_number || 'CERT-2024-001'}
-                                    </p>
-                                </div>
-                                
                                 <div className="text-right">
-                                    <p className="text-xs text-slate-400 mb-1">Ditandatangani oleh</p>
-                                    <p className="font-bold text-slate-700">{training.instructor_name || 'Admin LMS'}</p>
-                                    <p className="text-xs text-slate-500">Training Manager</p>
+                                    <h3 className="font-extrabold text-[#D6F84C] bg-[#005E54] px-3 py-1 text-sm tracking-widest uppercase rounded print-color">
+                                        Wondr Learning
+                                    </h3>
                                 </div>
                             </div>
-                            
-                            {/* Award Badge */}
-                            <div className="mt-6 pt-6 border-t border-amber-200 flex items-center justify-center gap-2">
-                                <Award className="text-amber-500" size={24} />
-                                <span className="text-sm text-slate-500">
-                                    Sertifikat ini diterbitkan oleh HCMS E-Learning Platform
-                                </span>
-                                <Award className="text-amber-500" size={24} />
+
+                            {/* Main Title */}
+                            <div className="space-y-2 mt-4 print-color">
+                                <h1 className="font-serif text-4xl md:text-5xl lg:text-6xl text-[#005E54] tracking-wide font-bold print-color">
+                                    Sertifikat Kelulusan
+                                </h1>
+                                <p className="text-slate-400 font-medium tracking-widest uppercase text-xs print-color">
+                                    Certificate of Completion
+                                </p>
+                            </div>
+
+                            {/* Recipient */}
+                            <div className="my-6 md:my-8 print-color">
+                                <p className="text-slate-500 mb-4 md:mb-6 italic text-base md:text-lg print-color">Diberikan kepada:</p>
+                                <h2 className="font-serif text-3xl md:text-4xl lg:text-5xl text-slate-800 font-bold border-b-2 border-[#D4AF37] pb-4 inline-block px-8 md:px-12 print-color">
+                                    {displayName}
+                                </h2>
+                            </div>
+
+                            {/* Course Details */}
+                            <div className="mb-6 md:mb-8 print-color">
+                                <p className="text-slate-500 mb-2 text-base md:text-lg print-color">
+                                    Telah menyelesaikan dengan sangat baik program pelatihan:
+                                </p>
+                                <h3 className="text-xl md:text-2xl lg:text-3xl font-bold text-[#005E54] mb-4 print-color">
+                                    {displayTrainingTitle}
+                                </h3>
+                                <div className="flex flex-wrap justify-center gap-3 md:gap-6 text-xs md:text-sm text-slate-600 font-medium print-color">
+                                    <span className="px-3 py-1 bg-slate-100 rounded-full border border-slate-200 print-color">
+                                        Nilai Akhir: <strong className="text-[#005E54] print-color">{displayScore}/100</strong>
+                                    </span>
+                                    <span className="px-3 py-1 bg-slate-100 rounded-full border border-slate-200 print-color">
+                                        Durasi: <strong>{training?.duration_minutes || displayHours * 60} Menit</strong>
+                                    </span>
+                                    <span className="px-3 py-1 bg-slate-100 rounded-full border border-slate-200 print-color">
+                                        Tanggal: <strong>{new Date(displayDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Footer: Signatures & QR */}
+                            <div className="flex justify-between items-end px-4 md:px-8 mt-auto print-color">
+                                
+                                {/* Signature 1 */}
+                                <div className="text-center w-36 md:w-48 print-color">
+                                    <div className="h-16 md:h-20 flex items-end justify-center mb-2">
+                                        {/* Signature Simulation */}
+                                        <svg width="120" height="50" viewBox="0 0 150 60" className="opacity-80 print-color">
+                                            <path d="M10,50 Q40,10 70,50 T140,40" stroke="#005E54" strokeWidth="2" fill="none" />
+                                        </svg>
+                                    </div>
+                                    <div className="border-t border-slate-300 pt-2 print-color">
+                                        <p className="font-bold text-slate-800 text-sm md:text-base print-color">{displayInstructor}</p>
+                                        <p className="text-[10px] md:text-xs text-slate-500 uppercase tracking-wide print-color">{displayInstructorTitle}</p>
+                                    </div>
+                                </div>
+
+                                {/* Seal & QR */}
+                                <div className="flex flex-col items-center print-color">
+                                    <div className="w-20 h-20 md:w-24 md:h-24 rounded-full gold-seal flex items-center justify-center relative mb-2 print-color">
+                                        <div className="w-16 h-16 md:w-20 md:h-20 rounded-full border-2 border-white/50 flex items-center justify-center">
+                                            <Shield className="w-8 h-8 md:w-10 md:h-10 text-white drop-shadow-md" />
+                                        </div>
+                                        <div className="absolute bottom-0 right-0 bg-white p-1 rounded shadow-md print-color">
+                                            <QrCode size={20} className="text-slate-800" />
+                                        </div>
+                                    </div>
+                                    <p className="text-[9px] md:text-[10px] text-slate-400 font-mono tracking-wider print-color">
+                                        ID: {certNumber}
+                                    </p>
+                                </div>
+
+                                {/* Signature 2 (Head of Learning) */}
+                                <div className="text-center w-36 md:w-48 print-color">
+                                    <div className="h-16 md:h-20 flex items-end justify-center mb-2">
+                                        <svg width="120" height="50" viewBox="0 0 150 60" className="opacity-80 print-color">
+                                            <path d="M10,30 Q50,60 90,30 T140,50" stroke="#005E54" strokeWidth="2" fill="none" />
+                                        </svg>
+                                    </div>
+                                    <div className="border-t border-slate-300 pt-2 print-color">
+                                        <p className="font-bold text-slate-800 text-sm md:text-base print-color">Rina Kusuma</p>
+                                        <p className="text-[10px] md:text-xs text-slate-500 uppercase tracking-wide print-color">Head of People & Culture</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </motion.div>
+                </div>
+
+                {/* --- Security Note --- */}
+                <div className="max-w-[1200px] w-full mt-6 text-center no-print">
+                    <p className="text-slate-400 text-xs flex items-center justify-center gap-2">
+                        <CheckCircle2 size={12} className="text-[#005E54]" />
+                        Sertifikat ini sah dan diterbitkan secara digital oleh BNI Finance Learning System.
+                    </p>
+                </div>
+
+                {/* Info Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-8 max-w-[1200px] w-full no-print">
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.2 }}
+                        className="bg-white rounded-xl border border-slate-200 p-6"
+                    >
+                        <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+                                <User className="text-blue-600" size={24} />
+                            </div>
+                            <div>
+                                <p className="text-sm text-slate-500">Penerima</p>
+                                <p className="font-bold text-slate-900">{displayName}</p>
                             </div>
                         </div>
-                    </div>
+                    </motion.div>
+
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.3 }}
+                        className="bg-white rounded-xl border border-slate-200 p-6"
+                    >
+                        <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center">
+                                <Calendar className="text-amber-600" size={24} />
+                            </div>
+                            <div>
+                                <p className="text-sm text-slate-500">Tanggal Selesai</p>
+                                <p className="font-bold text-slate-900">
+                                    {new Date(displayDate).toLocaleDateString('id-ID', {
+                                        day: 'numeric',
+                                        month: 'long',
+                                        year: 'numeric'
+                                    })}
+                                </p>
+                            </div>
+                        </div>
+                    </motion.div>
+
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.4 }}
+                        className="bg-white rounded-xl border border-slate-200 p-6"
+                    >
+                        <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 bg-emerald-100 rounded-xl flex items-center justify-center">
+                                <CheckCircle2 className="text-emerald-600" size={24} />
+                            </div>
+                            <div>
+                                <p className="text-sm text-slate-500">Status</p>
+                                <p className="font-bold text-emerald-600">Verified</p>
+                            </div>
+                        </div>
+                    </motion.div>
                 </div>
-            </motion.div>
 
-            {/* Info Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-8">
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.2 }}
-                    className="bg-white rounded-xl border border-slate-200 p-6"
-                >
-                    <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
-                            <User className="text-blue-600" size={24} />
+                {/* --- AI Generation Modal --- */}
+                <AnimatePresence>
+                    {showAIModal && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm no-print">
+                            <motion.div 
+                                initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                                animate={{ opacity: 1, scale: 1, y: 0 }}
+                                exit={{ opacity: 0, scale: 0.9 }}
+                                className="glass-modal w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl"
+                            >
+                                <div className="bg-gradient-to-r from-indigo-600 to-purple-700 p-6 flex justify-between items-center text-white">
+                                    <div className="flex items-center gap-3">
+                                        <div className="p-2 bg-white/20 rounded-lg">
+                                            <Sparkles size={20} />
+                                        </div>
+                                        <div>
+                                            <h3 className="font-bold text-lg">AI Smart Caption</h3>
+                                            <p className="text-xs text-indigo-100">Powered by Gemini</p>
+                                        </div>
+                                    </div>
+                                    <button 
+                                        onClick={() => setShowAIModal(false)}
+                                        className="p-2 hover:bg-white/10 rounded-full transition"
+                                    >
+                                        <X size={20} />
+                                    </button>
+                                </div>
+                                
+                                <div className="p-6">
+                                    {isGeneratingAI ? (
+                                        <div className="flex flex-col items-center justify-center py-8">
+                                            <Loader2 size={40} className="text-indigo-600 animate-spin mb-4" />
+                                            <p className="text-slate-600 font-medium">Sedang merangkai kata-kata terbaik untukmu...</p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4">
+                                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-slate-700 text-sm leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto">
+                                                {aiContent || 'Caption akan muncul di sini...'}
+                                            </div>
+                                            
+                                            <div className="flex gap-3">
+                                                <button 
+                                                    onClick={generateAICaption}
+                                                    className="flex-1 py-3 px-4 border border-slate-300 text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-50 transition"
+                                                >
+                                                    Regenerate
+                                                </button>
+                                                <button 
+                                                    onClick={copyAIContent}
+                                                    disabled={!aiContent}
+                                                    className="flex-1 py-3 px-4 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                >
+                                                    <Copy size={16} /> Salin Teks
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </motion.div>
                         </div>
-                        <div>
-                            <p className="text-sm text-slate-500">Penerima</p>
-                            <p className="font-bold text-slate-900">{certificate.user_name || user.name}</p>
-                        </div>
-                    </div>
-                </motion.div>
+                    )}
+                </AnimatePresence>
 
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.3 }}
-                    className="bg-white rounded-xl border border-slate-200 p-6"
-                >
-                    <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center">
-                            <Calendar className="text-amber-600" size={24} />
-                        </div>
-                        <div>
-                            <p className="text-sm text-slate-500">Tanggal Selesai</p>
-                            <p className="font-bold text-slate-900">
-                                {new Date(certificate.completed_at || new Date()).toLocaleDateString('id-ID', {
-                                    day: 'numeric',
-                                    month: 'long',
-                                    year: 'numeric'
-                                })}
-                            </p>
-                        </div>
-                    </div>
-                </motion.div>
-
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.4 }}
-                    className="bg-white rounded-xl border border-slate-200 p-6"
-                >
-                    <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-emerald-100 rounded-xl flex items-center justify-center">
-                            <CheckCircle2 className="text-emerald-600" size={24} />
-                        </div>
-                        <div>
-                            <p className="text-sm text-slate-500">Status</p>
-                            <p className="font-bold text-emerald-600">Verified</p>
-                        </div>
-                    </div>
-                </motion.div>
             </div>
-
-            {/* Print Styles */}
-            <style jsx global>{`
-                @media print {
-                    body * {
-                        visibility: hidden;
-                    }
-                    .print\\:shadow-none,
-                    .print\\:shadow-none * {
-                        visibility: visible;
-                    }
-                    .print\\:shadow-none {
-                        position: absolute;
-                        left: 0;
-                        top: 0;
-                        width: 100%;
-                    }
-                }
-            `}</style>
         </AppLayout>
     );
 }

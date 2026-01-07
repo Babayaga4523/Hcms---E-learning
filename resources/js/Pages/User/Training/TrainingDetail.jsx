@@ -6,166 +6,397 @@ import {
     BookOpen, Clock, Award, PlayCircle, CheckCircle2, 
     FileText, Video, Download, ChevronRight, Lock,
     ArrowLeft, Target, Users, Calendar, Timer, Star,
-    AlertCircle, Play, Pause, RotateCcw
+    AlertCircle, Play, Pause, RotateCcw, Zap, Share2
 } from 'lucide-react';
 import axios from 'axios';
 
-// Material Item Component
-const MaterialItem = ({ material, index, isLocked, onStart, currentMaterial }) => {
-    const isActive = currentMaterial?.id === material.id;
-    const isCompleted = material.is_completed;
-    
-    const getIcon = () => {
-        switch (material.type) {
-            case 'video': return Video;
-            case 'pdf': case 'document': return FileText;
-            case 'download': return Download;
-            default: return BookOpen;
+// --- Wondr Style System ---
+const WondrStyles = () => (
+    <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+        
+        .wondr-dark { background-color: #002824; }
+        .wondr-green { color: #005E54; }
+        .wondr-lime-bg { background-color: #D6F84C; color: #002824; }
+        .wondr-lime-text { color: #D6F84C; }
+        
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 10px 40px -10px rgba(0, 40, 36, 0.05);
         }
-    };
-    
-    const Icon = getIcon();
+
+        .material-card {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 1px solid transparent;
+        }
+        .material-card:hover:not(:disabled) {
+            transform: translateX(4px);
+            background-color: #F0FDF4;
+            border-color: #005E54;
+        }
+        
+        .hero-pattern {
+            background-color: #002824;
+            background-image: radial-gradient(#005E54 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+
+        .animate-enter { animation: enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; opacity: 0; }
+        @keyframes enter {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    `}</style>
+);
+
+// Material Row Component
+const MaterialRow = ({ material, index, isLocked, isActive, onStart }) => {
+    const Icon = material.type === 'video' ? Video : FileText;
     
     return (
-        <motion.button
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: index * 0.05 }}
+        <button
             onClick={() => !isLocked && onStart(material)}
             disabled={isLocked}
-            className={`w-full flex items-center gap-4 p-4 rounded-xl transition-all text-left ${
-                isActive 
-                    ? 'bg-blue-50 border-2 border-blue-500' 
-                    : isLocked 
-                        ? 'bg-slate-50 opacity-60 cursor-not-allowed'
-                        : 'bg-white hover:bg-slate-50 border border-slate-200'
-            }`}
+            className={`w-full flex items-center gap-4 p-4 rounded-2xl material-card group text-left ${
+                isActive ? 'bg-[#F0FDF4] border-[#005E54] ring-1 ring-[#005E54]' : 'bg-white border-slate-100'
+            } ${isLocked ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
         >
-            <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                isCompleted 
-                    ? 'bg-emerald-100 text-emerald-600' 
-                    : isActive 
-                        ? 'bg-blue-100 text-blue-600'
-                        : isLocked 
-                            ? 'bg-slate-100 text-slate-400'
-                            : 'bg-slate-100 text-slate-600'
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 transition-colors ${
+                material.is_completed ? 'bg-[#005E54] text-[#D6F84C]' : 
+                isActive ? 'bg-[#D6F84C] text-[#002824]' : 
+                isLocked ? 'bg-slate-100 text-slate-400' : 'bg-blue-50 text-blue-600'
             }`}>
-                {isCompleted ? <CheckCircle2 size={20} /> : isLocked ? <Lock size={18} /> : <Icon size={20} />}
+                {material.is_completed ? <CheckCircle2 size={20} /> : isLocked ? <Lock size={18} /> : <Icon size={20} />}
             </div>
             
             <div className="flex-1 min-w-0">
-                <h4 className={`font-semibold text-sm ${isLocked ? 'text-slate-400' : 'text-slate-900'}`}>
-                    {material.title}
+                <h4 className={`font-bold text-sm mb-1 ${isActive ? 'text-[#005E54]' : 'text-slate-900'}`}>
+                    {index + 1}. {material.title}
                 </h4>
-                <p className="text-xs text-slate-500 flex items-center gap-2 mt-1">
-                    <Timer size={12} />
-                    {material.duration || 5} menit
-                    {material.type && (
-                        <span className="uppercase text-[10px] px-1.5 py-0.5 bg-slate-100 rounded">
-                            {material.type}
-                        </span>
-                    )}
-                </p>
+                <div className="flex items-center gap-3 text-xs text-slate-500 font-medium">
+                    <span className="flex items-center gap-1"><Clock size={12} /> {material.duration} min</span>
+                    <span className="capitalize px-2 py-0.5 bg-slate-100 rounded text-[10px]">{material.type}</span>
+                </div>
             </div>
-            
-            {!isLocked && !isCompleted && (
-                <ChevronRight className="text-slate-400" size={20} />
+
+            {!isLocked && (
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
+                    isActive ? 'bg-[#005E54] text-white' : 'bg-slate-100 text-slate-400 group-hover:bg-[#D6F84C] group-hover:text-[#002824]'
+                }`}>
+                    <Play size={14} fill="currentColor" />
+                </div>
             )}
-        </motion.button>
+        </button>
     );
 };
 
 // Quiz Section Component
 const QuizSection = ({ type, quiz, training, onStart }) => {
     const isPassed = quiz?.is_passed;
-    const score = quiz?.score;
+    const score = quiz?.score || quiz?.percentage || 0;
     const attempts = quiz?.attempts || 0;
+    const hasAttempted = attempts > 0 || score > 0;
     
     return (
-        <div className={`p-6 rounded-2xl border-2 ${
-            isPassed 
-                ? 'bg-emerald-50 border-emerald-200' 
-                : 'bg-white border-slate-200'
-        }`}>
-            <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                        isPassed ? 'bg-emerald-100' : 'bg-blue-100'
-                    }`}>
-                        <Target className={isPassed ? 'text-emerald-600' : 'text-blue-600'} size={24} />
+        <div className="bg-gradient-to-br from-[#002824] to-[#00403a] rounded-[32px] p-8 text-white relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-8 opacity-10">
+                <Award size={120} />
+            </div>
+            <div className="relative z-10">
+                <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-3">
+                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                            isPassed ? 'bg-[#D6F84C] text-[#002824]' : 'bg-white/10'
+                        }`}>
+                            <Target size={24} />
+                        </div>
+                        <div>
+                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#D6F84C]/20 text-[#D6F84C] rounded-lg text-xs font-bold uppercase mb-2 border border-[#D6F84C]/20">
+                                <Target size={14} /> {type === 'pretest' ? 'Pre-Test' : 'Post-Test'}
+                            </div>
+                            <h3 className="font-bold text-xl">
+                                {type === 'pretest' ? 'Tes Awal' : 'Ujian Akhir'}
+                            </h3>
+                            <p className="text-blue-100 text-sm mt-1">
+                                {type === 'pretest' 
+                                    ? 'Ukur pemahaman awal Anda'
+                                    : 'Evaluasi pembelajaran akhir'}
+                            </p>
+                        </div>
                     </div>
-                    <div>
-                        <h3 className="font-bold text-lg text-slate-900">
-                            {type === 'pretest' ? 'Pre-Test' : 'Post-Test'}
-                        </h3>
-                        <p className="text-sm text-slate-500">
-                            {type === 'pretest' 
-                                ? 'Tes awal untuk mengukur pemahaman Anda'
-                                : 'Tes akhir untuk evaluasi pembelajaran'}
-                        </p>
-                    </div>
+                    
+                    {hasAttempted && (
+                        <div className="text-right">
+                            <p className={`text-3xl font-black ${isPassed ? 'text-[#D6F84C]' : 'text-red-400'}`}>
+                                {score}%
+                            </p>
+                            <p className={`text-xs font-bold ${isPassed ? 'text-[#D6F84C]' : 'text-red-400'}`}>
+                                {isPassed ? 'LULUS' : 'BELUM LULUS'}
+                            </p>
+                        </div>
+                    )}
                 </div>
                 
-                {isPassed && (
-                    <div className="text-right">
-                        <p className="text-2xl font-black text-emerald-600">{score}%</p>
-                        <p className="text-xs text-emerald-600">Lulus</p>
-                    </div>
-                )}
-            </div>
-            
-            <div className="flex items-center gap-4 mb-4 text-sm text-slate-600">
-                <span className="flex items-center gap-1">
-                    <Clock size={14} />
-                    {quiz?.duration || 30} menit
-                </span>
-                <span className="flex items-center gap-1">
-                    <FileText size={14} />
-                    {quiz?.questions_count || 10} soal
-                </span>
-                {attempts > 0 && (
+                <div className="flex items-center gap-4 mb-6 text-sm text-blue-100">
                     <span className="flex items-center gap-1">
-                        <RotateCcw size={14} />
-                        {attempts} percobaan
+                        <Clock size={14} />
+                        {quiz?.duration || 30} menit
                     </span>
-                )}
+                    <span className="flex items-center gap-1">
+                        <FileText size={14} />
+                        {quiz?.questions_count || 5} soal
+                    </span>
+                    {attempts > 0 && (
+                        <span className="flex items-center gap-1">
+                            <RotateCcw size={14} />
+                            {attempts} percobaan
+                        </span>
+                    )}
+                </div>
+                
+                <button
+                    onClick={() => onStart(type)}
+                    className={`w-full py-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 ${
+                        isPassed
+                            ? 'bg-white/10 text-white hover:bg-white/20'
+                            : 'bg-[#D6F84C] text-[#002824] hover:bg-[#c2e43c] shadow-xl'
+                    }`}
+                >
+                    {isPassed ? (
+                        <>
+                            <CheckCircle2 size={18} />
+                            Lihat Hasil ({score}%)
+                        </>
+                    ) : hasAttempted ? (
+                        <>
+                            <RotateCcw size={18} />
+                            Coba Lagi (Nilai: {score}%)
+                        </>
+                    ) : (
+                        <>
+                            <PlayCircle size={18} />
+                            Mulai {type === 'pretest' ? 'Pre-Test' : 'Post-Test'}
+                        </>
+                    )}
+                </button>
             </div>
-            
-            <button
-                onClick={() => onStart(type)}
-                disabled={isPassed && type === 'pretest'}
-                className={`w-full py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${
-                    isPassed
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-200'
-                }`}
-            >
-                {isPassed ? (
-                    <>
-                        <CheckCircle2 size={18} />
-                        {type === 'pretest' ? 'Sudah Selesai' : 'Lihat Hasil'}
-                    </>
-                ) : (
-                    <>
-                        <PlayCircle size={18} />
-                        Mulai {type === 'pretest' ? 'Pre-Test' : 'Post-Test'}
-                    </>
-                )}
-            </button>
         </div>
     );
 };
 
 // Main Component
-export default function TrainingDetail({ auth, training = {}, materials = [], pretest = null, posttest = null }) {
+export default function TrainingDetail({ auth, training: initialTraining, enrollment: initialEnrollment, progress: initialProgress, quizAttempts: initialQuizAttempts, completedMaterials: initialCompletedMaterials }) {
     const user = auth?.user || {};
+    const [training, setTraining] = useState(initialTraining || {});
+    const [materials, setMaterials] = useState([]);
+    const [pretest, setPretest] = useState(null);
+    const [posttest, setPosttest] = useState(null);
     const [currentMaterial, setCurrentMaterial] = useState(null);
-    const [activeTab, setActiveTab] = useState('overview');
-    const [loading, setLoading] = useState(false);
+    const [activeTab, setActiveTab] = useState('curriculum');
+    const [loading, setLoading] = useState(!initialTraining);
+    const trainingId = training?.id || initialTraining?.id;
     
-    const progress = training.progress || 0;
-    const completedMaterials = materials.filter(m => m.is_completed).length;
-    const totalMaterials = materials.length;
+    // Load training data on mount
+    useEffect(() => {
+        if (initialTraining) {
+            // Use props data if available
+            setupInitialData();
+        } else {
+            // Fallback to API call if no props
+            loadTrainingData();
+        }
+    }, []);
+    
+    const setupInitialData = async () => {
+        try {
+            setLoading(true);
+            
+            // Transform training data from props
+            const transformedTraining = {
+                id: initialTraining.id,
+                title: initialTraining.title,
+                description: initialTraining.description,
+                full_description: initialTraining.full_description,
+                category: initialTraining.category,
+                is_mandatory: initialTraining.is_mandatory,
+                status: initialEnrollment?.status || 'not_started',
+                progress: initialProgress?.progress_percentage || 0,
+                duration: initialTraining.duration_minutes || initialTraining.duration || 0,
+                due_date: initialTraining.expiry_date || initialTraining.end_date,
+                enrolled_count: initialTraining.enrollments_count || 0,
+                materials_count: initialTraining.materials_count || 1,
+                objectives: null, // Will be set below
+                requirements: initialTraining.requirements,
+                instructor: initialTraining.instructor || null,
+                certification_available: initialTraining.certificate_template ? true : false
+            };
+            
+            // Handle objectives parsing safely
+            try {
+                if (typeof initialTraining.objectives === 'string') {
+                    transformedTraining.objectives = JSON.parse(initialTraining.objectives);
+                } else if (Array.isArray(initialTraining.objectives)) {
+                    transformedTraining.objectives = initialTraining.objectives;
+                }
+            } catch (e) {
+                transformedTraining.objectives = null;
+            }
+            
+            setTraining(transformedTraining);
+            
+            // Set quiz data from props - show quiz even if not completed
+            // Check if pretest exists in quizAttempts (quiz available for this training)
+            if (initialQuizAttempts?.pretest) {
+                setPretest({
+                    is_passed: initialQuizAttempts.pretest.is_passed || false,
+                    score: initialQuizAttempts.pretest.score || 0,
+                    percentage: initialQuizAttempts.pretest.percentage || 0,
+                    attempt_id: initialQuizAttempts.pretest.attempt_id || null,
+                    attempts: initialQuizAttempts.pretest.completed ? 1 : 0,
+                    duration: 30,
+                    questions_count: initialTraining.questions?.filter(q => q.question_type === 'pretest').length || 5
+                });
+            }
+            
+            // Check if posttest exists in quizAttempts (quiz available for this training)
+            if (initialQuizAttempts?.posttest) {
+                setPosttest({
+                    is_passed: initialQuizAttempts.posttest.is_passed || false,
+                    score: initialQuizAttempts.posttest.score || 0,
+                    percentage: initialQuizAttempts.posttest.percentage || 0,
+                    attempt_id: initialQuizAttempts.posttest.attempt_id || null,
+                    attempts: initialQuizAttempts.posttest.completed ? 1 : 0,
+                    duration: 30,
+                    questions_count: initialTraining.questions?.filter(q => q.question_type === 'posttest').length || 5
+                });
+            }
+            
+            // Load materials
+            const materialsRes = await axios.get(`/api/training/${initialTraining.id}/materials`);
+            const transformedMaterials = materialsRes.data.materials.map(m => ({
+                id: m.id,
+                title: m.title,
+                type: m.type,
+                duration: m.duration,
+                is_completed: initialCompletedMaterials.includes(m.id),
+                module_title: m.module_title
+            }));
+            
+            setMaterials(transformedMaterials);
+            setLoading(false);
+        } catch (error) {
+            console.error('Error setting up initial data:', error);
+            setLoading(false);
+        }
+    };
+    
+    const loadTrainingData = async (idParam) => {
+        try {
+            setLoading(true);
+
+            // Determine training id: prefer explicit param, then state/props, then URL
+            const idFromUrl = (window.location.pathname || '').split('/')[2];
+            const id = idParam || training?.id || initialTraining?.id || idFromUrl;
+
+            if (!id) {
+                console.error('No training id available to load training data');
+                setLoading(false);
+                return;
+            }
+
+            // Load training details
+            const trainingRes = await axios.get(`/api/user/trainings/${id}`);
+            const trainingData = trainingRes.data.training;
+            const enrollment = trainingRes.data.enrollment;
+            const completedMaterialIds = trainingRes.data.completedMaterials || [];
+            
+            // Transform training data
+            const transformedTraining = {
+                id: trainingData.id,
+                title: trainingData.title,
+                description: trainingData.description,
+                full_description: trainingData.full_description,
+                category: trainingData.category,
+                is_mandatory: trainingData.is_mandatory,
+                status: enrollment?.status || 'not_started',
+                progress: enrollment?.progress || 0,
+                duration: trainingData.duration,
+                due_date: trainingData.end_date,
+                enrolled_count: trainingData.enrollments_count || 0,
+                objectives: null, // Will be set below
+                requirements: trainingData.requirements,
+                instructor: trainingData.instructor || null,
+                certification_available: trainingData.certification_available
+            };
+            
+            // Handle objectives parsing safely
+            try {
+                if (typeof trainingData.objectives === 'string') {
+                    transformedTraining.objectives = JSON.parse(trainingData.objectives);
+                } else if (Array.isArray(trainingData.objectives)) {
+                    transformedTraining.objectives = trainingData.objectives;
+                }
+            } catch (e) {
+                transformedTraining.objectives = null;
+            }
+            
+            setTraining(transformedTraining);
+            
+            // Load materials
+            const materialsRes = await axios.get(`/api/training/${trainingData.id}/materials`);
+            const transformedMaterials = materialsRes.data.materials.map(m => ({
+                id: m.id,
+                title: m.title,
+                type: m.type,
+                duration: m.duration,
+                is_completed: completedMaterialIds.includes(m.id),
+                module_title: m.module_title
+            }));
+            
+            setMaterials(transformedMaterials);
+            
+            // Load quizzes data
+            try {
+                const pretestRes = await axios.get(`/api/training/${trainingData.id}/quiz/pretest`);
+                if (pretestRes.data.quiz) {
+                    setPretest({
+                        is_passed: pretestRes.data.is_passed || false,
+                        score: pretestRes.data.score || 0,
+                        attempts: pretestRes.data.attempts || 0,
+                        duration: pretestRes.data.quiz.duration,
+                        questions_count: pretestRes.data.quiz.questions_count
+                    });
+                }
+            } catch (e) {
+                console.log('No pretest available');
+            }
+            
+            try {
+                const posttestRes = await axios.get(`/api/training/${trainingData.id}/quiz/posttest`);
+                if (posttestRes.data.quiz) {
+                    setPosttest({
+                        is_passed: posttestRes.data.is_passed || false,
+                        score: posttestRes.data.score || 0,
+                        attempts: posttestRes.data.attempts || 0,
+                        duration: posttestRes.data.quiz.duration,
+                        questions_count: posttestRes.data.quiz.questions_count
+                    });
+                }
+            } catch (e) {
+                console.log('No posttest available');
+            }
+            
+        } catch (error) {
+            console.error('Failed to load training data:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+    
     
     const handleStartMaterial = (material) => {
         router.visit(`/training/${training.id}/material/${material.id}`);
@@ -178,344 +409,408 @@ export default function TrainingDetail({ auth, training = {}, materials = [], pr
     const handleStartTraining = async () => {
         try {
             setLoading(true);
-            await axios.post(`/api/training/${training.id}/start`);
-            // Refresh page to get updated status
-            router.reload();
+            await axios.post(`/api/training/${trainingId}/start`);
+            // Reload training data to get updated status
+            await loadTrainingData();
         } catch (error) {
             console.error('Failed to start training:', error);
+            alert('Gagal memulai training. Silakan coba lagi.');
         } finally {
             setLoading(false);
         }
     };
+    
+    if (loading) {
+        return (
+            <AppLayout user={user}>
+                <Head title="Loading..." />
+                <div className="flex items-center justify-center min-h-screen">
+                    <div className="text-center">
+                        <div className="animate-spin rounded-full h-16 w-16 border-4 border-blue-600 border-t-transparent mx-auto mb-4"></div>
+                        <p className="text-slate-600">Memuat data training...</p>
+                    </div>
+                </div>
+            </AppLayout>
+        );
+    }
 
     return (
         <AppLayout user={user}>
+            <WondrStyles />
             <Head title={training.title || 'Detail Training'} />
 
-            {/* Back Navigation */}
-            <div className="mb-6">
-                <Link 
-                    href="/my-trainings"
-                    className="inline-flex items-center gap-2 text-slate-600 hover:text-blue-600 transition-colors"
-                >
-                    <ArrowLeft size={20} />
-                    <span className="font-medium">Kembali ke Training Saya</span>
-                </Link>
-            </div>
+            {/* Immersive Hero Header */}
+            <div className="hero-pattern pt-8 pb-40 px-6 lg:px-12 relative rounded-b-[48px] overflow-hidden shadow-2xl shadow-[#002824]/30 mb-8">
+                {/* Navigation */}
+                <div className="relative z-20 flex justify-between items-center mb-12 max-w-7xl mx-auto">
+                    <Link 
+                        href="/my-trainings" 
+                        className="flex items-center gap-2 text-white/80 hover:text-[#D6F84C] transition-colors group"
+                    >
+                        <div className="p-2 bg-white/10 rounded-full group-hover:bg-[#D6F84C] group-hover:text-[#002824] transition-all">
+                            <ArrowLeft size={20} />
+                        </div>
+                        <span className="font-bold text-sm">Kembali</span>
+                    </Link>
+                    <button className="p-2 bg-white/10 rounded-full text-white hover:bg-white/20 transition">
+                        <Share2 size={20} />
+                    </button>
+                </div>
 
-            {/* Header */}
-            <div className="bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-800 rounded-3xl p-8 mb-8 relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl" />
-                
-                <div className="relative z-10">
-                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
-                        <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-3">
-                                <span className="px-3 py-1 bg-white/20 text-white text-xs font-bold rounded-full">
-                                    {training.category || 'Training'}
+                <div className="relative z-20 flex flex-col md:flex-row items-end justify-between gap-8 max-w-7xl mx-auto">
+                    <div className="flex-1 text-white">
+                        <div className="flex flex-wrap items-center gap-3 mb-4">
+                            <span className="px-3 py-1 bg-[#D6F84C] text-[#002824] rounded-lg text-xs font-extrabold uppercase tracking-wider">
+                                {training.category || 'Training'}
+                            </span>
+                            {training.is_mandatory && (
+                                <span className="px-3 py-1 bg-red-500/80 text-white rounded-lg text-xs font-bold uppercase tracking-wider flex items-center gap-1">
+                                    <AlertCircle size={12} /> Mandatory
                                 </span>
-                                {training.is_mandatory && (
-                                    <span className="px-3 py-1 bg-red-500/80 text-white text-xs font-bold rounded-full">
-                                        Wajib
-                                    </span>
-                                )}
-                            </div>
-                            <h1 className="text-3xl md:text-4xl font-black text-white mb-3">{training.title}</h1>
-                            <p className="text-blue-100 mb-4 max-w-2xl">{training.description}</p>
-                            
-                            {/* Meta Info */}
-                            <div className="flex flex-wrap items-center gap-4 text-sm text-blue-100">
-                                <span className="flex items-center gap-2">
-                                    <Clock size={16} />
-                                    {training.duration || 60} menit
-                                </span>
-                                <span className="flex items-center gap-2">
-                                    <BookOpen size={16} />
-                                    {totalMaterials} materi
-                                </span>
-                                <span className="flex items-center gap-2">
-                                    <Users size={16} />
-                                    {training.enrolled_count || 0} peserta
-                                </span>
-                                {training.due_date && (
-                                    <span className="flex items-center gap-2">
-                                        <Calendar size={16} />
-                                        Deadline: {new Date(training.due_date).toLocaleDateString('id-ID')}
-                                    </span>
-                                )}
-                            </div>
+                            )}
+                            <span className="flex items-center gap-1 text-white/70 text-xs font-medium bg-white/10 px-3 py-1 rounded-lg">
+                                <Clock size={12} /> {training.duration || 60} Menit
+                            </span>
                         </div>
                         
-                        {/* Progress Circle */}
-                        <div className="flex items-center gap-6">
-                            <div className="relative">
-                                <svg className="w-28 h-28 transform -rotate-90">
-                                    <circle
-                                        cx="56"
-                                        cy="56"
-                                        r="48"
-                                        stroke="rgba(255,255,255,0.2)"
-                                        strokeWidth="8"
-                                        fill="none"
-                                    />
-                                    <circle
-                                        cx="56"
-                                        cy="56"
-                                        r="48"
-                                        stroke="#D6FF59"
-                                        strokeWidth="8"
-                                        fill="none"
-                                        strokeLinecap="round"
-                                        strokeDasharray={`${progress * 3.02} 302`}
-                                    />
-                                </svg>
-                                <div className="absolute inset-0 flex items-center justify-center">
-                                    <span className="text-2xl font-black text-white">{progress}%</span>
+                        <h1 className="text-3xl md:text-5xl font-extrabold leading-tight mb-4 max-w-3xl">
+                            {training.title}
+                        </h1>
+                        <p className="text-blue-100 text-lg max-w-2xl leading-relaxed mb-6">
+                            {training.description}
+                        </p>
+
+                        <div className="flex items-center gap-4">
+                            {training.instructor && (
+                                <>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#D6F84C] to-[#005E54] flex items-center justify-center text-[#002824] font-bold text-xs">
+                                            {training.instructor.name?.charAt(0) || 'I'}
+                                        </div>
+                                        <div className="text-sm">
+                                            <p className="font-bold text-white">{training.instructor.name}</p>
+                                            <p className="text-white/60 text-xs">{training.instructor.title || 'Instructor'}</p>
+                                        </div>
+                                    </div>
+                                    <div className="h-8 w-[1px] bg-white/20 mx-2"></div>
+                                </>
+                            )}
+                            <div className="text-sm text-white/80">
+                                <span className="font-bold text-white">{materials.length || training.materials_count || 1}</span> Materi
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Circular Progress */}
+                    <div className="relative flex-shrink-0">
+                        <svg className="w-32 h-32 md:w-40 md:h-40 transform -rotate-90">
+                            <circle cx="50%" cy="50%" r="45%" stroke="rgba(255,255,255,0.1)" strokeWidth="8" fill="none" />
+                            <circle 
+                                cx="50%" cy="50%" r="45%" 
+                                stroke="#D6F84C" strokeWidth="8" fill="none" strokeLinecap="round"
+                                strokeDasharray="283" 
+                                strokeDashoffset={283 - (283 * (training.progress || 0)) / 100}
+                                className="transition-all duration-1000 ease-out"
+                            />
+                        </svg>
+                        <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
+                            <span className="text-3xl md:text-4xl font-black">{training.progress || 0}%</span>
+                            <span className="text-[10px] uppercase font-bold tracking-wider opacity-70">Completed</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Main Content Grid */}
+            <div className="max-w-7xl mx-auto px-6 -mt-32 relative z-30 pb-20">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left Column: Content (8 cols) */}
+                    <div className="lg:col-span-8 space-y-8">
+                        
+                        {/* Tabs */}
+                        <div className="glass-panel p-2 rounded-[20px] flex gap-1 sticky top-6 z-40 bg-white/90 backdrop-blur-md">
+                            {[
+                                { id: 'curriculum', label: 'Curriculum' },
+                                { id: 'about', label: 'About' },
+                                { id: 'quiz', label: 'Quiz' },
+                            ].map(tab => (
+                                <button
+                                    key={tab.id}
+                                    onClick={() => setActiveTab(tab.id)}
+                                    className={`flex-1 py-3 rounded-2xl text-sm font-bold capitalize transition-all ${
+                                        activeTab === tab.id ? 'bg-[#002824] text-[#D6F84C] shadow-lg' : 'text-slate-500 hover:bg-slate-50'
+                                    }`}
+                                >
+                                    {tab.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="min-h-[500px] animate-enter">
+                            {activeTab === 'curriculum' && (
+                                <div className="space-y-6">
+                                    {/* Material List */}
+                                    <div className="bg-white rounded-[32px] p-6 md:p-8 shadow-sm border border-slate-100">
+                                        <div className="flex justify-between items-end mb-6">
+                                            <div>
+                                                <h3 className="text-xl font-bold text-slate-900">Materi Pembelajaran</h3>
+                                                <p className="text-sm text-slate-500">
+                                                    {materials.filter(m => m.is_completed).length} dari {materials.length} selesai
+                                                </p>
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="space-y-3">
+                                            {materials.length > 0 ? materials.map((material, index) => {
+                                                // Status 'enrolled' dari backend = belum dimulai di frontend
+                                                // User selalu bisa akses materi pertama, materi selanjutnya tergantung sequential completion
+                                                const isNotStarted = training.status === 'not_started' || training.status === 'enrolled';
+                                                const isLocked = isNotStarted && index > 0 && !materials[0]?.is_completed;
+                                                const isActive = !material.is_completed && (index === 0 || materials[index-1]?.is_completed);
+                                                
+                                                return (
+                                                    <MaterialRow 
+                                                        key={material.id} 
+                                                        material={material} 
+                                                        index={index}
+                                                        isLocked={isLocked}
+                                                        isActive={isActive}
+                                                        onStart={handleStartMaterial}
+                                                    />
+                                                );
+                                            }) : (
+                                                <div className="text-center py-8 text-slate-500">
+                                                    <BookOpen className="mx-auto mb-2 text-slate-300" size={40} />
+                                                    <p>Belum ada materi untuk training ini</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {activeTab === 'about' && (
+                                <div className="bg-white rounded-[32px] p-8 shadow-sm border border-slate-100 space-y-6">
+                                    <div>
+                                        <h3 className="text-lg font-bold text-slate-900 mb-3">Deskripsi Lengkap</h3>
+                                        <p className="text-slate-600 leading-relaxed">
+                                            {training.full_description || training.description || 'Tidak ada deskripsi lengkap.'}
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <h3 className="text-lg font-bold text-slate-900 mb-3">Apa yang akan Anda pelajari?</h3>
+                                        <ul className="grid grid-cols-1 gap-3">
+                                            {(training.objectives && Array.isArray(training.objectives) && training.objectives.length > 0 
+                                                ? training.objectives 
+                                                : [
+                                                    'Memahami dan menguasai materi pelatihan dengan baik',
+                                                    'Mampu menerapkan pengetahuan yang didapat dalam pekerjaan sehari-hari',
+                                                    'Meningkatkan kompetensi dan keterampilan di bidang terkait',
+                                                    'Mencapai standar kelulusan yang telah ditentukan'
+                                                ]
+                                            ).map((obj, i) => (
+                                                <li key={i} className="flex items-start gap-3 p-3 bg-slate-50 rounded-xl">
+                                                    <CheckCircle2 className="text-[#005E54] flex-shrink-0 mt-0.5" size={18} />
+                                                    <span className="text-slate-700 text-sm font-medium">{obj}</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                    {training.requirements && (
+                                        <div className="bg-amber-50 rounded-2xl border border-amber-200 p-6">
+                                            <div className="flex items-start gap-3">
+                                                <AlertCircle className="text-amber-600 flex-shrink-0 mt-0.5" size={20} />
+                                                <div>
+                                                    <h3 className="font-bold text-amber-900 mb-2">Prasyarat</h3>
+                                                    <p className="text-sm text-amber-800">{training.requirements}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {activeTab === 'quiz' && (
+                                <div className="space-y-6">
+                                    {pretest && (
+                                        <QuizSection
+                                            type="pretest"
+                                            quiz={pretest}
+                                            training={training}
+                                            onStart={handleStartQuiz}
+                                        />
+                                    )}
+                                    {posttest && (
+                                        <QuizSection
+                                            type="posttest"
+                                            quiz={posttest}
+                                            training={training}
+                                            onStart={handleStartQuiz}
+                                        />
+                                    )}
+                                    {!pretest && !posttest && (
+                                        <div className="bg-white rounded-[32px] p-8 shadow-sm border border-slate-100 text-center">
+                                            <Target className="mx-auto mb-4 text-slate-300" size={48} />
+                                            <p className="text-slate-500">Belum ada quiz untuk training ini</p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Right Column: Sticky Sidebar (4 cols) */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        {/* Action Card */}
+                        <div className="glass-panel p-6 rounded-[32px] sticky top-6">
+                            <h3 className="font-bold text-slate-900 mb-6">Status Training</h3>
+                            
+                            <div className="space-y-4 mb-6">
+                                {training.due_date && (
+                                    <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                        <div className="flex items-center gap-3">
+                                            <Calendar className="text-slate-400" size={20} />
+                                            <div>
+                                                <p className="text-xs text-slate-500 font-bold uppercase">Deadline</p>
+                                                <p className="font-bold text-slate-900">
+                                                    {new Date(training.due_date).toLocaleDateString('id-ID')}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                                <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                    <div className="flex items-center gap-3">
+                                        <Award className="text-slate-400" size={20} />
+                                        <div>
+                                            <p className="text-xs text-slate-500 font-bold uppercase">Sertifikat</p>
+                                            <p className="font-bold text-slate-900">
+                                                {training.certification_available ? 'Tersedia' : 'Tidak Tersedia'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                {/* Progress Breakdown */}
+                                <div className="space-y-3 pt-4 border-t border-slate-200">
+                                    <div>
+                                        <div className="flex justify-between text-sm mb-2">
+                                            <span className="text-slate-600">Materi</span>
+                                            <span className="font-bold">
+                                                {materials.filter(m => m.is_completed).length}/{materials.length}
+                                            </span>
+                                        </div>
+                                        <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                                            <div 
+                                                className="h-full bg-[#005E54] rounded-full transition-all"
+                                                style={{ 
+                                                    width: `${materials.length > 0 ? (materials.filter(m => m.is_completed).length / materials.length) * 100 : 0}%` 
+                                                }}
+                                            />
+                                        </div>
+                                    </div>
+                                    
+                                    {pretest && (
+                                        <div>
+                                            <div className="flex justify-between text-sm mb-2">
+                                                <span className="text-slate-600">Pre-Test</span>
+                                                <span className={`font-bold ${
+                                                    pretest?.is_passed ? 'text-emerald-600' : 'text-slate-500'
+                                                }`}>
+                                                    {pretest?.is_passed ? 'Lulus' : 'Belum'}
+                                                </span>
+                                            </div>
+                                            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                                                <div 
+                                                    className={`h-full rounded-full transition-all ${
+                                                        pretest?.is_passed ? 'bg-emerald-500' : 'bg-slate-300'
+                                                    }`}
+                                                    style={{ width: pretest?.is_passed ? '100%' : '0%' }}
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                    
+                                    {posttest && (
+                                        <div>
+                                            <div className="flex justify-between text-sm mb-2">
+                                                <span className="text-slate-600">Post-Test</span>
+                                                <span className={`font-bold ${
+                                                    posttest?.is_passed ? 'text-emerald-600' : 'text-slate-500'
+                                                }`}>
+                                                    {posttest?.is_passed ? 'Lulus' : 'Belum'}
+                                                </span>
+                                            </div>
+                                            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                                                <div 
+                                                    className={`h-full rounded-full transition-all ${
+                                                        posttest?.is_passed ? 'bg-emerald-500' : 'bg-slate-300'
+                                                    }`}
+                                                    style={{ width: posttest?.is_passed ? '100%' : '0%' }}
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
-                            
-                            {training.status === 'not_started' && (
+
+                            {(training.status === 'not_started' || training.status === 'enrolled') ? (
                                 <button
                                     onClick={handleStartTraining}
                                     disabled={loading}
-                                    className="px-8 py-4 bg-[#D6FF59] text-slate-900 rounded-2xl font-bold hover:bg-[#cbf542] transition-all shadow-xl flex items-center gap-2"
+                                    className="w-full py-4 bg-[#005E54] hover:bg-[#00403a] text-white rounded-2xl font-bold shadow-lg shadow-[#005E54]/20 transition-all hover:scale-[1.02] flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     {loading ? (
                                         <>
-                                            <div className="animate-spin rounded-full h-5 w-5 border-2 border-slate-900 border-t-transparent" />
+                                            <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent" />
                                             Memulai...
                                         </>
                                     ) : (
                                         <>
                                             <PlayCircle size={20} />
-                                            Mulai Training
+                                            Mulai Sekarang
                                         </>
                                     )}
                                 </button>
+                            ) : training.status === 'completed' ? (
+                                <Link
+                                    href={`/training/${training.id}/certificate`}
+                                    className="w-full py-4 bg-gradient-to-br from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-white rounded-2xl font-bold shadow-lg transition-all hover:scale-[1.02] flex items-center justify-center gap-2"
+                                >
+                                    <Award size={20} />
+                                    Unduh Sertifikat
+                                </Link>
+                            ) : (
+                                <button
+                                    onClick={() => {
+                                        const nextMaterial = materials.find(m => !m.is_completed);
+                                        if (nextMaterial) handleStartMaterial(nextMaterial);
+                                    }}
+                                    className="w-full py-4 bg-[#005E54] hover:bg-[#00403a] text-white rounded-2xl font-bold shadow-lg shadow-[#005E54]/20 transition-all hover:scale-[1.02] flex items-center justify-center gap-2"
+                                >
+                                    <PlayCircle size={20} />
+                                    Lanjutkan Belajar
+                                </button>
                             )}
                         </div>
-                    </div>
-                </div>
-            </div>
 
-            {/* Content */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* Main Content */}
-                <div className="lg:col-span-2 space-y-6">
-                    {/* Tabs */}
-                    <div className="bg-white rounded-2xl border border-slate-200 p-1.5 flex gap-1">
-                        {[
-                            { id: 'overview', label: 'Overview' },
-                            { id: 'materials', label: 'Materi' },
-                            { id: 'quiz', label: 'Quiz & Ujian' },
-                        ].map(tab => (
-                            <button
-                                key={tab.id}
-                                onClick={() => setActiveTab(tab.id)}
-                                className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all ${
-                                    activeTab === tab.id
-                                        ? 'bg-blue-600 text-white shadow'
-                                        : 'text-slate-600 hover:bg-slate-50'
-                                }`}
-                            >
-                                {tab.label}
+                        {/* Help Widget */}
+                        <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-[32px] p-6 border border-blue-100">
+                            <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-blue-600 shadow-sm mb-4">
+                                <AlertCircle size={24} />
+                            </div>
+                            <h4 className="font-bold text-slate-900 mb-2">Butuh Bantuan?</h4>
+                            <p className="text-sm text-slate-600 mb-4">
+                                Jika Anda mengalami kendala teknis atau pertanyaan materi.
+                            </p>
+                            <button className="text-sm font-bold text-blue-600 hover:underline">
+                                Hubungi Instructor
                             </button>
-                        ))}
-                    </div>
-
-                    {/* Tab Content */}
-                    <AnimatePresence mode="wait">
-                        {activeTab === 'overview' && (
-                            <motion.div
-                                key="overview"
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -10 }}
-                                className="space-y-6"
-                            >
-                                {/* About */}
-                                <div className="bg-white rounded-2xl border border-slate-200 p-6">
-                                    <h3 className="font-bold text-lg text-slate-900 mb-4">Tentang Training Ini</h3>
-                                    <div className="prose prose-slate max-w-none">
-                                        <p>{training.full_description || training.description || 'Tidak ada deskripsi lengkap.'}</p>
-                                    </div>
-                                </div>
-
-                                {/* Learning Objectives */}
-                                <div className="bg-white rounded-2xl border border-slate-200 p-6">
-                                    <h3 className="font-bold text-lg text-slate-900 mb-4">Tujuan Pembelajaran</h3>
-                                    <ul className="space-y-3">
-                                        {(training.objectives || ['Memahami konsep dasar', 'Menerapkan dalam pekerjaan', 'Meningkatkan kompetensi']).map((obj, i) => (
-                                            <li key={i} className="flex items-start gap-3">
-                                                <CheckCircle2 className="text-emerald-500 flex-shrink-0 mt-0.5" size={18} />
-                                                <span className="text-slate-700">{obj}</span>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-
-                                {/* Requirements */}
-                                {training.requirements && (
-                                    <div className="bg-amber-50 rounded-2xl border border-amber-200 p-6">
-                                        <div className="flex items-start gap-3">
-                                            <AlertCircle className="text-amber-600 flex-shrink-0 mt-0.5" size={20} />
-                                            <div>
-                                                <h3 className="font-bold text-amber-900 mb-2">Prasyarat</h3>
-                                                <p className="text-sm text-amber-800">{training.requirements}</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-                            </motion.div>
-                        )}
-
-                        {activeTab === 'materials' && (
-                            <motion.div
-                                key="materials"
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -10 }}
-                                className="bg-white rounded-2xl border border-slate-200 p-6"
-                            >
-                                <div className="flex items-center justify-between mb-6">
-                                    <h3 className="font-bold text-lg text-slate-900">Daftar Materi</h3>
-                                    <span className="text-sm text-slate-500">
-                                        {completedMaterials}/{totalMaterials} selesai
-                                    </span>
-                                </div>
-                                
-                                <div className="space-y-3">
-                                    {materials.length > 0 ? materials.map((material, index) => (
-                                        <MaterialItem
-                                            key={material.id}
-                                            material={material}
-                                            index={index}
-                                            isLocked={training.status === 'not_started' && index > 0}
-                                            onStart={handleStartMaterial}
-                                            currentMaterial={currentMaterial}
-                                        />
-                                    )) : (
-                                        <div className="text-center py-8 text-slate-500">
-                                            <BookOpen className="mx-auto mb-2 text-slate-300" size={40} />
-                                            <p>Belum ada materi untuk training ini</p>
-                                        </div>
-                                    )}
-                                </div>
-                            </motion.div>
-                        )}
-
-                        {activeTab === 'quiz' && (
-                            <motion.div
-                                key="quiz"
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -10 }}
-                                className="space-y-6"
-                            >
-                                <QuizSection
-                                    type="pretest"
-                                    quiz={pretest}
-                                    training={training}
-                                    onStart={handleStartQuiz}
-                                />
-                                <QuizSection
-                                    type="posttest"
-                                    quiz={posttest}
-                                    training={training}
-                                    onStart={handleStartQuiz}
-                                />
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
-                </div>
-
-                {/* Sidebar */}
-                <div className="space-y-6">
-                    {/* Progress Card */}
-                    <div className="bg-white rounded-2xl border border-slate-200 p-6">
-                        <h3 className="font-bold text-lg text-slate-900 mb-4">Progress Anda</h3>
-                        
-                        <div className="space-y-4">
-                            <div>
-                                <div className="flex justify-between text-sm mb-2">
-                                    <span className="text-slate-600">Materi</span>
-                                    <span className="font-bold">{completedMaterials}/{totalMaterials}</span>
-                                </div>
-                                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                                    <div 
-                                        className="h-full bg-blue-600 rounded-full transition-all"
-                                        style={{ width: `${(completedMaterials/totalMaterials)*100 || 0}%` }}
-                                    />
-                                </div>
-                            </div>
-                            
-                            <div>
-                                <div className="flex justify-between text-sm mb-2">
-                                    <span className="text-slate-600">Pre-Test</span>
-                                    <span className="font-bold">{pretest?.is_passed ? 'Lulus' : 'Belum'}</span>
-                                </div>
-                                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                                    <div 
-                                        className={`h-full rounded-full ${pretest?.is_passed ? 'bg-emerald-500' : 'bg-slate-300'}`}
-                                        style={{ width: pretest?.is_passed ? '100%' : '0%' }}
-                                    />
-                                </div>
-                            </div>
-                            
-                            <div>
-                                <div className="flex justify-between text-sm mb-2">
-                                    <span className="text-slate-600">Post-Test</span>
-                                    <span className="font-bold">{posttest?.is_passed ? 'Lulus' : 'Belum'}</span>
-                                </div>
-                                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                                    <div 
-                                        className={`h-full rounded-full ${posttest?.is_passed ? 'bg-emerald-500' : 'bg-slate-300'}`}
-                                        style={{ width: posttest?.is_passed ? '100%' : '0%' }}
-                                    />
-                                </div>
-                            </div>
                         </div>
+
                     </div>
-
-                    {/* Certificate Card */}
-                    {training.status === 'completed' && (
-                        <motion.div
-                            initial={{ opacity: 0, scale: 0.9 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            className="bg-gradient-to-br from-amber-400 to-orange-500 rounded-2xl p-6 text-white"
-                        >
-                            <div className="flex items-center gap-3 mb-4">
-                                <Award size={32} />
-                                <div>
-                                    <h3 className="font-bold text-lg">Selamat!</h3>
-                                    <p className="text-sm opacity-90">Anda telah menyelesaikan training ini</p>
-                                </div>
-                            </div>
-                            <Link
-                                href={`/training/${training.id}/certificate`}
-                                className="w-full py-3 bg-white text-orange-600 rounded-xl font-bold text-sm hover:bg-orange-50 transition-all flex items-center justify-center gap-2"
-                            >
-                                <Download size={18} />
-                                Unduh Sertifikat
-                            </Link>
-                        </motion.div>
-                    )}
-
-                    {/* Instructor Info */}
-                    {training.instructor && (
-                        <div className="bg-white rounded-2xl border border-slate-200 p-6">
-                            <h3 className="font-bold text-lg text-slate-900 mb-4">Instruktur</h3>
-                            <div className="flex items-center gap-4">
-                                <div className="w-14 h-14 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-xl">
-                                    {training.instructor.name?.charAt(0) || 'I'}
-                                </div>
-                                <div>
-                                    <p className="font-bold text-slate-900">{training.instructor.name}</p>
-                                    <p className="text-sm text-slate-500">{training.instructor.title || 'Training Instructor'}</p>
-                                </div>
-                            </div>
-                        </div>
-                    )}
                 </div>
             </div>
         </AppLayout>

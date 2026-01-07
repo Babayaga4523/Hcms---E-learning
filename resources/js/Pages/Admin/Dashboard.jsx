@@ -163,7 +163,7 @@ const AnalyticsPanel = ({ modules, stats, trend }) => {
                 </div>
                 <div className="h-80 w-full">
                     {trend && trend.length > 0 ? (
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={250}>
                             <LineChart data={trend} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
                                 <defs>
                                     <linearGradient id="enrollGradient" x1="0" y1="0" x2="0" y2="1">
@@ -201,7 +201,7 @@ const AnalyticsPanel = ({ modules, stats, trend }) => {
                     <h3 className="text-lg font-bold text-slate-800 mb-6">Module Performance</h3>
                     <div className="h-72">
                         {moduleData.length > 0 ? (
-                            <ResponsiveContainer width="100%" height="100%">
+                            <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={200}>
                                 <BarChart data={moduleData} margin={{ top: 20, right: 30, left: 0, bottom: 60 }}>
                                     <defs>
                                         <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
@@ -231,7 +231,7 @@ const AnalyticsPanel = ({ modules, stats, trend }) => {
                 >
                     <h3 className="text-lg font-bold text-slate-800 mb-6">Score Distribution</h3>
                     <div className="h-72">
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={200}>
                             <BarChart data={scoreDistribution} margin={{ top: 20, right: 30, left: 0, bottom: 20 }} layout="vertical">
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e6eaf0" />
                                 <XAxis type="number" stroke="#94a3b8" />
@@ -260,7 +260,7 @@ const AnalyticsPanel = ({ modules, stats, trend }) => {
                     <h3 className="text-lg font-bold text-slate-800 mb-6">Learner Status</h3>
                     <div className="h-72 flex items-center justify-center">
                         {learnerStatus.some(s => s.value > 0) ? (
-                            <ResponsiveContainer width="100%" height="100%">
+                            <ResponsiveContainer width="100%" height="100%" minWidth={200} minHeight={200}>
                                 <PieChart>
                                     <Pie data={learnerStatus} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={5}>
                                         {learnerStatus.map((entry, index) => (
@@ -450,7 +450,7 @@ const ReportsPanel = ({ stats, pending_actions, onDownloadReport, onExportReport
                 >
                     <h3 className="text-lg font-bold text-slate-800 mb-6">Reports by Type</h3>
                     <div className="h-72 flex items-center justify-center">
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer width="100%" height="100%" minWidth={200} minHeight={200}>
                             <PieChart>
                                 <Pie data={reportsByType} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} paddingAngle={3}>
                                     {reportsByType.map((entry, index) => (
@@ -483,7 +483,7 @@ const ReportsPanel = ({ stats, pending_actions, onDownloadReport, onExportReport
                 >
                     <h3 className="text-lg font-bold text-slate-800 mb-6">Report Status Distribution</h3>
                     <div className="h-72">
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={200}>
                             <BarChart data={reportsByStatus} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
                                 <defs>
                                     <linearGradient id="statusGradient" x1="0" y1="0" x2="0" y2="1">
@@ -1077,7 +1077,7 @@ export default function AdminDashboard({ auth, statistics, compliance_trend, pen
                                         <button className="p-2 bg-slate-50 rounded-xl hover:bg-slate-100 transition"><MoreHorizontal size={20} className="text-slate-400" /></button>
                                     </div>
                                     <div className="h-[350px] w-full">
-                                        <ResponsiveContainer width="100%" height="100%">
+                                        <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={300}>
                                             <AreaChart data={trend}>
                                                 <defs>
                                                     <linearGradient id="colorEnroll" x1="0" y1="0" x2="0" y2="1">

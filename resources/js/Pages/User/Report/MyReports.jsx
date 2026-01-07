@@ -1,96 +1,206 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Head, Link, router } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
     FileText, Download, Eye, Calendar, Filter, Search,
     TrendingUp, Award, Clock, BookOpen, ChevronRight,
     BarChart3, Trophy, CheckCircle2, Star, FileBarChart,
-    Printer, Mail, Share2
+    Printer, Mail, Share2, Zap, Shield, ArrowUpRight,
+    Sparkles, Loader2, X, RefreshCw
 } from 'lucide-react';
 import axios from 'axios';
 
+// --- Wondr Style System ---
+const WondrStyles = () => (
+    <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F8F9FA; color: #1e293b; }
+        
+        .wondr-dark { background-color: #002824; }
+        .wondr-green { color: #005E54; }
+        .wondr-lime-bg { background-color: #D6F84C; color: #002824; }
+        
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 10px 40px -10px rgba(0, 40, 36, 0.05);
+        }
+
+        .report-card {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 1px solid #E2E8F0;
+            background: white;
+        }
+        .report-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 25px -5px rgba(0, 94, 84, 0.1);
+            border-color: #005E54;
+        }
+
+        .hero-pattern {
+            background-color: #002824;
+            background-image: radial-gradient(#005E54 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+
+        .bar-graph-container {
+            display: flex;
+            align-items: flex-end;
+            gap: 8px;
+            height: 120px;
+        }
+        .bar-graph-col {
+            flex: 1;
+            background: #E2E8F0;
+            border-radius: 8px 8px 0 0;
+            position: relative;
+            transition: height 1s ease-out, background-color 0.3s;
+        }
+        .bar-graph-col:hover {
+            background: #005E54;
+        }
+        .bar-graph-col::after {
+            content: attr(data-value);
+            position: absolute;
+            top: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 10px;
+            font-weight: bold;
+            color: #005E54;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .bar-graph-col:hover::after { opacity: 1; }
+
+        .tab-pill { transition: all 0.3s ease; }
+        .tab-pill.active { background-color: #002824; color: #D6F84C; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+
+        .animate-enter { animation: enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; opacity: 0; }
+        @keyframes enter {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    `}</style>
+);
+
 // Stats Card Component
-const StatsCard = ({ icon: Icon, label, value, trend, color = 'blue' }) => {
+const StatCard = ({ label, value, subtext, icon: Icon, color, delay }) => {
     const colors = {
-        blue: 'from-blue-500 to-blue-600',
-        emerald: 'from-emerald-500 to-emerald-600',
-        amber: 'from-amber-500 to-amber-600',
-        purple: 'from-purple-500 to-purple-600',
+        blue: 'bg-blue-50 text-blue-600',
+        green: 'bg-emerald-50 text-emerald-600',
+        amber: 'bg-amber-50 text-amber-600',
+        purple: 'bg-purple-50 text-purple-600',
     };
-    
+
     return (
-        <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-white rounded-2xl border border-slate-200 p-6"
+        <div 
+            className="glass-panel p-5 rounded-[24px] flex items-center justify-between animate-enter"
+            style={{ animationDelay: `${delay}ms` }}
         >
-            <div className="flex items-center justify-between mb-4">
-                <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${colors[color]} flex items-center justify-center`}>
-                    <Icon className="text-white" size={24} />
-                </div>
-                {trend && (
-                    <span className={`text-sm font-medium ${trend > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {trend > 0 ? '+' : ''}{trend}%
-                    </span>
-                )}
+            <div>
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">{label}</p>
+                <h3 className="text-2xl font-extrabold text-slate-900">{value}</h3>
+                {subtext && <p className="text-xs text-slate-400 mt-1">{subtext}</p>}
             </div>
-            <p className="text-3xl font-black text-slate-900 mb-1">{value}</p>
-            <p className="text-sm text-slate-500">{label}</p>
-        </motion.div>
+            <div className={`p-3 rounded-2xl ${colors[color]}`}>
+                <Icon size={24} />
+            </div>
+        </div>
     );
 };
 
-// Training Progress Card
-const TrainingCard = ({ training, index }) => (
-    <motion.div
-        initial={{ opacity: 0, x: -20 }}
-        animate={{ opacity: 1, x: 0 }}
-        transition={{ delay: index * 0.1 }}
-        className="bg-white rounded-xl border border-slate-200 p-4 hover:shadow-md transition"
-    >
-        <div className="flex items-center gap-4">
-            <div className="w-16 h-16 rounded-xl overflow-hidden flex-shrink-0">
-                <img 
-                    src={training.thumbnail || '/images/training-placeholder.jpg'} 
-                    alt={training.title}
-                    className="w-full h-full object-cover"
-                />
-            </div>
-            <div className="flex-1 min-w-0">
-                <h3 className="font-bold text-slate-900 truncate">{training.title}</h3>
-                <div className="flex items-center gap-3 text-sm text-slate-500 mt-1">
-                    <span className="flex items-center gap-1">
-                        <CheckCircle2 size={14} className="text-emerald-500" />
-                        {training.materials_completed}/{training.total_materials} materi
-                    </span>
-                    <span className="flex items-center gap-1">
-                        <Clock size={14} />
-                        {training.time_spent || '2 jam'}
-                    </span>
+// Activity Chart Component
+const ActivityChart = ({ trainings = [] }) => {
+    // Calculate monthly data from trainings
+    const monthlyData = Array(12).fill(0).map((_, i) => {
+        const monthTrainings = trainings.filter(t => {
+            const date = new Date(t.completed_at || t.enrolled_at);
+            return date.getMonth() === i;
+        });
+        return Math.min(monthTrainings.length * 15, 100);
+    });
+    
+    const months = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+    const totalHours = trainings.reduce((sum, t) => sum + (t.time_spent || 2), 0);
+
+    return (
+        <div className="bg-white rounded-[24px] p-6 border border-slate-100 shadow-sm">
+            <div className="flex justify-between items-center mb-6">
+                <div>
+                    <h3 className="font-bold text-slate-900">Aktivitas Belajar</h3>
+                    <p className="text-xs text-slate-500">Total jam belajar per bulan (2024)</p>
+                </div>
+                <div className="text-right">
+                    <p className="text-2xl font-black text-[#005E54]">{totalHours}h</p>
+                    <p className="text-xs text-emerald-600 font-bold flex items-center justify-end gap-1">
+                        <TrendingUp size={12} /> +12% vs lalu
+                    </p>
                 </div>
             </div>
-            <div className="text-right">
-                <div className="text-2xl font-black text-blue-600">{training.progress}%</div>
-                <p className="text-xs text-slate-500">Progress</p>
+            
+            <div className="bar-graph-container">
+                {monthlyData.map((val, i) => (
+                    <div 
+                        key={i} 
+                        className="bar-graph-col" 
+                        style={{ height: `${val}%` }}
+                        data-value={`${Math.round(val/10)}h`}
+                    ></div>
+                ))}
+            </div>
+            <div className="flex justify-between mt-2 px-1">
+                {months.map((m, i) => (
+                    <span key={i} className="text-[10px] font-bold text-slate-400 w-full text-center">{m}</span>
+                ))}
             </div>
         </div>
-        
-        {/* Progress Bar */}
-        <div className="mt-4 h-2 bg-slate-100 rounded-full overflow-hidden">
-            <motion.div 
-                initial={{ width: 0 }}
-                animate={{ width: `${training.progress}%` }}
-                transition={{ duration: 1, delay: index * 0.1 }}
-                className={`h-full rounded-full ${
-                    training.progress === 100 
-                        ? 'bg-emerald-500' 
-                        : 'bg-blue-500'
-                }`}
-            />
+    );
+};
+
+// Training Row Component
+const TrainingRow = ({ training, index }) => {
+    const completedAt = training.completed_at || training.enrolled_at;
+    const displayDate = completedAt ? new Date(completedAt).toLocaleDateString('id-ID', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric'
+    }) : 'Baru'
+    
+    return (
+        <div 
+            className="flex items-center gap-4 p-4 bg-white border border-slate-100 rounded-2xl hover:border-[#005E54]/30 hover:bg-[#F0FDF4]/30 transition-all animate-enter group"
+            style={{ animationDelay: `${index * 100}ms` }}
+        >
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                training.progress === 100 ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600'
+            }`}>
+                {training.progress === 100 ? <CheckCircle2 size={20} /> : <Clock size={20} />}
+            </div>
+            
+            <div className="flex-1 min-w-0">
+                <h4 className="font-bold text-slate-900 truncate group-hover:text-[#005E54] transition-colors">{training.title}</h4>
+                <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
+                    <span>{displayDate}</span>
+                    <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
+                    <span>{training.progress === 100 ? `Score: ${training.score || 85}` : 'In Progress'}</span>
+                </div>
+            </div>
+
+            {training.progress === 100 && (
+                <Link
+                    href={`/training/${training.id}/certificate`}
+                    className="p-2 bg-slate-50 text-slate-400 hover:text-[#005E54] hover:bg-white hover:shadow-md rounded-xl transition-all border border-transparent hover:border-[#005E54]/20"
+                >
+                    <Download size={18} />
+                </Link>
+            )}
         </div>
-    </motion.div>
-);
+    );
+};
 
 // Quiz Score Card
 const QuizScoreCard = ({ quiz, index }) => {
@@ -139,54 +249,109 @@ const QuizScoreCard = ({ quiz, index }) => {
 };
 
 // Certificate Card
-const CertificateCard = ({ certificate, index }) => (
-    <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ delay: index * 0.1 }}
-        className="bg-gradient-to-br from-amber-50 to-yellow-50 border border-amber-200 rounded-xl p-4"
-    >
-        <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center">
-                <Award className="text-amber-600" size={24} />
+const CertificateCard = ({ certificate, index }) => {
+    const displayDate = certificate.issued_at ? new Date(certificate.issued_at).toLocaleDateString('id-ID', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric'
+    }) : 'Baru';
+    
+    return (
+        <div 
+            className="report-card p-5 rounded-[24px] relative overflow-hidden group animate-enter"
+            style={{ animationDelay: `${index * 100}ms` }}
+        >
+            {/* Decorative Background */}
+            <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-amber-100 to-transparent rounded-bl-full opacity-50 transition-transform group-hover:scale-110"></div>
+            
+            <div className="relative z-10">
+                <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center text-amber-600 mb-4 shadow-sm">
+                    <Award size={24} />
+                </div>
+                
+                <h4 className="font-bold text-slate-900 leading-tight mb-2 line-clamp-2 min-h-[2.5rem]">
+                    {certificate.training_title}
+                </h4>
+                
+                <div className="flex justify-between items-end">
+                    <div>
+                        <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">Issued</p>
+                        <p className="text-sm font-medium text-slate-700">{displayDate}</p>
+                    </div>
+                    <Link
+                        href={`/training/${certificate.training_id}/certificate`}
+                        className="p-2 bg-[#002824] text-[#D6F84C] rounded-xl hover:scale-105 transition-transform shadow-lg"
+                    >
+                        <Download size={16} />
+                    </Link>
+                </div>
             </div>
-            <div className="flex-1">
-                <h4 className="font-bold text-amber-900">{certificate.training_title}</h4>
-                <p className="text-sm text-amber-700">
-                    Diperoleh {new Date(certificate.issued_at).toLocaleDateString('id-ID', {
-                        day: 'numeric',
-                        month: 'long',
-                        year: 'numeric'
-                    })}
-                </p>
-            </div>
-            <Link
-                href={`/certificate/${certificate.id}`}
-                className="p-2 bg-amber-100 rounded-lg text-amber-600 hover:bg-amber-200 transition"
-            >
-                <Eye size={20} />
-            </Link>
         </div>
-    </motion.div>
-);
+    );
+};
 
 // Main Component
 export default function MyReports({ auth, stats = {}, trainings = [], quizzes = [], certificates = [] }) {
     const user = auth?.user || {};
     const [activeTab, setActiveTab] = useState('overview');
     const [searchQuery, setSearchQuery] = useState('');
+    
+    // AI Feature States
+    const [showAIModal, setShowAIModal] = useState(false);
+    const [aiInsight, setAiInsight] = useState('');
+    const [isGenerating, setIsGenerating] = useState(false);
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
 
-    // Default stats if not provided
-    const defaultStats = {
-        total_trainings: trainings.length || 12,
-        completed_trainings: trainings.filter(t => t.progress === 100).length || 8,
-        average_score: 85,
-        total_certificates: certificates.length || 5,
-        total_learning_hours: '45 jam',
-        points_earned: 2500
+    // Use real stats from backend with fallbacks
+    const displayStats = {
+        total_trainings: stats.total_trainings ?? trainings.length ?? 0,
+        completed_trainings: stats.completed_trainings ?? trainings.filter(t => t.progress === 100).length ?? 0,
+        average_score: stats.average_score ?? 0,
+        total_certificates: stats.total_certificates ?? certificates.length ?? 0,
+        total_learning_hours: stats.total_learning_hours ?? '0 jam',
+        points_earned: stats.points_earned ?? 0
     };
 
-    const displayStats = { ...defaultStats, ...stats };
+    // AI Insight Generation Function
+    const generateAIInsight = async () => {
+        setIsGenerating(true);
+        setShowAIModal(true);
+        setAiInsight('');
+
+        const currentLevel = Math.floor((displayStats.points_earned || 0) / 200) || 1;
+        const prompt = `Analisis data pembelajaran berikut untuk pengguna bernama ${user.name}:
+        - Total Training: ${displayStats.total_trainings}
+        - Selesai: ${displayStats.completed_trainings}
+        - Rata-rata Nilai: ${displayStats.average_score}
+        - Jam Belajar: ${displayStats.total_learning_hours}
+        - Level Saat Ini: ${currentLevel} (XP: ${displayStats.points_earned})
+        - Sertifikat: ${displayStats.total_certificates}
+        
+        Berikan ringkasan pencapaian yang memotivasi dalam Bahasa Indonesia, soroti kekuatan mereka, dan berikan 1-2 saran singkat untuk pengembangan karir berdasarkan data ini. Gunakan gaya bahasa yang profesional namun menyemangati ala coach, gunakan emoji yang relevan. Buat dalam format poin-poin yang mudah dibaca dengan bullet points.`;
+
+        try {
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }]
+                })
+            });
+
+            if (!response.ok) throw new Error('Gagal menghubungi AI');
+            
+            const data = await response.json();
+            const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "Maaf, gagal membuat analisis.";
+            setAiInsight(text);
+        } catch (error) {
+            console.error("AI Error:", error);
+            setAiInsight("❌ Terjadi kesalahan koneksi saat menghubungi AI Coach. Silakan coba lagi nanti.");
+        } finally {
+            setIsGenerating(false);
+        }
+    };
 
     const tabs = [
         { key: 'overview', label: 'Overview', icon: BarChart3 },
@@ -197,201 +362,328 @@ export default function MyReports({ auth, stats = {}, trainings = [], quizzes = 
 
     return (
         <AppLayout user={user}>
+            <WondrStyles />
             <Head title="Laporan Pembelajaran" />
 
-            {/* Header */}
-            <div className="mb-8">
-                <motion.div
-                    initial={{ opacity: 0, y: -20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="flex flex-col md:flex-row md:items-center md:justify-between gap-4"
-                >
-                    <div>
-                        <h1 className="text-3xl font-black text-slate-900">Laporan Pembelajaran</h1>
-                        <p className="text-slate-500 mt-1">Pantau progress dan pencapaian Anda</p>
-                    </div>
+            {/* --- Hero Header --- */}
+            <div className="hero-pattern pt-8 pb-32 px-6 lg:px-12 relative rounded-b-[48px] shadow-2xl shadow-[#002824]/20 overflow-hidden mb-8">
+                <div className="max-w-7xl mx-auto relative z-10">
                     
-                    <div className="flex items-center gap-3">
-                        <button className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition">
-                            <Download size={18} />
-                            Export PDF
-                        </button>
-                        <button className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl font-medium hover:bg-slate-50 transition">
-                            <Printer size={18} />
-                            Print
-                        </button>
-                    </div>
-                </motion.div>
-            </div>
-
-            {/* Stats Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                <StatsCard 
-                    icon={BookOpen} 
-                    label="Training Selesai" 
-                    value={`${displayStats.completed_trainings}/${displayStats.total_trainings}`}
-                    color="blue"
-                />
-                <StatsCard 
-                    icon={Trophy} 
-                    label="Rata-rata Nilai" 
-                    value={displayStats.average_score}
-                    trend={5}
-                    color="emerald"
-                />
-                <StatsCard 
-                    icon={Clock} 
-                    label="Jam Belajar" 
-                    value={displayStats.total_learning_hours}
-                    color="amber"
-                />
-                <StatsCard 
-                    icon={Award} 
-                    label="Sertifikat" 
-                    value={displayStats.total_certificates}
-                    color="purple"
-                />
-            </div>
-
-            {/* Tabs */}
-            <div className="bg-white rounded-2xl border border-slate-200 mb-8">
-                <div className="flex overflow-x-auto border-b border-slate-200">
-                    {tabs.map(tab => (
-                        <button
-                            key={tab.key}
-                            onClick={() => setActiveTab(tab.key)}
-                            className={`flex items-center gap-2 px-6 py-4 font-medium transition whitespace-nowrap ${
-                                activeTab === tab.key
-                                    ? 'text-blue-600 border-b-2 border-blue-600'
-                                    : 'text-slate-500 hover:text-slate-700'
-                            }`}
-                        >
-                            <tab.icon size={18} />
-                            {tab.label}
-                        </button>
-                    ))}
-                </div>
-
-                <div className="p-6">
-                    {/* Overview Tab */}
-                    {activeTab === 'overview' && (
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                            {/* Recent Trainings */}
-                            <div>
-                                <h3 className="font-bold text-slate-900 mb-4">Training Terbaru</h3>
-                                <div className="space-y-4">
-                                    {trainings.slice(0, 3).map((training, index) => (
-                                        <TrainingCard key={training.id} training={training} index={index} />
-                                    ))}
-                                </div>
-                                {trainings.length > 3 && (
-                                    <button
-                                        onClick={() => setActiveTab('trainings')}
-                                        className="w-full mt-4 py-3 text-blue-600 font-medium hover:bg-blue-50 rounded-xl transition flex items-center justify-center gap-2"
-                                    >
-                                        Lihat Semua
-                                        <ChevronRight size={18} />
-                                    </button>
-                                )}
+                    {/* Top Bar */}
+                    <div className="flex justify-between items-center mb-8">
+                        <div className="flex items-center gap-3 text-white/80">
+                            <div className="p-2 bg-white/10 rounded-full backdrop-blur-md">
+                                <TrendingUp size={20} />
                             </div>
-
-                            {/* Recent Quizzes */}
-                            <div>
-                                <h3 className="font-bold text-slate-900 mb-4">Nilai Quiz Terbaru</h3>
-                                <div className="space-y-4">
-                                    {quizzes.slice(0, 4).map((quiz, index) => (
-                                        <QuizScoreCard key={quiz.id} quiz={quiz} index={index} />
-                                    ))}
-                                </div>
-                                {quizzes.length > 4 && (
-                                    <button
-                                        onClick={() => setActiveTab('quizzes')}
-                                        className="w-full mt-4 py-3 text-blue-600 font-medium hover:bg-blue-50 rounded-xl transition flex items-center justify-center gap-2"
-                                    >
-                                        Lihat Semua
-                                        <ChevronRight size={18} />
-                                    </button>
-                                )}
-                            </div>
+                            <span className="font-bold text-sm tracking-wide">Report Center</span>
                         </div>
-                    )}
+                        
+                        <div className="flex gap-2">
+                            <button 
+                                onClick={generateAIInsight}
+                                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-full hover:shadow-lg hover:scale-105 transition-all font-bold text-xs border border-white/20"
+                            >
+                                <Sparkles size={16} /> AI Coach
+                            </button>
+                            <button className="p-2 bg-white/10 text-white rounded-full hover:bg-white/20 transition">
+                                <Share2 size={18} />
+                            </button>
+                            <button 
+                                onClick={() => window.print()}
+                                className="p-2 bg-white/10 text-white rounded-full hover:bg-white/20 transition"
+                            >
+                                <Printer size={18} />
+                            </button>
+                        </div>
+                    </div>
 
-                    {/* Trainings Tab */}
-                    {activeTab === 'trainings' && (
+                    <div className="flex flex-col md:flex-row justify-between items-end gap-6">
                         <div>
-                            <div className="flex items-center gap-4 mb-6">
-                                <div className="relative flex-1">
-                                    <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-slate-400" size={20} />
-                                    <input
-                                        type="text"
-                                        placeholder="Cari training..."
-                                        value={searchQuery}
-                                        onChange={(e) => setSearchQuery(e.target.value)}
-                                        className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
-                                    />
-                                </div>
+                            <h1 className="text-4xl lg:text-5xl font-extrabold text-white leading-tight mb-2">
+                                Laporan & <br /> <span className="text-[#D6F84C]">Pencapaian</span>
+                            </h1>
+                            <p className="text-blue-100 text-lg">Rekap perjalanan pembelajaran Anda di Wondr.</p>
+                        </div>
+                        
+                        {/* Summary Pill */}
+                        <div className="bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl p-4 flex gap-6">
+                            <div className="text-center px-2">
+                                <p className="text-xs text-slate-300 uppercase font-bold">Total Jam</p>
+                                <p className="text-2xl font-black text-white">{displayStats.total_learning_hours}</p>
                             </div>
-                            <div className="space-y-4">
-                                {trainings
-                                    .filter(t => t.title.toLowerCase().includes(searchQuery.toLowerCase()))
-                                    .map((training, index) => (
-                                        <TrainingCard key={training.id} training={training} index={index} />
-                                    ))}
+                            <div className="w-[1px] bg-white/20"></div>
+                            <div className="text-center px-2">
+                                <p className="text-xs text-slate-300 uppercase font-bold">Rata-rata</p>
+                                <p className="text-2xl font-black text-[#D6F84C]">{displayStats.average_score}</p>
                             </div>
                         </div>
-                    )}
-
-                    {/* Quizzes Tab */}
-                    {activeTab === 'quizzes' && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {quizzes.map((quiz, index) => (
-                                <QuizScoreCard key={quiz.id} quiz={quiz} index={index} />
-                            ))}
-                        </div>
-                    )}
-
-                    {/* Certificates Tab */}
-                    {activeTab === 'certificates' && (
-                        <div className="space-y-4">
-                            {certificates.length > 0 ? (
-                                certificates.map((cert, index) => (
-                                    <CertificateCard key={cert.id} certificate={cert} index={index} />
-                                ))
-                            ) : (
-                                <div className="text-center py-12">
-                                    <Award className="mx-auto text-slate-300 mb-4" size={64} />
-                                    <h3 className="text-xl font-bold text-slate-900 mb-2">Belum Ada Sertifikat</h3>
-                                    <p className="text-slate-500">Selesaikan training untuk mendapatkan sertifikat</p>
-                                </div>
-                            )}
-                        </div>
-                    )}
+                    </div>
                 </div>
             </div>
 
-            {/* Achievement Section */}
-            <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.3 }}
-                className="bg-gradient-to-br from-purple-600 to-indigo-700 rounded-2xl p-8 text-white"
-            >
-                <div className="flex items-center gap-6">
-                    <div className="w-20 h-20 bg-white/20 rounded-2xl flex items-center justify-center">
-                        <Star className="text-yellow-300" size={40} fill="currentColor" />
-                    </div>
-                    <div>
-                        <h3 className="text-2xl font-black mb-2">Level: Learner Pro</h3>
-                        <p className="text-purple-200">Anda telah mengumpulkan {displayStats.points_earned} poin</p>
-                        <div className="mt-3 flex items-center gap-4">
-                            <div className="h-2 w-48 bg-white/20 rounded-full overflow-hidden">
-                                <div className="h-full w-3/4 bg-yellow-400 rounded-full" />
-                            </div>
-                            <span className="text-sm text-purple-200">750 poin lagi ke level berikutnya</span>
+            {/* --- Main Content --- */}
+            <div className="max-w-7xl mx-auto px-6 -mt-20 relative z-20 pb-20">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left Column: Content (8 Cols) */}
+                    <div className="lg:col-span-8 space-y-8">
+                        
+                        {/* KPI Cards */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <StatCard 
+                                label="Training Selesai" 
+                                value={`${displayStats.completed_trainings}/${displayStats.total_trainings}`}
+                                icon={BookOpen} 
+                                color="blue" 
+                                delay={0} 
+                            />
+                            <StatCard 
+                                label="Sertifikat" 
+                                value={displayStats.total_certificates}
+                                icon={Award} 
+                                color="amber" 
+                                delay={100} 
+                            />
                         </div>
+
+                        {/* Chart Area */}
+                        <ActivityChart trainings={trainings} />
+
+                        {/* Tabs Navigation */}
+                        <div>
+                            <div className="bg-white rounded-2xl p-1.5 flex gap-1 shadow-sm border border-slate-200 mb-6">
+                                {[
+                                    { id: 'overview', label: 'Riwayat Training' },
+                                    { id: 'certificates', label: 'Galeri Sertifikat' },
+                                    { id: 'quizzes', label: 'Detail Nilai' }
+                                ].map(tab => (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => setActiveTab(tab.id)}
+                                        className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all tab-pill ${
+                                            activeTab === tab.id ? 'active' : 'text-slate-500 hover:bg-slate-50'
+                                        }`}
+                                    >
+                                        {tab.label}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Tab Content */}
+                            <div className="min-h-[300px">
+                                <AnimatePresence mode="wait">
+                                    {activeTab === 'overview' && (
+                                        <motion.div 
+                                            key="overview"
+                                            initial={{ opacity: 0, y: 10 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, y: -10 }}
+                                            className="space-y-3"
+                                        >
+                                            {trainings.length > 0 ? trainings.map((t, idx) => (
+                                                <TrainingRow key={t.id} training={t} index={idx} />
+                                            )) : (
+                                                <div className="text-center py-12 bg-slate-50 rounded-xl">
+                                                    <BookOpen className="mx-auto text-slate-300 mb-3" size={48} />
+                                                    <p className="text-slate-500">Belum ada training yang diikuti</p>
+                                                    <Link href="/my-trainings" className="text-blue-600 font-medium mt-2 inline-block hover:underline">
+                                                        Jelajahi Training →
+                                                    </Link>
+                                                </div>
+                                            )}
+                                        </motion.div>
+                                    )}
+
+                                    {activeTab === 'certificates' && (
+                                        <motion.div 
+                                            key="certificates"
+                                            initial={{ opacity: 0, y: 10 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, y: -10 }}
+                                            className="grid grid-cols-1 md:grid-cols-2 gap-4"
+                                        >
+                                            {certificates.length > 0 ? certificates.map((c, idx) => (
+                                                <CertificateCard key={c.id || idx} cert={c} index={idx} />
+                                            )) : (
+                                                <div className="col-span-2 text-center py-12 bg-slate-50 rounded-xl">
+                                                    <Award className="mx-auto text-slate-300 mb-3" size={48} />
+                                                    <p className="text-slate-500">Belum ada sertifikat</p>
+                                                </div>
+                                            )}
+                                        </motion.div>
+                                    )}
+
+                                    {activeTab === 'quizzes' && (
+                                        <motion.div 
+                                            key="quizzes"
+                                            initial={{ opacity: 0, y: 10 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, y: -10 }}
+                                            className="bg-white rounded-[24px] p-8 text-center border border-slate-200"
+                                        >
+                                            <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                                                <FileText className="text-slate-400" size={32} />
+                                            </div>
+                                            <h3 className="font-bold text-slate-900 mb-2">Detail Kuis</h3>
+                                            <p className="text-slate-500 text-sm">Lihat detail jawaban dan analisis per modul.</p>
+                                            {quizzes.length > 0 && (
+                                                <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                    {quizzes.map((quiz, index) => (
+                                                        <QuizScoreCard key={quiz.id} quiz={quiz} index={index} />
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    {/* Right Column: Profile Sidebar (4 Cols) */}
+                    <div className="lg:col-span-4 space-y-6">
+                        
+                        {/* Profile Card */}
+                        <div className="bg-white rounded-[32px] p-6 shadow-xl shadow-slate-200/50 border border-slate-100 relative overflow-hidden">
+                            <div className="absolute top-0 left-0 w-full h-24 bg-[#002824]"></div>
+                            <div className="relative z-10 flex flex-col items-center">
+                                <div className="w-20 h-20 rounded-full border-4 border-white shadow-md bg-gradient-to-br from-[#D6F84C] to-[#005E54] flex items-center justify-center text-white font-bold text-2xl mb-3">
+                                    {user.name?.charAt(0) || 'U'}
+                                </div>
+                                <h3 className="font-bold text-xl text-slate-900">{user.name}</h3>
+                                <p className="text-slate-500 text-sm mb-6">{user.email || 'Learner'}</p>
+                                
+                                {/* Gamification Stats */}
+                                <div className="w-full bg-slate-50 rounded-2xl p-4 border border-slate-100 mb-6">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Level {Math.floor(displayStats.points_earned / 200) || 1}</span>
+                                        <span className="text-xs font-bold text-[#005E54]">{displayStats.points_earned || 0} XP</span>
+                                    </div>
+                                    <div className="h-2.5 bg-slate-200 rounded-full overflow-hidden">
+                                        <div className="h-full bg-gradient-to-r from-[#005E54] to-[#D6F84C]" style={{ width: `${((displayStats.points_earned || 0) % 200) / 2}%` }}></div>
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 mt-2 text-right">{200 - ((displayStats.points_earned || 0) % 200)} XP menuju level berikutnya</p>
+                                </div>
+
+                                {/* Badges */}
+                                <div className="w-full">
+                                    <h4 className="font-bold text-slate-900 mb-3 text-sm flex items-center gap-2">
+                                        <Award size={16} className="text-[#D6F84C]" /> Badges Terbaru
+                                    </h4>
+                                    <div className="flex gap-2">
+                                        {['🚀', '🛡️', '🎓', '⭐'].map((emoji, i) => (
+                                            <div key={i} className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-lg border border-slate-100 shadow-sm" title="Badge Name">
+                                                {emoji}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Download Report Button */}
+                        <div className="bg-gradient-to-br from-[#002824] to-[#00403a] rounded-[24px] p-6 text-white text-center">
+                            <FileText className="mx-auto mb-3 text-[#D6F84C]" size={32} />
+                            <h4 className="font-bold text-lg mb-2">Unduh Transkrip</h4>
+                            <p className="text-sm text-slate-300 mb-4 leading-relaxed">
+                                Dapatkan rekap lengkap seluruh pelatihan dan nilai Anda dalam format PDF resmi.
+                            </p>
+                            <a
+                                href="/api/learner/reports/export-pdf"
+                                className="w-full py-3 bg-[#D6F84C] text-[#002824] rounded-xl font-bold hover:bg-[#c2e43c] transition shadow-lg flex items-center justify-center gap-2"
+                            >
+                                <Download size={18} /> Download PDF
+                            </a>
+                        </div>
+
                     </div>
                 </div>
-            </motion.div>
+            </div>
+
+            {/* --- AI Insight Modal --- */}
+            <AnimatePresence>
+                {showAIModal && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+                        <motion.div 
+                            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                            transition={{ type: "spring", duration: 0.5, bounce: 0.3 }}
+                            className="bg-white w-full max-w-lg rounded-[32px] overflow-hidden shadow-2xl border border-white/20 relative"
+                        >
+                            {/* Header with flashy gradient */}
+                            <div className="bg-gradient-to-br from-[#1e1b4b] via-[#312e81] to-[#4c1d95] p-8 text-white relative overflow-hidden">
+                                {/* Abstract shapes */}
+                                <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+                                <div className="absolute bottom-0 left-0 w-48 h-48 bg-[#D6F84C]/10 rounded-full blur-2xl translate-y-1/2 -translate-x-1/4"></div>
+                                
+                                <div className="relative z-10 flex justify-between items-start">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/10 shadow-inner">
+                                            <Sparkles size={24} className="text-[#D6F84C]" />
+                                        </div>
+                                        <div>
+                                            <h3 className="font-extrabold text-2xl tracking-tight">AI Learning Coach</h3>
+                                            <p className="text-indigo-200 text-sm font-medium flex items-center gap-1">
+                                                Powered by Gemini <span className="w-1.5 h-1.5 rounded-full bg-[#D6F84C] animate-pulse"></span>
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <button 
+                                        onClick={() => setShowAIModal(false)} 
+                                        className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/70 hover:text-white"
+                                    >
+                                        <X size={24} />
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div className="p-8 bg-white relative min-h-[300px]">
+                                {isGenerating ? (
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 backdrop-blur-[2px] z-20">
+                                        <div className="relative">
+                                            <div className="w-16 h-16 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin"></div>
+                                            <div className="absolute inset-0 flex items-center justify-center">
+                                                <Sparkles size={20} className="text-indigo-600 animate-pulse" />
+                                            </div>
+                                        </div>
+                                        <p className="text-slate-800 font-bold mt-6 text-lg">Menganalisis Data...</p>
+                                        <p className="text-slate-500 text-sm">AI sedang mempelajari progres belajar Anda.</p>
+                                    </div>
+                                ) : (
+                                    <motion.div 
+                                        initial={{ opacity: 0 }}
+                                        animate={{ opacity: 1 }}
+                                        transition={{ duration: 0.4 }}
+                                    >
+                                        <div className="prose prose-slate prose-sm max-w-none">
+                                            <div className="text-slate-700 leading-relaxed text-base whitespace-pre-line font-medium">
+                                                {aiInsight}
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="mt-8 pt-6 border-t border-slate-100 flex gap-3">
+                                            <button 
+                                                onClick={generateAIInsight}
+                                                className="flex-1 py-3.5 px-4 border-2 border-indigo-50 text-indigo-600 font-bold rounded-xl hover:border-indigo-100 hover:bg-indigo-50 transition-all flex items-center justify-center gap-2"
+                                            >
+                                                <RefreshCw size={18} /> Analisis Ulang
+                                            </button>
+                                            <button 
+                                                onClick={() => setShowAIModal(false)}
+                                                className="flex-1 py-3.5 px-4 bg-[#002824] text-[#D6F84C] font-bold rounded-xl hover:shadow-lg hover:scale-[1.02] transition-all flex items-center justify-center gap-2"
+                                            >
+                                                Mengerti <ArrowUpRight size={18} />
+                                            </button>
+                                        </div>
+                                    </motion.div>
+                                )}
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
         </AppLayout>
     );
 }

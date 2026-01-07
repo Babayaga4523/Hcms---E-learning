@@ -266,9 +266,16 @@ export default function AdvancedAnalytics() {
             }
             
             if (skillsRes.ok) {
-                const data = await skillsRes.json();
-                setSkillsRadar(data);
-                console.log('Skills data:', data);
+                const response = await skillsRes.json();
+                // Transform data for radar chart format
+                const transformedData = response.data.map(item => ({
+                    subject: item.skill,
+                    A: item.value, // Completion Rate
+                    B: Math.min(item.value + 20, 100), // Target (completion + 20% or max 100%)
+                    fullMark: 100
+                }));
+                setSkillsRadar(transformedData);
+                console.log('Skills data:', transformedData);
             }
             
             if (cohortRes.ok) {
@@ -446,7 +453,7 @@ export default function AdvancedAnalytics() {
                             
                             <div className="h-[350px] w-full">
                                 {trends && trends.length > 0 ? (
-                                    <ResponsiveContainer width="100%" height="100%">
+                                    <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={300}>
                                         <ComposedChart data={trends}>
                                             <defs>
                                                 <linearGradient id="colorHours" x1="0" y1="0" x2="0" y2="1">
@@ -481,7 +488,7 @@ export default function AdvancedAnalytics() {
                             
                             <div className="flex-1 min-h-[250px] relative">
                                 {engagement && engagement.length > 0 ? (
-                                    <ResponsiveContainer width="100%" height="100%">
+                                    <ResponsiveContainer width="100%" height="100%" minWidth={200} minHeight={200}>
                                         <PieChart>
                                             <Pie
                                                 data={engagement}
@@ -537,7 +544,7 @@ export default function AdvancedAnalytics() {
                             />
                             <div className="h-[300px] w-full relative z-10">
                                 {skillsRadar && skillsRadar.length > 0 ? (
-                                    <ResponsiveContainer width="100%" height="100%">
+                                    <ResponsiveContainer width="100%" height="100%" minWidth={250} minHeight={250}>
                                         <RadarChart outerRadius={90} data={skillsRadar}>
                                             <PolarGrid stroke="#334155" />
                                             <PolarAngleAxis dataKey="subject" tick={{ fill: '#94a3b8', fontSize: 11 }} />

@@ -1,275 +1,475 @@
 import React, { useState } from 'react';
-import { Head } from '@inertiajs/react';
+import { Head, Link } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
-import DashboardCard from '@/Components/Dashboard/DashboardCard';
-import TrainingCard from '@/Components/Dashboard/TrainingCard';
-import ProgressStats from '@/Components/Dashboard/ProgressStats';
-import CertificateCard from '@/Components/Dashboard/CertificateCard';
-import AnnouncementBanner from '@/Components/Announcement/AnnouncementBanner';
-import AnnouncementModal from '@/Components/Announcement/AnnouncementModal';
-import NotificationDropdown from '@/Components/Notification/NotificationDropdown';
 import { 
-    BarChart3, 
-    TrendingUp, 
-    Award, 
-    BookOpen,
-    Target,
-    Clock
+    BookOpen, Clock, Award, TrendingUp, Bell, Search, 
+    PlayCircle, CheckCircle, Calendar, ArrowRight, 
+    MoreHorizontal, Star, Shield, Zap, ChevronRight 
 } from 'lucide-react';
+
+// --- Wondr Style System ---
+const WondrStyles = () => (
+    <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        
+        .wondr-dashboard { font-family: 'Plus Jakarta Sans', sans-serif; }
+        
+        .wondr-dark { background-color: #002824; }
+        .wondr-green { color: #005E54; }
+        .wondr-lime-bg { background-color: #D6F84C; color: #002824; }
+        .wondr-lime-text { color: #D6F84C; }
+        
+        .glass-card {
+            background: white;
+            border: 1px solid #E2E8F0;
+            box-shadow: 0 4px 20px -5px rgba(0, 0, 0, 0.05);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .glass-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 30px -10px rgba(0, 40, 36, 0.1);
+            border-color: #005E54;
+        }
+
+        .hero-pattern {
+            background-color: #002824;
+            background-image: radial-gradient(#005E54 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+
+        .progress-bar { transition: width 1s cubic-bezier(0.4, 0, 0.2, 1); }
+        
+        .tab-pill {
+            transition: all 0.2s ease;
+        }
+        .tab-pill.active {
+            background-color: #002824;
+            color: #D6F84C;
+        }
+
+        .animate-enter { animation: enter 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; opacity: 0; }
+        @keyframes enter {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    `}</style>
+);
+
+// --- Components ---
+
+const StatPill = ({ icon: Icon, value, label }) => (
+    <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl border border-white/10">
+        <div className="p-2 bg-[#D6F84C] rounded-full text-[#002824]">
+            <Icon className="w-4 h-4" />
+        </div>
+        <div>
+            <p className="text-white font-bold leading-none">{value}</p>
+            <p className="text-slate-300 text-xs mt-1 font-medium">{label}</p>
+        </div>
+    </div>
+);
+
+const CourseCard = ({ course, type = 'grid' }) => {
+    if (type === 'list') {
+        return (
+            <Link href={`/training/${course.id}`} className="group flex gap-4 p-4 bg-white rounded-2xl border border-slate-100 hover:border-[#005E54]/30 hover:shadow-lg transition-all cursor-pointer">
+                <div className="w-24 h-24 rounded-xl bg-slate-200 flex-shrink-0 overflow-hidden relative">
+                    {course.thumbnail ? (
+                        <img src={course.thumbnail} alt={course.title} className="w-full h-full object-cover" />
+                    ) : (
+                        <div className="absolute inset-0 bg-gradient-to-br from-[#005E54] to-[#002824]" />
+                    )}
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors">
+                        <PlayCircle className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity transform scale-75 group-hover:scale-100" />
+                    </div>
+                </div>
+                <div className="flex-1 py-1">
+                    <div className="flex justify-between items-start mb-2">
+                        <span className="px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-[10px] font-bold uppercase tracking-wider">
+                            {course.category || 'Training'}
+                        </span>
+                        <span className="text-xs text-slate-400 font-medium flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> {course.duration || '1h'}
+                        </span>
+                    </div>
+                    <h4 className="font-bold text-slate-900 mb-1 line-clamp-1 group-hover:text-[#005E54] transition-colors">{course.title}</h4>
+                    <p className="text-xs text-slate-500 line-clamp-2 mb-3">{course.description}</p>
+                    
+                    <div className="flex items-center gap-3">
+                        <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-[#005E54] rounded-full progress-bar" style={{ width: `${course.progress || 0}%` }}></div>
+                        </div>
+                        <span className="text-xs font-bold text-slate-700">{course.progress || 0}%</span>
+                    </div>
+                </div>
+            </Link>
+        );
+    }
+
+    return (
+        <Link href={`/training/${course.id}`} className="glass-card rounded-[24px] overflow-hidden flex flex-col h-full group cursor-pointer">
+            <div className="h-40 bg-slate-200 relative overflow-hidden">
+                {course.thumbnail ? (
+                    <img src={course.thumbnail} alt={course.title} className="w-full h-full object-cover" />
+                ) : (
+                    <div className="absolute inset-0 bg-gradient-to-br from-[#005E54] to-[#002824]" />
+                )}
+                <div className="absolute top-4 left-4 z-10">
+                    {course.is_mandatory && (
+                        <span className="px-3 py-1 bg-red-500 text-white text-[10px] font-bold rounded-full uppercase tracking-wider shadow-sm">
+                            Mandatory
+                        </span>
+                    )}
+                </div>
+                <div className="absolute inset-0 bg-gradient-to-t from-[#002824]/80 to-transparent opacity-60 group-hover:opacity-40 transition-opacity"></div>
+            </div>
+            <div className="p-5 flex-1 flex flex-col">
+                <div className="mb-2 flex justify-between items-center">
+                    <span className="text-xs font-bold text-[#005E54]">{course.category || 'Training'}</span>
+                    <div className="flex items-center gap-1 text-xs text-slate-400">
+                        <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />
+                        4.8
+                    </div>
+                </div>
+                <h3 className="font-bold text-slate-900 mb-2 leading-tight group-hover:text-[#005E54] transition-colors line-clamp-2">
+                    {course.title}
+                </h3>
+                <div className="mt-auto pt-4">
+                    <div className="flex justify-between text-xs font-bold text-slate-500 mb-1">
+                        <span>Progress</span>
+                        <span>{course.progress || 0}%</span>
+                    </div>
+                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-gradient-to-r from-[#005E54] to-[#D6F84C] progress-bar" style={{ width: `${course.progress || 0}%` }}></div>
+                    </div>
+                </div>
+            </div>
+        </Link>
+    );
+};
+
+const AnnouncementWidget = () => (
+    <div className="bg-gradient-to-br from-[#D6F84C] to-[#c2e43c] rounded-[24px] p-6 text-[#002824] relative overflow-hidden group cursor-pointer">
+        <div className="relative z-10">
+            <div className="flex items-center justify-between mb-2">
+                <span className="px-2 py-1 bg-[#002824]/10 rounded-lg text-xs font-bold uppercase">Pengumuman</span>
+                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+            </div>
+            <h4 className="font-extrabold text-lg leading-tight mb-1">Q1 Compliance Deadline</h4>
+            <p className="text-sm font-medium opacity-80">Selesaikan modul wajib sebelum akhir kuartal ini.</p>
+        </div>
+        <div className="absolute -bottom-4 -right-4 w-24 h-24 bg-white/20 rounded-full blur-xl"></div>
+    </div>
+);
+
+// --- Main Layout ---
 
 export default function Dashboard({ auth, trainings = [], completedTrainings = [], upcomingTrainings = [], recentActivity = [] }) {
     const user = auth?.user || {};
-    const [selectedFilter, setSelectedFilter] = useState('all');
 
     // Ensure trainings is always an array
     const trainingsArray = Array.isArray(trainings) ? trainings : Object.values(trainings || {});
     const completedArray = Array.isArray(completedTrainings) ? completedTrainings : Object.values(completedTrainings || {});
     const upcomingArray = Array.isArray(upcomingTrainings) ? upcomingTrainings : Object.values(upcomingTrainings || {});
-    const activityArray = Array.isArray(recentActivity) ? recentActivity : Object.values(recentActivity || {});
 
     // Calculate statistics
     const totalTrainings = trainingsArray.length || 0;
     const completedCount = completedArray.length || 0;
     const inProgressCount = trainingsArray.filter(t => t?.status === 'in_progress').length || 0;
-    const completionPercentage = totalTrainings > 0 ? Math.round((completedCount / totalTrainings) * 100) : 0;
     const certifications = trainingsArray.filter(t => t?.is_certified).length || 0;
+    
+    // Get active courses (in progress)
+    const activeCourses = trainingsArray.filter(t => t?.status === 'in_progress');
+    // Include both 'enrolled' (from backend) and 'not_started' as assigned courses
+    const assignedCourses = trainingsArray.filter(t => t?.status === 'assigned' || t?.status === 'not_started' || t?.status === 'enrolled');
 
-    // Filter trainings
-    const filteredTrainings = selectedFilter === 'all' 
-        ? trainingsArray 
-        : trainingsArray.filter(t => t?.status === selectedFilter);
+    // Get first active course for "Continue Learning"
+    const continueCourse = activeCourses[0] || trainingsArray[0];
+
+    // Calculate total learning hours
+    const totalHours = trainingsArray.reduce((acc, t) => acc + (t?.duration_hours || 0), 0);
+
+    const [activeTab, setActiveTab] = useState('active');
+
+    const getDisplayCourses = () => {
+        switch (activeTab) {
+            case 'active':
+                return activeCourses;
+            case 'assigned':
+                return assignedCourses;
+            case 'completed':
+                return completedArray;
+            default:
+                return activeCourses;
+        }
+    };
 
     return (
         <AppLayout user={user}>
             <Head title="Dashboard Pembelajaran" />
+            
+            <div className="wondr-dashboard min-h-screen bg-[#F8F9FA] pb-20">
+                <WondrStyles />
 
-            {/* Announcement Banner */}
-            <AnnouncementBanner />
-
-            {/* Header Section */}
-            <div className="bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-800 px-6 py-12 rounded-lg shadow-lg mb-8">
-                <div className="max-w-7xl mx-auto">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h1 className="text-4xl font-bold text-white mb-2">
-                                Selamat Datang Kembali, {user.name}!
-                            </h1>
-                            <p className="text-blue-100 text-lg">
-                                {user.department} • NIP: {user.nip}
-                            </p>
-                            <p className="text-blue-100 mt-2">
-                                Terus tingkatkan kompetensi Anda melalui program pelatihan kami
-                            </p>
-                        </div>
-                        <div className="hidden md:block">
-                            <div className="bg-white bg-opacity-20 backdrop-blur-lg rounded-full p-8">
-                                <BookOpen className="w-16 h-16 text-white" />
+                {/* --- Hero Section --- */}
+                <div className="hero-pattern pt-8 pb-32 px-6 lg:px-12 relative rounded-b-[40px] shadow-2xl shadow-[#002824]/20">
+                    <div className="max-w-7xl mx-auto relative z-10">
+                        {/* Top Nav */}
+                        <div className="flex justify-between items-center mb-10">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-[#D6F84C] rounded-full flex items-center justify-center font-extrabold text-[#002824] text-xl">
+                                    L
+                                </div>
+                                <span className="text-white font-bold tracking-tight text-lg">Learning Hub</span>
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <div className="relative hidden md:block">
+                                    <input 
+                                        type="text" 
+                                        placeholder="Cari kursus..." 
+                                        className="pl-10 pr-4 py-2 bg-white/10 border border-white/10 rounded-full text-white placeholder-white/50 text-sm focus:outline-none focus:bg-white/20 transition-all w-48 focus:w-64"
+                                    />
+                                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/50" />
+                                </div>
+                                <Link href="/notifications" className="relative p-2 bg-white/10 rounded-full hover:bg-white/20 transition text-white">
+                                    <Bell className="w-5 h-5" />
+                                    <span className="absolute top-1 right-1.5 w-2 h-2 bg-red-500 rounded-full border border-[#002824]"></span>
+                                </Link>
+                                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#D6F84C] to-[#005E54] p-[2px]">
+                                    <div className="w-full h-full rounded-full bg-slate-800 flex items-center justify-center text-white font-bold text-sm">
+                                        {user.name?.charAt(0) || 'U'}
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                </div>
-            </div>
 
-            {/* Statistics Cards Section */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                <DashboardCard
-                    icon={<Target className="w-8 h-8" />}
-                    title="Total Training"
-                    value={totalTrainings}
-                    subtitle="Program pelatihan"
-                    bgGradient="from-blue-500 to-blue-600"
-                />
-                <DashboardCard
-                    icon={<TrendingUp className="w-8 h-8" />}
-                    title="Sedang Diikuti"
-                    value={inProgressCount}
-                    subtitle="In Progress"
-                    bgGradient="from-amber-500 to-amber-600"
-                />
-                <DashboardCard
-                    icon={<Award className="w-8 h-8" />}
-                    title="Selesai"
-                    value={completedCount}
-                    subtitle={`${completionPercentage}% selesai`}
-                    bgGradient="from-green-500 to-green-600"
-                />
-                <DashboardCard
-                    icon={<BarChart3 className="w-8 h-8" />}
-                    title="Sertifikat"
-                    value={certifications}
-                    subtitle="Diterima"
-                    bgGradient="from-purple-500 to-purple-600"
-                />
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
-                {/* Progress Overview */}
-                <div className="lg:col-span-2">
-                    <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-100">
-                        <div className="flex items-center justify-between mb-6">
-                            <h2 className="text-2xl font-bold text-gray-800">Progres Keseluruhan</h2>
-                            <span className="text-sm font-semibold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">
-                                {completionPercentage}%
-                            </span>
-                        </div>
-                        
-                        {/* Progress Bar */}
-                        <div className="mb-6">
-                            <div className="h-4 bg-gray-200 rounded-full overflow-hidden">
-                                <div
-                                    className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-500"
-                                    style={{ width: `${completionPercentage}%` }}
-                                ></div>
-                            </div>
-                            <p className="text-sm text-gray-600 mt-2">
-                                {completedCount} dari {totalTrainings} training selesai
-                            </p>
-                        </div>
-
-                        {/* Stats Grid */}
-                        <ProgressStats 
-                            totalTrainings={totalTrainings}
-                            completedCount={completedCount}
-                            inProgressCount={inProgressCount}
-                            certifications={certifications}
-                        />
-                    </div>
-                </div>
-
-                {/* Quick Actions / Certificate Preview */}
-                <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-100">
-                    <h3 className="text-xl font-bold text-gray-800 mb-4">Pencapaian Terbaru</h3>
-                    
-                    {certifications > 0 ? (
-                        <div className="space-y-3">
-                            {trainingsArray.filter(t => t?.is_certified).slice(0, 3).map((training, idx) => (
-                                <CertificateCard key={idx} training={training} />
-                            ))}
-                            {certifications > 3 && (
-                                <p className="text-sm text-center text-gray-500 pt-2">
-                                    +{certifications - 3} sertifikat lainnya
+                        {/* Greeting & Stats */}
+                        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-8">
+                            <div>
+                                <p className="text-[#D6F84C] font-bold text-sm uppercase tracking-widest mb-2 flex items-center gap-2">
+                                    <Zap className="w-4 h-4" /> Welcome Back
                                 </p>
+                                <h1 className="text-3xl lg:text-5xl font-extrabold text-white leading-tight mb-2">
+                                    Halo, {user.name || 'Learner'}!
+                                </h1>
+                                <p className="text-slate-300 text-lg">
+                                    {inProgressCount > 0 ? (
+                                        <>Anda memiliki <span className="text-white font-bold underline decoration-[#D6F84C]">{inProgressCount} kursus aktif</span> yang perlu diselesaikan.</>
+                                    ) : (
+                                        <>Mulai perjalanan belajar Anda hari ini!</>
+                                    )}
+                                </p>
+                            </div>
+                            
+                            <div className="flex flex-wrap gap-4">
+                                <StatPill icon={TrendingUp} value={completedCount} label="Selesai" />
+                                <StatPill icon={Clock} value={`${totalHours}h`} label="Total Jam" />
+                                <StatPill icon={Award} value={certifications} label="Sertifikat" />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* --- Main Content --- */}
+                <div className="max-w-7xl mx-auto px-6 -mt-20 relative z-20">
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                        
+                        {/* Left Column (Content) - 8 cols */}
+                        <div className="lg:col-span-8 space-y-8">
+                            
+                            {/* 1. Continue Learning (Featured) */}
+                            {continueCourse && (
+                                <div className="glass-card rounded-[32px] p-1 animate-enter">
+                                    <div className="flex flex-col md:flex-row bg-[#002824] rounded-[28px] overflow-hidden text-white relative">
+                                        <div className="p-8 flex-1 relative z-10">
+                                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full text-xs font-bold text-[#D6F84C] mb-4">
+                                                <Clock className="w-3 h-3" /> Lanjutkan Belajar
+                                            </div>
+                                            <h3 className="text-2xl font-bold mb-2">{continueCourse.title}</h3>
+                                            <p className="text-slate-400 text-sm mb-6 line-clamp-2">{continueCourse.description || 'Lanjutkan pembelajaran Anda dari sesi terakhir.'}</p>
+                                            
+                                            <div className="flex items-center gap-4">
+                                                <Link 
+                                                    href={`/training/${continueCourse.id}`}
+                                                    className="px-6 py-3 bg-[#D6F84C] hover:bg-[#c2e43c] text-[#002824] rounded-xl font-bold text-sm transition-all hover:scale-105 flex items-center gap-2"
+                                                >
+                                                    <PlayCircle className="w-5 h-5" /> Lanjutkan - {continueCourse.progress || 0}%
+                                                </Link>
+                                            </div>
+                                        </div>
+                                        <div className="md:w-1/3 bg-[#005E54] relative min-h-[150px]">
+                                            {continueCourse.thumbnail ? (
+                                                <img src={continueCourse.thumbnail} alt="" className="w-full h-full object-cover opacity-50" />
+                                            ) : (
+                                                <>
+                                                    <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
+                                                    <div className="absolute bottom-0 right-0 w-32 h-32 bg-[#D6F84C] rounded-full blur-[60px] opacity-20"></div>
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
                             )}
-                        </div>
-                    ) : (
-                        <div className="text-center py-8">
-                            <Award className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                            <p className="text-gray-500">Belum ada sertifikat</p>
-                            <p className="text-sm text-gray-400">Selesaikan training untuk mendapat sertifikat</p>
-                        </div>
-                    )}
-                </div>
-            </div>
 
-            {/* Training Programs Section */}
-            <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-100 mb-8">
-                <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-                    <h2 className="text-2xl font-bold text-gray-800">Program Pelatihan</h2>
-                    <div className="flex gap-2">
-                        <button
-                            onClick={() => setSelectedFilter('all')}
-                            className={`px-4 py-2 rounded-lg font-medium transition ${
-                                selectedFilter === 'all'
-                                    ? 'bg-blue-600 text-white'
-                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                            }`}
-                        >
-                            Semua
-                        </button>
-                        <button
-                            onClick={() => setSelectedFilter('in_progress')}
-                            className={`px-4 py-2 rounded-lg font-medium transition ${
-                                selectedFilter === 'in_progress'
-                                    ? 'bg-blue-600 text-white'
-                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                            }`}
-                        >
-                            Aktif
-                        </button>
-                        <button
-                            onClick={() => setSelectedFilter('completed')}
-                            className={`px-4 py-2 rounded-lg font-medium transition ${
-                                selectedFilter === 'completed'
-                                    ? 'bg-blue-600 text-white'
-                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                            }`}
-                        >
-                            Selesai
-                        </button>
-                    </div>
-                </div>
-
-                {filteredTrainings.length > 0 ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {filteredTrainings.map((training) => (
-                            <TrainingCard key={training.id} training={training} user={user} />
-                        ))}
-                    </div>
-                ) : (
-                    <div className="text-center py-12">
-                        <BookOpen className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                        <p className="text-gray-500 text-lg">Tidak ada training</p>
-                        <p className="text-gray-400">Lihat semua training yang tersedia</p>
-                    </div>
-                )}
-            </div>
-
-            {/* Upcoming Trainings Section */}
-            {upcomingArray.length > 0 && (
-                <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-100 mb-8">
-                    <h2 className="text-2xl font-bold text-gray-800 mb-6">Training Mendatang</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {upcomingArray.slice(0, 4).map((training) => (
-                            <div key={training.id} className="flex items-center p-4 border border-gray-200 rounded-lg hover:border-blue-300 hover:bg-blue-50 transition">
-                                <div className="flex-shrink-0">
-                                    <Clock className="w-6 h-6 text-amber-500" />
+                            {/* 2. My Learning Tabs & Grid */}
+                            <div>
+                                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+                                    <div className="flex bg-white rounded-full p-1 shadow-sm border border-slate-200">
+                                        {['active', 'assigned', 'completed'].map(tab => (
+                                            <button
+                                                key={tab}
+                                                onClick={() => setActiveTab(tab)}
+                                                className={`px-4 sm:px-6 py-2 rounded-full text-sm font-bold capitalize tab-pill ${
+                                                    activeTab === tab ? 'active' : 'text-slate-500 hover:text-slate-800'
+                                                }`}
+                                            >
+                                                {tab === 'active' ? 'Aktif' : tab === 'assigned' ? 'Ditugaskan' : 'Selesai'}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <Link href="/my-trainings" className="text-sm font-bold text-[#005E54] hover:underline flex items-center gap-1">
+                                        Lihat Semua <ChevronRight className="w-4 h-4" />
+                                    </Link>
                                 </div>
-                                <div className="ml-4 flex-grow">
-                                    <h3 className="font-semibold text-gray-800">{training.title}</h3>
-                                    <p className="text-sm text-gray-600">{training.description}</p>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-enter" style={{ animationDelay: '200ms' }}>
+                                    {getDisplayCourses().slice(0, 4).map(course => (
+                                        <CourseCard key={course.id} course={course} />
+                                    ))}
+                                    {/* Empty State */}
+                                    {getDisplayCourses().length === 0 && (
+                                        <div className="col-span-2 py-12 text-center border-2 border-dashed border-slate-200 rounded-[24px]">
+                                            <BookOpen className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                                            <p className="text-slate-500 font-medium">Belum ada kursus di tab ini.</p>
+                                        </div>
+                                    )}
                                 </div>
-                                <button className="px-3 py-1 text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline">
-                                    Lihat
-                                </button>
                             </div>
-                        ))}
-                    </div>
-                </div>
-            )}
 
-            {/* Recent Activity Section */}
-            {activityArray.length > 0 && (
-                <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-100">
-                    <h2 className="text-2xl font-bold text-gray-800 mb-6">Aktivitas Terbaru</h2>
-                    <div className="space-y-3">
-                        {activityArray.slice(0, 5).map((activity, idx) => (
-                            <div key={idx} className="flex items-center py-3 border-b border-gray-100 last:border-0">
-                                <div className="flex-shrink-0">
-                                    <div className="w-3 h-3 rounded-full bg-blue-600"></div>
+                            {/* 3. Recommended For You */}
+                            {upcomingArray.length > 0 && (
+                                <div>
+                                    <h3 className="text-xl font-bold text-slate-900 mb-4">Rekomendasi Untuk Anda</h3>
+                                    <div className="space-y-4 animate-enter" style={{ animationDelay: '400ms' }}>
+                                        {upcomingArray.slice(0, 3).map(course => (
+                                            <CourseCard key={course.id} course={{...course, progress: 0}} type="list" />
+                                        ))}
+                                    </div>
                                 </div>
-                                <div className="ml-4 flex-grow">
-                                    <p className="text-gray-800 font-medium">{activity.title}</p>
-                                    <p className="text-sm text-gray-500">{activity.time}</p>
+                            )}
+
+                        </div>
+
+                        {/* Right Column (Sidebar) - 4 cols */}
+                        <div className="lg:col-span-4 space-y-6">
+                            
+                            {/* Announcement Widget */}
+                            <AnnouncementWidget />
+
+                            {/* Calendar / Upcoming Widget */}
+                            <div className="glass-card rounded-[24px] p-6">
+                                <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
+                                    <Calendar className="w-5 h-5 text-[#005E54]" /> Jadwal Mendatang
+                                </h3>
+                                <div className="space-y-4">
+                                    {upcomingArray.length > 0 ? (
+                                        upcomingArray.slice(0, 2).map((event, idx) => (
+                                            <div key={idx} className="flex gap-4 items-center">
+                                                <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 text-center min-w-[3.5rem]">
+                                                    <span className="block text-xs font-bold text-slate-400 uppercase">
+                                                        {new Date(event.start_date || Date.now()).toLocaleDateString('id-ID', { month: 'short' })}
+                                                    </span>
+                                                    <span className="block text-xl font-extrabold text-[#002824]">
+                                                        {new Date(event.start_date || Date.now()).getDate()}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <h5 className="font-bold text-slate-800 text-sm line-clamp-1">{event.title}</h5>
+                                                    <p className="text-xs text-slate-500 font-medium mt-0.5">Deadline</p>
+                                                </div>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <p className="text-sm text-slate-400 text-center py-4">Tidak ada jadwal mendatang</p>
+                                    )}
                                 </div>
-                                {activity.score && (
-                                    <span className={`px-3 py-1 rounded text-sm font-semibold ${
-                                        activity.passed ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                                    }`}>
-                                        {activity.score}%
-                                    </span>
-                                )}
+                                <Link href="/training-calendar" className="block w-full mt-4 py-2.5 text-sm font-bold text-slate-600 bg-slate-50 rounded-xl hover:bg-slate-100 transition text-center">
+                                    Buka Kalender
+                                </Link>
                             </div>
-                        ))}
+
+                            {/* Achievement Widget */}
+                            <div className="bg-white rounded-[24px] p-6 border border-slate-100 shadow-sm relative overflow-hidden">
+                                <div className="absolute top-0 right-0 p-4 opacity-10">
+                                    <Award className="w-24 h-24 text-[#D6F84C]" />
+                                </div>
+                                <h3 className="font-bold text-slate-900 mb-4 relative z-10">Pencapaian Anda</h3>
+                                <div className="space-y-4 relative z-10">
+                                    <div className="flex items-center justify-between p-3 rounded-xl bg-gradient-to-r from-[#002824] to-[#005E54] text-white">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-full bg-[#D6F84C] flex items-center justify-center">
+                                                <TrendingUp className="w-5 h-5 text-[#002824]" />
+                                            </div>
+                                            <div>
+                                                <span className="text-sm font-bold">Total Progress</span>
+                                                <p className="text-xs text-slate-300">{totalTrainings} Training</p>
+                                            </div>
+                                        </div>
+                                        <span className="text-2xl font-extrabold text-[#D6F84C]">
+                                            {totalTrainings > 0 ? Math.round((completedCount / totalTrainings) * 100) : 0}%
+                                        </span>
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="p-3 bg-slate-50 rounded-xl text-center">
+                                            <p className="text-2xl font-extrabold text-[#005E54]">{completedCount}</p>
+                                            <p className="text-xs text-slate-500 font-medium">Selesai</p>
+                                        </div>
+                                        <div className="p-3 bg-slate-50 rounded-xl text-center">
+                                            <p className="text-2xl font-extrabold text-[#005E54]">{certifications}</p>
+                                            <p className="text-xs text-slate-500 font-medium">Sertifikat</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Quick Links */}
+                            <div className="glass-card rounded-[24px] p-6">
+                                <h3 className="font-bold text-slate-900 mb-4">Menu Cepat</h3>
+                                <div className="space-y-2">
+                                    <Link href="/learner/performance" className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 transition group">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 bg-blue-50 rounded-lg text-blue-600">
+                                                <TrendingUp className="w-4 h-4" />
+                                            </div>
+                                            <span className="text-sm font-medium text-slate-700">Performa & Progres</span>
+                                        </div>
+                                        <ChevronRight className="w-4 h-4 text-slate-400 group-hover:translate-x-1 transition-transform" />
+                                    </Link>
+                                    <Link href="/my-reports" className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 transition group">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 bg-green-50 rounded-lg text-green-600">
+                                                <BookOpen className="w-4 h-4" />
+                                            </div>
+                                            <span className="text-sm font-medium text-slate-700">Laporan Pembelajaran</span>
+                                        </div>
+                                        <ChevronRight className="w-4 h-4 text-slate-400 group-hover:translate-x-1 transition-transform" />
+                                    </Link>
+                                    <Link href="/notifications" className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 transition group">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 bg-amber-50 rounded-lg text-amber-600">
+                                                <Bell className="w-4 h-4" />
+                                            </div>
+                                            <span className="text-sm font-medium text-slate-700">Notifikasi</span>
+                                        </div>
+                                        <ChevronRight className="w-4 h-4 text-slate-400 group-hover:translate-x-1 transition-transform" />
+                                    </Link>
+                                </div>
+                            </div>
+
+                        </div>
                     </div>
                 </div>
-            )}
-
-            {/* Announcement Modal */}
-            <AnnouncementModal />
-
-            {/* Notification Bell - Fixed Position */}
-            <div className="fixed top-20 right-6 z-40">
-                <NotificationDropdown user={user} />
             </div>
         </AppLayout>
     );

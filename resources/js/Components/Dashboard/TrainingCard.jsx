@@ -19,6 +19,20 @@ export default function TrainingCard({ training, user }) {
                         Sedang Belajar
                     </span>
                 );
+            case 'enrolled':
+                return (
+                    <span className="inline-flex items-center gap-1 px-3 py-1 bg-amber-100 text-amber-800 text-xs font-semibold rounded-full">
+                        <Lock className="w-3 h-3" />
+                        Terdaftar
+                    </span>
+                );
+            case 'not_started':
+                return (
+                    <span className="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 text-gray-800 text-xs font-semibold rounded-full">
+                        <Lock className="w-3 h-3" />
+                        Belum Mulai
+                    </span>
+                );
             case 'failed':
                 return (
                     <span className="inline-flex items-center gap-1 px-3 py-1 bg-red-100 text-red-800 text-xs font-semibold rounded-full">
@@ -75,23 +89,23 @@ export default function TrainingCard({ training, user }) {
                         <div className="mb-3">
                             <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs font-semibold text-gray-700">Progress Materi</span>
-                                <span className="text-xs font-bold text-blue-600">{Math.round(progress)}%</span>
+                                <span className="text-xs font-bold text-blue-600">{Math.round(progress || 0)}%</span>
                             </div>
                             <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
                                 <div
-                                    className={`h-full ${getProgressColor(progress)} transition-all duration-300`}
-                                    style={{ width: `${progress}%` }}
+                                    className={`h-full ${getProgressColor(progress || 0)} transition-all duration-300`}
+                                    style={{ width: `${progress || 0}%` }}
                                 ></div>
                             </div>
                         </div>
 
                         {/* Score Section (if completed) */}
-                        {training.status === 'completed' && (
+                        {training.status === 'completed' && finalScore > 0 && (
                             <div className="mb-3 p-3 bg-green-50 rounded-lg">
                                 <div className="flex items-center justify-between">
                                     <span className="text-xs font-semibold text-gray-700">Nilai Ujian</span>
                                     <span className={`text-lg font-bold ${
-                                        finalScore >= training.passing_grade 
+                                        finalScore >= (training.passing_grade || 70) 
                                             ? 'text-green-600' 
                                             : 'text-red-600'
                                     }`}>
@@ -109,7 +123,7 @@ export default function TrainingCard({ training, user }) {
                         {/* Passing Grade Info */}
                         <div className="mb-3 flex items-center justify-between text-xs text-gray-600 bg-gray-50 p-2 rounded">
                             <span>KKM (Passing Grade)</span>
-                            <span className="font-semibold">{training.passing_grade}%</span>
+                            <span className="font-semibold">{training.passing_grade || 70}%</span>
                         </div>
 
                         {/* Meta Info */}

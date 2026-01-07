@@ -300,7 +300,7 @@ export default function ReportsCompliance({ auth, stats, learnerProgress, questi
                                     </div>
                                 </div>
                                 <div className="h-[350px] w-full">
-                                    <ResponsiveContainer width="100%" height="100%">
+                                    <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={300}>
                                         <AreaChart data={formattedTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                                             <defs>
                                                 <linearGradient id="colorComp" x1="0" y1="0" x2="0" y2="1">
@@ -331,7 +331,7 @@ export default function ReportsCompliance({ auth, stats, learnerProgress, questi
                                 </div>
                                 
                                 <div className="flex-1 min-h-[250px] relative">
-                                    <ResponsiveContainer width="100%" height="100%">
+                                    <ResponsiveContainer width="100%" height="100%" minWidth={200} minHeight={200}>
                                         <PieChart>
                                             <Pie
                                                 data={formattedComplianceData}
@@ -452,7 +452,7 @@ export default function ReportsCompliance({ auth, stats, learnerProgress, questi
                             {formattedQuestionPerformance.length > 0 ? (
                                 <>
                                     <div className="h-[400px] w-full mb-8">
-                                        <ResponsiveContainer width="100%" height="100%">
+                                        <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={300}>
                                             <BarChart data={formattedQuestionPerformance} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
                                                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#E2E8F0" />
                                                 <XAxis type="number" hide />
@@ -516,7 +516,7 @@ export default function ReportsCompliance({ auth, stats, learnerProgress, questi
                                 </div>
                             </div>
                             <div className="h-[350px] w-full">
-                                <ResponsiveContainer width="100%" height="100%">
+                                <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={300}>
                                     <BarChart data={formattedComparisonData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
                                         <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748B', fontSize: 12}} />

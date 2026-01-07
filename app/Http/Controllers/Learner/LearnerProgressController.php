@@ -8,7 +8,7 @@ use App\Models\UserTraining;
 use App\Models\ModuleProgress;
 use App\Models\Module;
 use App\Models\TrainingMaterial;
-use App\Models\UserExamAnswer;
+use App\Models\ExamAttempt;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
@@ -22,25 +22,32 @@ class LearnerProgressController extends Controller
         $userId = Auth::id();
 
         $programs = UserTraining::where('user_id', $userId)
-            ->with('module:id,name,description,duration')
+            ->with('module:id,title,description,duration_minutes')
             ->get()
+            ->filter(function ($training) {
+                return $training->module !== null;
+            })
             ->map(function ($training) use ($userId) {
                 $moduleProgress = ModuleProgress::where('user_id', $userId)
                     ->where('module_id', $training->module_id)
                     ->first();
 
+                // Get modules/materials for this training
+                $modules = $this->getModulesForProgram($training->module_id, $userId);
+
                 return [
                     'id' => $training->module_id,
-                    'name' => $training->module->name,
+                    'name' => $training->module->title ?? 'Unknown Program',
                     'progress' => $moduleProgress->progress_percentage ?? 0,
-                    'status' => $training->status,
-                    'startDate' => $training->enrolled_at->format('Y-m-d'),
-                    'dueDate' => now()->addMonths(6)->format('Y-m-d'),
-                    'totalHours' => $training->module->duration ?? 0,
-                    'completedHours' => round(($moduleProgress->progress_percentage ?? 0) / 100 * ($training->module->duration ?? 0), 2),
-                    'modules' => [],
+                    'status' => $training->status ?? 'not_started',
+                    'startDate' => $training->enrolled_at ? $training->enrolled_at->format('Y-m-d') : now()->format('Y-m-d'),
+                    'dueDate' => $training->enrolled_at ? $training->enrolled_at->addMonths(6)->format('Y-m-d') : now()->addMonths(6)->format('Y-m-d'),
+                    'totalHours' => round(($training->module->duration_minutes ?? 0) / 60, 1),
+                    'completedHours' => round(($moduleProgress->progress_percentage ?? 0) / 100 * (($training->module->duration_minutes ?? 0) / 60), 2),
+                    'modules' => $modules,
                 ];
-            });
+            })
+            ->values();
 
         return response()->json([
             'programs' => $programs,
@@ -70,9 +77,9 @@ class LearnerProgressController extends Controller
             ->map(function ($material) use ($userId) {
                 return [
                     'id' => $material->id,
-                    'name' => $material->name,
-                    'type' => $material->type,
-                    'duration' => $material->duration,
+                    'name' => $material->title,
+                    'type' => $material->file_type ?? 'content',
+                    'duration' => $material->duration_minutes ?? 0,
                     'completed' => $this->isContentCompleted($userId, $material->id),
                     'score' => $this->getContentScore($userId, $material->id),
                 ];
@@ -88,14 +95,14 @@ class LearnerProgressController extends Controller
         return response()->json([
             'program' => [
                 'id' => $module->id,
-                'name' => $module->name,
+                'name' => $module->title,
                 'description' => $module->description,
                 'progress' => $moduleProgress->progress_percentage ?? 0,
                 'status' => $training->status,
-                'startDate' => $training->enrolled_at->format('Y-m-d'),
+                'startDate' => $training->enrolled_at?->format('Y-m-d') ?? now()->format('Y-m-d'),
                 'dueDate' => now()->addMonths(6)->format('Y-m-d'),
-                'totalHours' => $module->duration ?? 0,
-                'completedHours' => round(($moduleProgress->progress_percentage ?? 0) / 100 * ($module->duration ?? 0), 2),
+                'totalHours' => round(($module->duration_minutes ?? 0) / 60, 1),
+                'completedHours' => round(($moduleProgress->progress_percentage ?? 0) / 100 * (($module->duration_minutes ?? 0) / 60), 2),
                 'modules' => $subModules->isEmpty() ? $this->buildDefaultModules($module, $userId) : $subModules,
             ],
         ]);
@@ -125,10 +132,10 @@ class LearnerProgressController extends Controller
 
         return [
             'id' => $module->id,
-            'name' => $module->name,
+            'name' => $module->title,
             'progress' => $moduleProgress->progress_percentage ?? 0,
             'status' => $moduleProgress->status ?? 'locked',
-            'duration' => $module->duration ?? 0,
+            'duration' => round(($module->duration_minutes ?? 0) / 60, 1),
             'materials' => $materials,
         ];
     }
@@ -143,9 +150,9 @@ class LearnerProgressController extends Controller
             ->map(function ($material) use ($userId) {
                 return [
                     'id' => $material->id,
-                    'name' => $material->name,
-                    'type' => $material->type,
-                    'duration' => $material->duration,
+                    'name' => $material->title,
+                    'type' => $material->file_type ?? 'content',
+                    'duration' => $material->duration_minutes ?? 0,
                     'completed' => $this->isContentCompleted($userId, $material->id),
                     'score' => $this->getContentScore($userId, $material->id),
                 ];
@@ -154,10 +161,10 @@ class LearnerProgressController extends Controller
         return [
             [
                 'id' => $module->id,
-                'name' => $module->name,
+                'name' => $module->title,
                 'progress' => count($materials) > 0 ? round(collect($materials)->where('completed', true)->count() / count($materials) * 100) : 0,
                 'status' => 'in_progress',
-                'duration' => $module->duration ?? 0,
+                'duration' => round(($module->duration_minutes ?? 0) / 60, 1),
                 'materials' => $materials,
             ]
         ];
@@ -168,9 +175,17 @@ class LearnerProgressController extends Controller
      */
     private function isContentCompleted($userId, $materialId)
     {
-        // This would typically check a user_content_progress table
-        // For now, returning random value for demo
-        return rand(0, 1) === 1;
+        // Check if material_progress table exists and has data
+        try {
+            return DB::table('material_progress')
+                ->where('user_id', $userId)
+                ->where('material_id', $materialId)
+                ->where('is_completed', true)
+                ->exists();
+        } catch (\Exception $e) {
+            // Table doesn't exist, check for module progress instead
+            return false;
+        }
     }
 
     /**
@@ -178,8 +193,74 @@ class LearnerProgressController extends Controller
      */
     private function getContentScore($userId, $materialId)
     {
-        // This would check quiz or exam scores
-        // For now returning null if not a quiz/exam
+        // Check for quiz/exam scores related to this material
+        $material = TrainingMaterial::find($materialId);
+        
+        if ($material && in_array($material->file_type, ['quiz', 'exam', 'assessment', 'test'])) {
+            $attempt = ExamAttempt::where('user_id', $userId)
+                ->where('module_id', $material->module_id)
+                ->orderBy('finished_at', 'desc')
+                ->first();
+            
+            return $attempt ? $attempt->percentage : null;
+        }
+        
         return null;
+    }
+
+    /**
+     * Helper method: Get modules for a program
+     */
+    private function getModulesForProgram($moduleId, $userId)
+    {
+        // Get training materials for this module
+        $materials = TrainingMaterial::where('module_id', $moduleId)
+            ->orderBy('order', 'asc')
+            ->get();
+
+        $module = Module::find($moduleId);
+        
+        if (!$module) {
+            return [];
+        }
+
+        // Get module progress
+        $moduleProgress = ModuleProgress::where('user_id', $userId)
+            ->where('module_id', $moduleId)
+            ->first();
+
+        // Build materials array
+        $formattedMaterials = $materials->map(function ($material) use ($userId) {
+            return [
+                'id' => $material->id,
+                'name' => $material->title ?? 'Material',
+                'type' => $material->file_type ?? 'content',
+                'duration' => $material->duration_minutes ?? 0,
+                'completed' => $this->isContentCompleted($userId, $material->id),
+                'score' => $this->getContentScore($userId, $material->id),
+            ];
+        });
+
+        // Use module progress percentage if available
+        $progress = $moduleProgress->progress_percentage ?? 0;
+
+        // Determine status
+        $status = 'not_started';
+        if ($progress >= 100) {
+            $status = 'completed';
+        } elseif ($progress > 0) {
+            $status = 'in_progress';
+        }
+
+        return [
+            [
+                'id' => $module->id,
+                'name' => $module->title ?? 'Module',
+                'progress' => $progress,
+                'status' => $status,
+                'duration' => round(($module->duration_minutes ?? 0) / 60, 1),
+                'materials' => $formattedMaterials,
+            ]
+        ];
     }
 }

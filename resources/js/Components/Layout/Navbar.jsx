@@ -1,31 +1,120 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link, router } from '@inertiajs/react';
-import { Menu, X, LogOut, User, Settings, ChevronDown, Bookmark, Target, TrendingUp, BarChart3, FileText } from 'lucide-react';
+import { Link, router, usePage } from '@inertiajs/react';
+import { 
+    Menu, X, LogOut, User, Settings, ChevronDown, 
+    Target, TrendingUp, FileText, 
+    Search, Bell, Sparkles, LayoutDashboard, GraduationCap
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import NotificationDropdown from '@/Components/Notification/NotificationDropdown';
 
-export default function Navbar({ user }) {
-    const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-    const [userDropdownOpen, setUserDropdownOpen] = useState(false);
-    const [learningDropdownOpen, setLearningDropdownOpen] = useState(false);
-    const [reportsDropdownOpen, setReportsDropdownOpen] = useState(false);
-    
-    const learningRef = useRef(null);
-    const reportsRef = useRef(null);
+// --- Wondr Style System ---
+const WondrStyles = () => (
+    <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F8F9FA; color: #1e293b; }
+        
+        .glass-nav {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.5);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.03);
+        }
 
-    // Close dropdowns when clicking outside
+        .nav-link {
+            position: relative;
+            color: #64748B;
+            transition: color 0.3s ease;
+        }
+        .nav-link:hover, .nav-link.active {
+            color: #005E54;
+        }
+        .nav-link::after {
+            content: '';
+            position: absolute;
+            bottom: -24px;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: #005E54;
+            border-radius: 4px 4px 0 0;
+            transform: scaleX(0);
+            transition: transform 0.3s ease;
+        }
+        .nav-link.active::after {
+            transform: scaleX(1);
+        }
+
+        .dropdown-item {
+            transition: all 0.2s ease;
+        }
+        .dropdown-item:hover {
+            background-color: #F0FDF4;
+            color: #005E54;
+        }
+
+        .search-input:focus {
+            box-shadow: 0 0 0 3px rgba(0, 94, 84, 0.1);
+            border-color: #005E54;
+        }
+        
+        .notification-dot {
+            animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+        }
+    `}</style>
+);
+
+// --- Sub-Components ---
+
+const NavLink = ({ href, active, children, icon: Icon }) => (
+    <Link 
+        href={href} 
+        className={`nav-link flex items-center gap-2 text-sm font-bold px-1 h-full ${active ? 'active' : ''}`}
+    >
+        {Icon && <Icon size={18} />}
+        {children}
+    </Link>
+);
+
+const MobileNavLink = ({ href, children, icon: Icon, onClick }) => (
+    <Link 
+        href={href} 
+        onClick={onClick}
+        className="flex items-center gap-3 px-4 py-3 text-slate-600 hover:text-[#005E54] hover:bg-[#F0FDF4] rounded-xl transition-all font-semibold"
+    >
+        {Icon && <Icon size={20} />}
+        {children}
+    </Link>
+);
+
+// --- Main Component ---
+
+export default function Navbar({ user }) {
+    const { url } = usePage();
+    const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+    const [dropdownOpen, setDropdownOpen] = useState(null); // 'learning', 'reports', 'profile'
+    const dropdownRef = useRef(null);
+
+    // Close dropdown on outside click
     useEffect(() => {
         const handleClickOutside = (event) => {
-            if (learningRef.current && !learningRef.current.contains(event.target)) {
-                setLearningDropdownOpen(false);
-            }
-            if (reportsRef.current && !reportsRef.current.contains(event.target)) {
-                setReportsDropdownOpen(false);
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+                setDropdownOpen(null);
             }
         };
-
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
+
+    const toggleDropdown = (name) => {
+        setDropdownOpen(dropdownOpen === name ? null : name);
+    };
 
     const handleLogout = (e) => {
         e.preventDefault();
@@ -33,317 +122,257 @@ export default function Navbar({ user }) {
             preserveState: false,
             preserveScroll: false,
             onSuccess: () => {
-                // Logout berhasil, redirect ke login
                 window.location.href = '/login';
             },
             onError: () => {
-                // Jika terjadi error (seperti 419), paksa redirect ke login
-                // User sudah tidak punya session valid, jadi tujuan logout tercapai
                 window.location.href = '/login';
             },
         });
     };
 
+    const isActive = (path) => url.startsWith(path);
+
     return (
-        <nav className="sticky top-0 z-50 bg-white shadow-md border-b border-gray-200">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="flex justify-between items-center h-16">
-                    {/* Logo */}
-                    <div className="flex items-center">
-                        <Link href="/" className="flex items-center gap-2">
-                            <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-2 rounded-lg">
-                                <span className="text-white font-bold text-xl">HCMS</span>
-                            </div>
-                            <div className="hidden sm:block">
-                                <h1 className="text-lg font-bold text-gray-800">E-Learning</h1>
-                                <p className="text-xs text-gray-600">BNI Training</p>
-                            </div>
-                        </Link>
-                    </div>
-
-                    {/* Desktop Menu */}
-                    <div className="hidden md:flex items-center gap-6">
-                        <Link 
-                            href="/dashboard" 
-                            className="text-gray-700 hover:text-blue-600 font-medium transition"
-                        >
-                            Dashboard
-                        </Link>
-                        <Link 
-                            href="/my-trainings" 
-                            className="text-gray-700 hover:text-blue-600 font-medium transition"
-                        >
-                            Training Saya
-                        </Link>
+        <>
+            <WondrStyles />
+            <nav className="glass-nav sticky top-0 z-50 h-20">
+                <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 h-full">
+                    <div className="flex justify-between items-center h-full">
                         
-                        {/* My Learning Dropdown */}
-                        <div className="relative" ref={learningRef}>
-                            <button
-                                onClick={() => setLearningDropdownOpen(!learningDropdownOpen)}
-                                className="flex items-center gap-1 text-gray-700 hover:text-blue-600 font-medium transition"
-                            >
-                                My Learning
-                                <ChevronDown size={16} className={`transition-transform ${learningDropdownOpen ? 'rotate-180' : ''}`} />
-                            </button>
-                            
-                            {learningDropdownOpen && (
-                                <div className="absolute top-full left-0 mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg py-2 z-50">
-                                    <Link 
-                                        href="/bookmarks"
-                                        className="flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition"
-                                    >
-                                        <Bookmark size={18} />
-                                        <div>
-                                            <p className="font-semibold text-sm">Bookmarks</p>
-                                            <p className="text-xs text-gray-500">Saved favorites</p>
-                                        </div>
-                                    </Link>
-                                    <Link 
-                                        href="/goals"
-                                        className="flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition"
-                                    >
-                                        <Target size={18} />
-                                        <div>
-                                            <p className="font-semibold text-sm">Learning Goals</p>
-                                            <p className="text-xs text-gray-500">Track targets</p>
-                                        </div>
-                                    </Link>
-                                    <Link 
-                                        href="/learning-path"
-                                        className="flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition"
-                                    >
-                                        <BarChart3 size={18} />
-                                        <div>
-                                            <p className="font-semibold text-sm">Learning Path</p>
-                                            <p className="text-xs text-gray-500">Skill roadmap</p>
-                                        </div>
-                                    </Link>
-                                    <div className="border-t border-gray-100 my-2"></div>
-                                    <Link 
-                                        href="/learner/performance"
-                                        className="flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition"
-                                    >
-                                        <TrendingUp size={18} />
-                                        <div>
-                                            <p className="font-semibold text-sm">Performance</p>
-                                            <p className="text-xs text-gray-500">View metrics</p>
-                                        </div>
-                                    </Link>
-                                    <Link 
-                                        href="/learner/progress-detail"
-                                        className="flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition"
-                                    >
-                                        <BarChart3 size={18} />
-                                        <div>
-                                            <p className="font-semibold text-sm">Progress Detail</p>
-                                            <p className="text-xs text-gray-500">Track completion</p>
-                                        </div>
-                                    </Link>
+                        {/* 1. Logo & Brand */}
+                        <div className="flex items-center gap-8">
+                            <Link href="/dashboard" className="flex items-center gap-3 group">
+                                <div className="relative">
+                                    <div className="w-10 h-10 bg-[#002824] rounded-xl flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform">
+                                        <span className="text-[#D6F84C] font-black text-xl">W</span>
+                                    </div>
+                                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-[#D6F84C] rounded-full border-2 border-white"></div>
                                 </div>
-                            )}
-                        </div>
-
-                        {/* Reports Dropdown */}
-                        <div className="relative" ref={reportsRef}>
-                            <button
-                                onClick={() => setReportsDropdownOpen(!reportsDropdownOpen)}
-                                className="flex items-center gap-1 text-gray-700 hover:text-blue-600 font-medium transition"
-                            >
-                                Reports
-                                <ChevronDown size={16} className={`transition-transform ${reportsDropdownOpen ? 'rotate-180' : ''}`} />
-                            </button>
-                            
-                            {reportsDropdownOpen && (
-                                <div className="absolute top-full left-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg py-2 z-50">
-                                    <Link 
-                                        href="/my-reports"
-                                        className="flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition"
-                                    >
-                                        <FileText size={18} />
-                                        <div>
-                                            <p className="font-semibold text-sm">My Reports</p>
-                                            <p className="text-xs text-gray-500">View reports</p>
-                                        </div>
-                                    </Link>
+                                <div className="flex flex-col">
+                                    <span className="text-xl font-extrabold text-[#002824] leading-none tracking-tight">Wondr</span>
+                                    <span className="text-[10px] font-bold text-[#005E54] tracking-widest uppercase">Learning</span>
                                 </div>
-                            )}
-                        </div>
-
-                        {user?.role === 'admin' && (
-                            <Link 
-                                href="/admin/dashboard" 
-                                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition"
-                            >
-                                Admin Panel
                             </Link>
-                        )}
-                    </div>
 
-                    {/* User Menu */}
-                    <div className="flex items-center gap-4">
-                        {/* Notification Bell */}
-                        <NotificationDropdown user={user} />
-
-                        {/* User Dropdown */}
-                        <div className="hidden sm:flex items-center gap-3 pl-4 border-l border-gray-200 relative">
-                            <button
-                                onClick={() => setUserDropdownOpen(!userDropdownOpen)}
-                                className="flex items-center gap-3 hover:opacity-80 transition"
-                            >
-                                <div className="text-right">
-                                    <p className="text-sm font-medium text-gray-800">{user.name}</p>
-                                    <p className="text-xs text-gray-600">{user.department}</p>
-                                </div>
-                                <img 
-                                    src={`https://ui-avatars.com/api/?name=${encodeURIComponent(user.name)}&background=0D8ABC&color=fff&size=40`}
-                                    alt={user.name}
-                                    className="w-10 h-10 rounded-full border-2 border-blue-600"
-                                />
-                            </button>
-
-                            {/* Dropdown Menu */}
-                            {userDropdownOpen && (
-                                <div className="absolute top-full right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
-                                    <Link 
-                                        href="/profile"
-                                        className="block px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-t-lg flex items-center gap-2 transition"
+                            {/* Desktop Nav */}
+                            <div className="hidden lg:flex items-center gap-6 h-full pt-1">
+                                <NavLink href="/dashboard" active={isActive('/dashboard')} icon={LayoutDashboard}>Dashboard</NavLink>
+                                <NavLink href="/my-trainings" active={isActive('/my-trainings')} icon={GraduationCap}>Training Saya</NavLink>
+                                
+                                {/* Dropdown: Explore */}
+                                <div className="relative h-full flex items-center" ref={dropdownRef}>
+                                    <button 
+                                        onClick={() => toggleDropdown('learning')}
+                                        className={`flex items-center gap-1 text-sm font-bold transition-colors ${dropdownOpen === 'learning' ? 'text-[#005E54]' : 'text-slate-600 hover:text-[#005E54]'}`}
                                     >
-                                        <User className="w-4 h-4" />
-                                        Profile
-                                    </Link>
-                                    <Link 
-                                        href="/settings"
-                                        className="block px-4 py-2 text-gray-700 hover:bg-gray-100 flex items-center gap-2 transition"
-                                    >
-                                        <Settings className="w-4 h-4" />
-                                        Pengaturan
-                                    </Link>
-                                    <hr className="my-1" />
-                                    <button
-                                        onClick={handleLogout}
-                                        className="w-full text-left px-4 py-2 text-red-600 hover:bg-red-50 rounded-b-lg flex items-center gap-2 transition"
-                                    >
-                                        <LogOut className="w-4 h-4" />
-                                        Logout
+                                        Eksplorasi <ChevronDown size={16} className={`transition-transform duration-200 ${dropdownOpen === 'learning' ? 'rotate-180' : ''}`} />
                                     </button>
+
+                                    <AnimatePresence>
+                                        {dropdownOpen === 'learning' && (
+                                            <motion.div 
+                                                initial={{ opacity: 0, y: 10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: 10 }}
+                                                className="absolute top-[calc(100%-10px)] left-0 w-64 bg-white rounded-2xl shadow-xl border border-slate-100 p-2 overflow-hidden"
+                                            >
+                                                <Link href="/catalog" className="dropdown-item flex items-center gap-3 p-3 rounded-xl">
+                                                    <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Target size={18}/></div>
+                                                    <div>
+                                                        <p className="text-sm font-bold">Katalog Training</p>
+                                                        <p className="text-xs text-slate-400">Jelajahi semua modul</p>
+                                                    </div>
+                                                </Link>
+                                                <Link href="/learner/performance" className="dropdown-item flex items-center gap-3 p-3 rounded-xl">
+                                                    <div className="p-2 bg-purple-50 text-purple-600 rounded-lg"><TrendingUp size={18}/></div>
+                                                    <div>
+                                                        <p className="text-sm font-bold">Performa Saya</p>
+                                                        <p className="text-xs text-slate-400">Statistik belajar</p>
+                                                    </div>
+                                                </Link>
+                                                <Link href="/my-reports" className="dropdown-item flex items-center gap-3 p-3 rounded-xl">
+                                                    <div className="p-2 bg-amber-50 text-amber-600 rounded-lg"><FileText size={18}/></div>
+                                                    <div>
+                                                        <p className="text-sm font-bold">Laporan</p>
+                                                        <p className="text-xs text-slate-400">Unduh transkrip nilai</p>
+                                                    </div>
+                                                </Link>
+                                            </motion.div>
+                                        )}
+                                    </AnimatePresence>
                                 </div>
-                            )}
+                            </div>
+                        </div>
+
+                        {/* 2. Right Actions */}
+                        <div className="hidden md:flex items-center gap-4">
+                            {/* Search */}
+                            <div className="relative group">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-[#005E54] transition-colors" size={18} />
+                                <input 
+                                    type="text" 
+                                    placeholder="Cari materi..." 
+                                    className="search-input pl-10 pr-4 py-2.5 bg-slate-50 border border-transparent rounded-xl text-sm font-medium w-48 focus:w-64 transition-all outline-none"
+                                />
+                                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                                    <span className="text-[10px] text-slate-400 font-bold bg-white px-1.5 py-0.5 rounded border border-slate-200">⌘K</span>
+                                </div>
+                            </div>
+
+                            <div className="h-8 w-[1px] bg-slate-200"></div>
+
+                            {/* Notifications */}
+                            <NotificationDropdown user={user} />
+
+                            {/* User Profile */}
+                            <div className="relative" ref={dropdownRef}>
+                                <button 
+                                    onClick={() => toggleDropdown('profile')}
+                                    className="flex items-center gap-3 pl-2 pr-1 py-1 rounded-full hover:bg-slate-50 transition-all border border-transparent hover:border-slate-100"
+                                >
+                                    <div className="text-right hidden lg:block">
+                                        <p className="text-sm font-bold text-slate-900 leading-none">{user.name}</p>
+                                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide mt-1">{user.role || 'Employee'}</p>
+                                    </div>
+                                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#005E54] to-[#002824] p-[2px]">
+                                        <div className="w-full h-full rounded-full bg-white flex items-center justify-center overflow-hidden">
+                                            {user.avatar_url ? (
+                                                <img src={user.avatar_url} alt="User" className="w-full h-full object-cover" />
+                                            ) : (
+                                                <span className="font-bold text-[#005E54]">{user.name.charAt(0)}</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <ChevronDown size={16} className="text-slate-400 mr-2" />
+                                </button>
+
+                                <AnimatePresence>
+                                    {dropdownOpen === 'profile' && (
+                                        <motion.div 
+                                            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                                            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                                            className="absolute top-[calc(100%+8px)] right-0 w-64 bg-white rounded-2xl shadow-xl border border-slate-100 p-2 overflow-hidden origin-top-right"
+                                        >
+                                            <div className="px-4 py-3 bg-[#F0FDF4] rounded-xl mb-2 flex items-center gap-3">
+                                                <div className="p-2 bg-white rounded-full text-[#005E54]"><Sparkles size={16} /></div>
+                                                <div>
+                                                    <p className="text-xs text-[#005E54] font-bold uppercase">Active Learner</p>
+                                                    <div className="w-24 h-1.5 bg-white rounded-full mt-1 overflow-hidden">
+                                                        <div className="h-full bg-[#D6F84C] w-3/4"></div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <Link href="/profile" className="dropdown-item flex items-center gap-3 p-3 rounded-xl text-slate-700">
+                                                <User size={18} /> Profile Saya
+                                            </Link>
+                                            <Link href="/settings" className="dropdown-item flex items-center gap-3 p-3 rounded-xl text-slate-700">
+                                                <Settings size={18} /> Pengaturan
+                                            </Link>
+                                            
+                                            {user?.role === 'admin' && (
+                                                <>
+                                                    <div className="h-[1px] bg-slate-100 my-1"></div>
+                                                    <Link href="/admin/dashboard" className="dropdown-item flex items-center gap-3 p-3 rounded-xl text-slate-700">
+                                                        <Settings size={18} /> Admin Panel
+                                                    </Link>
+                                                </>
+                                            )}
+                                            
+                                            <div className="h-[1px] bg-slate-100 my-1"></div>
+                                            
+                                            <button 
+                                                onClick={handleLogout}
+                                                className="w-full flex items-center gap-3 p-3 rounded-xl text-red-600 hover:bg-red-50 transition-colors font-medium text-left"
+                                            >
+                                                <LogOut size={18} /> Keluar
+                                            </button>
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+                            </div>
                         </div>
 
                         {/* Mobile Menu Button */}
-                        <button 
-                            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                            className="md:hidden p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
-                        >
-                            {mobileMenuOpen ? (
-                                <X className="w-6 h-6" />
-                            ) : (
-                                <Menu className="w-6 h-6" />
-                            )}
-                        </button>
+                        <div className="lg:hidden flex items-center">
+                            <button 
+                                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                                className="p-2 text-slate-600 hover:bg-slate-100 rounded-xl transition"
+                            >
+                                {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+                            </button>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            {/* Mobile Menu */}
-            {mobileMenuOpen && (
-                <div className="md:hidden bg-white border-t border-gray-200">
-                    <div className="px-2 pt-2 pb-3 space-y-1">
-                        <Link 
-                            href="/dashboard"
-                            className="block px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100"
+                {/* 3. Mobile Menu Overlay */}
+                <AnimatePresence>
+                    {mobileMenuOpen && (
+                        <motion.div 
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="lg:hidden bg-white border-b border-slate-200 overflow-hidden"
                         >
-                            Dashboard
-                        </Link>
-                        <Link 
-                            href="/my-trainings"
-                            className="block px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100"
-                        >
-                            Training Saya
-                        </Link>
-                        
-                        {/* My Learning Section */}
-                        <div className="pt-2">
-                            <p className="px-3 text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">My Learning</p>
-                            <Link 
-                                href="/bookmarks"
-                                className="block px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100"
-                            >
-                                📚 Bookmarks
-                            </Link>
-                            <Link 
-                                href="/goals"
-                                className="block px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100"
-                            >
-                                🎯 Learning Goals
-                            </Link>
-                            <Link 
-                                href="/learning-path"
-                                className="block px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100"
-                            >
-                                🗺️ Learning Path
-                            </Link>
-                            <Link 
-                                href="/learner/performance"
-                                className="block px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100"
-                            >
-                                📈 Performance
-                            </Link>
-                            <Link 
-                                href="/learner/progress-detail"
-                                className="block px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100"
-                            >
-                                📊 Progress Detail
-                            </Link>
-                        </div>
+                            <div className="px-4 py-6 space-y-4">
+                                {/* Search Mobile */}
+                                <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                                    <input 
+                                        type="text" 
+                                        placeholder="Cari materi..." 
+                                        className="w-full pl-10 pr-4 py-3 bg-slate-50 rounded-xl text-sm font-medium focus:ring-2 focus:ring-[#005E54] outline-none"
+                                    />
+                                </div>
 
-                        {/* Reports Section */}
-                        <div className="pt-2">
-                            <p className="px-3 text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Reports</p>
-                            <Link 
-                                href="/my-reports"
-                                className="block px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100"
-                            >
-                                📄 My Reports
-                            </Link>
-                        </div>
+                                <div className="space-y-1">
+                                    <MobileNavLink href="/dashboard" icon={LayoutDashboard} onClick={() => setMobileMenuOpen(false)}>
+                                        Dashboard
+                                    </MobileNavLink>
+                                    <MobileNavLink href="/my-trainings" icon={GraduationCap} onClick={() => setMobileMenuOpen(false)}>
+                                        Training Saya
+                                    </MobileNavLink>
+                                    <MobileNavLink href="/catalog" icon={Target} onClick={() => setMobileMenuOpen(false)}>
+                                        Katalog
+                                    </MobileNavLink>
+                                    <MobileNavLink href="/learner/performance" icon={TrendingUp} onClick={() => setMobileMenuOpen(false)}>
+                                        Performa
+                                    </MobileNavLink>
+                                    <MobileNavLink href="/my-reports" icon={FileText} onClick={() => setMobileMenuOpen(false)}>
+                                        Laporan
+                                    </MobileNavLink>
+                                </div>
 
-                        {user?.role === 'admin' && (
-                            <>
-                                <hr className="my-2" />
-                                <Link 
-                                    href="/admin/dashboard"
-                                    className="block px-3 py-2 rounded-lg bg-blue-600 text-white font-medium"
+                                <div className="h-[1px] bg-slate-100"></div>
+
+                                <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl">
+                                    <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-[#005E54] font-bold">
+                                        {user.name.charAt(0)}
+                                    </div>
+                                    <div className="flex-1">
+                                        <p className="font-bold text-slate-900">{user.name}</p>
+                                        <p className="text-xs text-slate-500">{user.email}</p>
+                                    </div>
+                                </div>
+
+                                {user?.role === 'admin' && (
+                                    <MobileNavLink href="/admin/dashboard" icon={Settings} onClick={() => setMobileMenuOpen(false)}>
+                                        Admin Panel
+                                    </MobileNavLink>
+                                )}
+
+                                <button 
+                                    onClick={handleLogout}
+                                    className="w-full flex items-center justify-center gap-2 p-3 bg-red-50 text-red-600 font-bold rounded-xl"
                                 >
-                                    Admin Panel
-                                </Link>
-                            </>
-                        )}
-                        <hr className="my-2" />
-                        <Link 
-                            href="/profile"
-                            className="block px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 flex items-center gap-2"
-                        >
-                            <User className="w-4 h-4" />
-                            Profile
-                        </Link>
-                        <Link 
-                            href="/settings"
-                            className="block px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 flex items-center gap-2"
-                        >
-                            <Settings className="w-4 h-4" />
-                            Pengaturan
-                        </Link>
-                        <button
-                            onClick={handleLogout}
-                            className="w-full text-left px-3 py-2 rounded-lg text-gray-700 hover:bg-red-50 hover:text-red-600 flex items-center gap-2 transition"
-                        >
-                            <LogOut className="w-4 h-4" />
-                            Logout
-                        </button>
-                    </div>
-                </div>
-            )}
-        </nav>
+                                    <LogOut size={18} /> Keluar
+                                </button>
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </nav>
+        </>
     );
 }
