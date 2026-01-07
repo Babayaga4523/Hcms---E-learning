@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::table('modules', function (Blueprint $table) {
             // Add new columns to modules table
             if (!Schema::hasColumn('modules', 'approval_status')) {
-                $table->string('approval_status')->default('draft')->after('status'); // draft, pending_approval, approved, rejected
+                $table->string('approval_status')->default('draft')->after('is_active'); // draft, pending_approval, approved, rejected
             }
             if (!Schema::hasColumn('modules', 'approved_at')) {
                 $table->timestamp('approved_at')->nullable()->after('approval_status');

@@ -14,7 +14,7 @@ return new class extends Migration
         // Add answers column to questions table if it doesn't exist
         if (Schema::hasTable('questions') && !Schema::hasColumn('questions', 'answers')) {
             Schema::table('questions', function (Blueprint $table) {
-                $table->json('answers')->nullable()->after('options');
+                $table->json('answers')->nullable()->after('correct_answer');
             });
         }
     }

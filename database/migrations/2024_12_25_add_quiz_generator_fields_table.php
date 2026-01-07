@@ -29,7 +29,7 @@ return new class extends Migration
                 $table->integer('quality_score')->default(0);
                 $table->integer('coverage_score')->default(0);
                 $table->foreignId('module_id')->nullable()->constrained('modules')->onDelete('cascade');
-                $table->foreignId('training_program_id')->nullable()->constrained('training_programs')->onDelete('cascade');
+                $table->foreignId('training_program_id')->nullable();
                 $table->foreignId('created_by')->nullable()->constrained('users')->onDelete('set null');
                 $table->foreignId('published_by')->nullable()->constrained('users')->onDelete('set null');
                 $table->timestamp('published_at')->nullable();
@@ -57,7 +57,7 @@ return new class extends Migration
                     $table->integer('coverage_score')->default(0)->after('quality_score');
                 }
                 if (!Schema::hasColumn('quizzes', 'training_program_id')) {
-                    $table->foreignId('training_program_id')->nullable()->after('module_id')->constrained('training_programs')->onDelete('cascade');
+                    $table->foreignId('training_program_id')->nullable()->after('module_id');
                 }
                 if (!Schema::hasColumn('quizzes', 'created_by')) {
                     $table->foreignId('created_by')->nullable()->after('coverage_score')->constrained('users')->onDelete('set null');

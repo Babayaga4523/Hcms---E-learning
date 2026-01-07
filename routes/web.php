@@ -306,8 +306,10 @@ Route::middleware(['auth', 'admin'])->group(function () {
         ]);
     })->name('admin.training-programs.analytics');
     Route::get('/admin/training-programs/{id}', [AdminTrainingProgramController::class, 'show'])->name('admin.training-programs.show');
+    Route::get('/api/admin/training-programs', [AdminTrainingProgramController::class, 'index'])->name('admin.api.training-programs.index');
     Route::post('/api/admin/training-programs', [AdminTrainingProgramController::class, 'store'])->name('admin.training-programs.store');
-    Route::post('/api/admin/training-programs/with-questions', [AdminTrainingProgramController::class, 'storeWithQuestions'])->name('admin.training-programs.store-with-questions');
+    // Backwards compatible endpoint used by some frontend components
+    Route::post('/api/admin/training-programs/with-questions', [AdminTrainingProgramController::class, 'store'])->name('admin.training-programs.store-with-questions');
     Route::put('/api/admin/training-programs/{id}', [AdminTrainingProgramController::class, 'update'])->name('admin.training-programs.update');
     Route::delete('/api/admin/training-programs/{id}', [AdminTrainingProgramController::class, 'destroy'])->name('admin.training-programs.destroy');
     Route::post('/api/admin/training-programs/{id}/duplicate', [AdminTrainingProgramController::class, 'duplicate'])->name('admin.training-programs.duplicate');

@@ -249,8 +249,10 @@ const QuizScoreCard = ({ quiz, index }) => {
 };
 
 // Certificate Card
-const CertificateCard = ({ certificate, index }) => {
-    const displayDate = certificate.issued_at ? new Date(certificate.issued_at).toLocaleDateString('id-ID', {
+const CertificateCard = ({ cert, index }) => {
+    if (!cert) return null;
+    
+    const displayDate = cert.issued_at ? new Date(cert.issued_at).toLocaleDateString('id-ID', {
         day: 'numeric',
         month: 'short',
         year: 'numeric'
@@ -270,7 +272,7 @@ const CertificateCard = ({ certificate, index }) => {
                 </div>
                 
                 <h4 className="font-bold text-slate-900 leading-tight mb-2 line-clamp-2 min-h-[2.5rem]">
-                    {certificate.training_title}
+                    {cert.training_title || 'Sertifikat'}
                 </h4>
                 
                 <div className="flex justify-between items-end">
@@ -279,7 +281,7 @@ const CertificateCard = ({ certificate, index }) => {
                         <p className="text-sm font-medium text-slate-700">{displayDate}</p>
                     </div>
                     <Link
-                        href={`/training/${certificate.training_id}/certificate`}
+                        href={`/training/${cert.training_id}/certificate`}
                         className="p-2 bg-[#002824] text-[#D6F84C] rounded-xl hover:scale-105 transition-transform shadow-lg"
                     >
                         <Download size={16} />

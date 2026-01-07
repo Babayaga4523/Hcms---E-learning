@@ -15,9 +15,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Mail;
 use Inertia\Inertia;
 
 class AdminTrainingProgramController extends Controller
@@ -34,15 +34,17 @@ class AdminTrainingProgramController extends Controller
         }
 
         try {
-            $query = Module::select('id', 'title', 'description', 'duration', 'duration_minutes', 'is_active', 'passing_grade', 'category', 'cover_image', 'expiry_date', 'created_at', 'instructor_id')
+            $query = Module::select('id', 'title', 'description', 'is_active', 'passing_grade', 'created_at')
                 ->withCount('questions as total_questions');
 
             // Search
             if ($request->has('search') && $request->search) {
                 $search = $request->search;
-                $query->where('title', 'like', "%{$search}%")
+                $query->where(function($q) use ($search) {
+                    $q->where('title', 'like', "%{$search}%")
                       ->orWhere('description', 'like', "%{$search}%")
                       ->orWhere('category', 'like', "%{$search}%");
+                });
             }
 
             // Filter by status
@@ -65,7 +67,7 @@ class AdminTrainingProgramController extends Controller
                 $enrollmentCount = DB::table('user_trainings')->where('module_id', $module->id)->count();
                 $completionCount = DB::table('user_trainings')
                     ->where('module_id', $module->id)
-                    ->where('is_completed', true)
+                    ->where('status', 'completed')
                     ->count();
                 $completionRate = $enrollmentCount > 0 ? round(($completionCount / $enrollmentCount) * 100, 2) : 0;
 
@@ -73,35 +75,53 @@ class AdminTrainingProgramController extends Controller
                     'id' => $module->id,
                     'title' => $module->title,
                     'description' => $module->description,
-                    'duration' => $module->duration,
-                    'duration_minutes' => $module->duration_minutes,
+                    'duration_minutes' => $module->duration_minutes ?? 60,
                     'is_active' => $module->is_active,
                     'passing_grade' => $module->passing_grade,
-                    'category' => $module->category,
-                    'cover_image' => $module->cover_image,
+                    'category' => $module->category ?? null,
+                    'cover_image' => $module->cover_image ?? null,
                     'total_questions' => $module->total_questions,
                     'enrollment_count' => $enrollmentCount,
                     'completion_count' => $completionCount,
                     'completion_rate' => $completionRate,
-                    'expiry_date' => $module->expiry_date,
+                    'expiry_date' => $module->expiry_date ?? null,
                     'created_at' => $module->created_at,
                     'status' => $module->is_active ? 'Aktif' : 'Nonaktif',
                 ];
             });
 
             // Get statistics
+            $totalTrainings = DB::table('user_trainings')->count();
+            $completedTrainings = DB::table('user_trainings')->where('status', 'completed')->count();
+            
             $stats = [
                 'total_programs' => Module::count(),
                 'active_programs' => Module::where('is_active', true)->count(),
                 'inactive_programs' => Module::where('is_active', false)->count(),
                 'total_questions' => Question::count(),
-                'avg_completion_rate' => round(DB::table('user_trainings')
-                    ->where('is_completed', true)
-                    ->count() / max(1, DB::table('user_trainings')->count()) * 100, 2),
+                'avg_completion_rate' => $totalTrainings > 0 ? round(($completedTrainings / $totalTrainings) * 100, 2) : 0,
             ];
 
             // Get categories for filter
-            $categories = Module::distinct()->pluck('category')->filter()->values();
+            $categories = Module::whereNotNull('category')
+                ->where('category', '!=', '')
+                ->distinct()
+                ->pluck('category')
+                ->filter()
+                ->values();
+
+            // Check if this is an API request
+            if ($request->wantsJson()) {
+                return response()->json([
+                    'data' => $programs->items(),
+                    'current_page' => $programs->currentPage(),
+                    'last_page' => $programs->lastPage(),
+                    'per_page' => $programs->perPage(),
+                    'total' => $programs->total(),
+                    'stats' => $stats,
+                    'categories' => $categories,
+                ]);
+            }
 
             return Inertia::render('Admin/TrainingProgram', [
                 'programs' => $programs,
@@ -117,246 +137,25 @@ class AdminTrainingProgramController extends Controller
                 'auth' => ['user' => (array) $user],
             ]);
         } catch (\Exception $e) {
+            // Log the actual error for debugging
             Log::error('Training Program Error: ' . $e->getMessage());
+            Log::error('Stack trace: ' . $e->getTraceAsString());
+            
+            // Return detailed error for API requests
+            if ($request->wantsJson()) {
+                return response()->json([
+                    'error' => 'Error loading training programs',
+                    'message' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ], 500);
+            }
+            
             abort(500, 'Error loading training programs');
         }
     }
 
     /**
-     * Create program with questions (Multi-step form)
-     */
-    public function storeWithQuestions(Request $request)
-    {
-        $user = Auth::user();
-
-        if ($user->role !== 'admin') {
-            return response()->json(['error' => 'Unauthorized'], 403);
-        }
-
-        try {
-            $validated = $request->validate([
-                'title' => 'required|string|max:255',
-                'description' => 'required|string',
-                'duration_minutes' => 'required|integer|min:1',
-                'passing_grade' => 'required|integer|min:0|max:100',
-                'category' => 'required|string|max:255',
-                'is_active' => 'boolean',
-                'cover_image' => 'sometimes|image|mimes:jpeg,png,jpg|max:10240', // 10MB
-                'xp' => 'sometimes|integer|min:0',
-                'materials' => 'sometimes|array',
-                'materials.*.type' => 'string|in:document,video,presentation,spreadsheet,pdf,ppt',
-                'materials.*.title' => 'nullable|string',
-                'materials.*.description' => 'nullable|string',
-                'materials.*.file' => 'sometimes|file|max:102400', // 100MB
-                'materials.*.url' => 'nullable|string',
-                'pre_test_questions' => 'sometimes|array',
-                'pre_test_questions.*.question_text' => 'required|string',
-                'pre_test_questions.*.image_url' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120', // 5MB max
-                'pre_test_questions.*.explanation' => 'nullable|string|max:5000',
-                'pre_test_questions.*.option_a' => 'required|string',
-                'pre_test_questions.*.option_b' => 'required|string',
-                'pre_test_questions.*.option_c' => 'required|string',
-                'pre_test_questions.*.option_d' => 'required|string',
-                'pre_test_questions.*.correct_answer' => 'required|in:a,b,c,d',
-                'post_test_questions' => 'sometimes|array',
-                'post_test_questions.*.question_text' => 'required|string',
-                'post_test_questions.*.image_url' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120', // 5MB max
-                'post_test_questions.*.explanation' => 'nullable|string|max:5000',
-                'post_test_questions.*.option_a' => 'required|string',
-                'post_test_questions.*.option_b' => 'required|string',
-                'post_test_questions.*.option_c' => 'required|string',
-                'post_test_questions.*.option_d' => 'required|string',
-                'post_test_questions.*.correct_answer' => 'required|in:a,b,c,d',
-            ]);
-
-            DB::beginTransaction();
-
-            // Handle cover image upload
-            $coverImagePath = null;
-            if ($request->hasFile('cover_image')) {
-                $coverImagePath = $request->file('cover_image')->store('training-programs/covers', 'public');
-            }
-
-            // Create module
-            $module = Module::create([
-                'title' => $validated['title'],
-                'description' => $validated['description'],
-                'duration_minutes' => $validated['duration_minutes'],
-                'passing_grade' => $validated['passing_grade'],
-                'category' => $validated['category'],
-                'cover_image' => $coverImagePath,
-                'is_active' => $validated['is_active'] ?? true,
-                'xp' => $validated['xp'] ?? 0,
-                'has_pretest' => true,
-                'has_posttest' => true,
-            ]);
-
-            // Create pre-test questions
-            if (!empty($validated['pre_test_questions'])) {
-                foreach ($validated['pre_test_questions'] as $index => $questionData) {
-                    $imageUrl = null;
-                    
-                    // Handle image upload for pretest question
-                    if ($request->hasFile("pre_test_questions.$index.image_url")) {
-                        $file = $request->file("pre_test_questions.$index.image_url");
-                        $imageUrl = $file->store('questions', 'public');
-                        Log::info("Pretest question $index image uploaded", ['path' => $imageUrl]);
-                    }
-                    
-                    Question::create([
-                        'module_id' => $module->id,
-                        'question_text' => $questionData['question_text'],
-                        'question_type' => 'pretest',
-                        'image_url' => $imageUrl,
-                        'explanation' => $questionData['explanation'] ?? null,
-                        'option_a' => $questionData['option_a'],
-                        'option_b' => $questionData['option_b'],
-                        'option_c' => $questionData['option_c'],
-                        'option_d' => $questionData['option_d'],
-                        'correct_answer' => $questionData['correct_answer'],
-                    ]);
-                }
-            }
-
-            // Create post-test questions
-            if (!empty($validated['post_test_questions'])) {
-                foreach ($validated['post_test_questions'] as $index => $questionData) {
-                    $imageUrl = null;
-                    
-                    // Handle image upload for posttest question
-                    if ($request->hasFile("post_test_questions.$index.image_url")) {
-                        $file = $request->file("post_test_questions.$index.image_url");
-                        $imageUrl = $file->store('questions', 'public');
-                        Log::info("Posttest question $index image uploaded", ['path' => $imageUrl]);
-                    }
-                    
-                    Question::create([
-                        'module_id' => $module->id,
-                        'question_text' => $questionData['question_text'],
-                        'question_type' => 'posttest',
-                        'image_url' => $imageUrl,
-                        'explanation' => $questionData['explanation'] ?? null,
-                        'option_a' => $questionData['option_a'],
-                        'option_b' => $questionData['option_b'],
-                        'option_c' => $questionData['option_c'],
-                        'option_d' => $questionData['option_d'],
-                        'correct_answer' => $questionData['correct_answer'],
-                    ]);
-                }
-            }
-
-            // Create materials if provided with file uploads
-            if ($request->has('materials')) {
-                Log::info('Processing materials', ['count' => count($request->input('materials', []))]);
-                
-                foreach ($request->input('materials') as $index => $materialData) {
-                    Log::info("Material $index", [
-                        'title' => $materialData['title'] ?? 'no title',
-                        'type' => $materialData['type'] ?? 'no type',
-                        'has_file' => $request->hasFile("materials.$index.file"),
-                        'url' => $materialData['url'] ?? 'no url'
-                    ]);
-                    
-                    // Skip if no title
-                    if (empty($materialData['title'])) {
-                        Log::warning("Skipping material $index - no title");
-                        continue;
-                    }
-
-                    $fileName = null;
-                    $filePath = null;
-                    $fileSize = 0;
-                    $pdfPath = null;
-                    
-                    // Handle file upload
-                    if ($request->hasFile("materials.$index.file")) {
-                        $file = $request->file("materials.$index.file");
-                        $filePath = $file->store('training-materials', 'public');
-                        $fileName = $file->getClientOriginalName();
-                        $fileSize = $file->getSize();
-                        Log::info("File uploaded for material $index", ['path' => $filePath]);
-                        
-                        // Convert to PDF if Office file
-                        $extension = $file->getClientOriginalExtension();
-                        $converter = new PdfConverterService();
-                        
-                        if ($converter->needsConversion($extension)) {
-                            $fullInputPath = storage_path('app/public/' . $filePath);
-                            $outputDir = storage_path('app/public/training-materials/pdf');
-                            
-                            Log::info("Converting file to PDF", ['input' => $fullInputPath]);
-                            $pdfFullPath = $converter->convertToPdf($fullInputPath, $outputDir);
-                            
-                            if ($pdfFullPath) {
-                                // Store relative path
-                                $pdfPath = 'training-materials/pdf/' . basename($pdfFullPath);
-                                Log::info("PDF conversion successful", ['pdf_path' => $pdfPath]);
-                            } else {
-                                Log::warning("PDF conversion failed for material $index");
-                            }
-                        }
-                    }
-
-                    // Map type from frontend to backend
-                    $fileType = $materialData['type'] ?? 'document';
-                    if ($fileType === 'pdf') $fileType = 'document';
-                    if ($fileType === 'ppt') $fileType = 'presentation';
-
-                    // Create material if has file or URL
-                    if ($filePath || !empty($materialData['url'])) {
-                        $created = TrainingMaterial::create([
-                            'module_id' => $module->id,
-                            'title' => $materialData['title'],
-                            'description' => $materialData['description'] ?? '',
-                            'file_type' => $fileType,
-                            'file_path' => $filePath ?? $materialData['url'] ?? '',
-                            'pdf_path' => $pdfPath,
-                            'file_name' => $fileName ?? basename($materialData['url'] ?? ''),
-                            'file_size' => $fileSize,
-                            'order' => $index,
-                            'uploaded_by' => $user->id,
-                        ]);
-                        Log::info("Material created", ['id' => $created->id, 'title' => $created->title, 'has_pdf' => $pdfPath ? 'yes' : 'no']);
-                    } else {
-                        Log::warning("Material $index skipped - no file or URL", [
-                            'title' => $materialData['title'],
-                            'has_file' => $filePath ? 'yes' : 'no',
-                            'has_url' => !empty($materialData['url']) ? 'yes' : 'no'
-                        ]);
-                    }
-                }
-            }
-
-            DB::commit();
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Program pembelajaran berhasil dibuat dengan Pre-Test dan Post-Test',
-                'program' => [
-                    'id' => $module->id,
-                    'title' => $module->title,
-                ],
-                'data' => [
-                    'module_id' => $module->id,
-                    'title' => $module->title,
-                    'pretest_questions' => count($validated['pre_test_questions'] ?? []),
-                    'posttest_questions' => count($validated['post_test_questions'] ?? []),
-                    'materials' => count($request->input('materials', []))
-                ]
-            ]);
-
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            DB::rollBack();
-            return response()->json(['error' => $e->errors()], 422);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('Create Program Error: ' . $e->getMessage());
-            return response()->json(['error' => 'Error membuat program: ' . $e->getMessage()], 500);
-        }
-    }
-
-    /**
-     * Create new training program
+     * Create new training program (Unified & Fixed)
      */
     public function store(Request $request)
     {
@@ -367,6 +166,35 @@ class AdminTrainingProgramController extends Controller
         }
 
         try {
+            // Support nested payloads such as { program: { title, ... }, questions: [...], materials: [...] }
+            if ($request->has('program') && is_array($request->program)) {
+                // Merge main program fields to top-level so existing validation and saving logic work
+                $request->merge($request->program);
+
+                // Also merge nested arrays if not provided at top-level
+                if (isset($request->program['questions']) && ! $request->has('questions')) {
+                    $request->merge(['questions' => $request->program['questions']]);
+                }
+                if (isset($request->program['materials']) && ! $request->has('materials')) {
+                    $request->merge(['materials' => $request->program['materials']]);
+                }
+            }
+
+            // Support questions/materials passed as JSON string in multipart/form-data
+            if ($request->has('questions') && is_string($request->questions)) {
+                $decoded = json_decode($request->questions, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                    $request->merge(['questions' => $decoded]);
+                }
+            }
+            if ($request->has('materials') && is_string($request->materials)) {
+                $decoded = json_decode($request->materials, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                    $request->merge(['materials' => $decoded]);
+                }
+            }
+
+            // 1. Validasi Input
             $validated = $request->validate([
                 'title' => 'required|string|max:255',
                 'description' => 'required|string',
@@ -380,29 +208,200 @@ class AdminTrainingProgramController extends Controller
                 'prerequisite_module_id' => 'nullable|exists:modules,id',
                 'instructor_id' => 'nullable|exists:users,id',
                 'certificate_template' => 'nullable|string',
+
+                // Validasi Materials
+                'materials' => 'sometimes|array',
+                'materials.*.title' => 'required|string', // Title wajib agar terdeteksi di input
+                'materials.*.type' => 'string',
+                'materials.*.description' => 'nullable|string',
+                'materials.*.url' => 'nullable|string',
+                'materials.*.file' => 'sometimes|file|max:102400', // 100MB
+
+                // Validasi Questions (Support format gabungan)
+                'questions' => 'sometimes|array',
+                'questions.*.question_text' => 'required|string',
+                'questions.*.question_type' => 'required|in:pretest,posttest',
+                'questions.*.option_a' => 'required|string',
+                'questions.*.option_b' => 'required|string',
+                'questions.*.option_c' => 'required|string',
+                'questions.*.option_d' => 'required|string',
+                'questions.*.correct_answer' => 'required|in:a,b,c,d',
+                'questions.*.explanation' => 'nullable|string',
+                'questions.*.image_url' => 'nullable|image|max:5120',
+            ]);
+            DB::beginTransaction();
+
+            // 2. Handle Cover Image
+            $coverImagePath = null;
+            if ($request->hasFile('cover_image')) {
+                $coverImagePath = $request->file('cover_image')->store('training-programs/covers', 'public');
+            }
+
+            // 3. Simpan Module (Program Utama)
+            $module = Module::create([
+                'title' => $validated['title'],
+                'description' => $validated['description'],
+                'duration_minutes' => $validated['duration_minutes'],
+                'passing_grade' => $validated['passing_grade'],
+                'category' => $validated['category'] ?? null,
+                'cover_image' => $coverImagePath,
+                'is_active' => filter_var($request->is_active ?? false, FILTER_VALIDATE_BOOLEAN), // Pastikan boolean benar
+                'allow_retake' => ($allowRetake = filter_var($request->allow_retake ?? false, FILTER_VALIDATE_BOOLEAN)),
+                'max_retake_attempts' => $allowRetake ? ($validated['max_retake_attempts'] ?? 3) : 0,
+                'expiry_date' => $validated['expiry_date'] ?? null,
+                'prerequisite_module_id' => $validated['prerequisite_module_id'] ?? null,
+                'instructor_id' => $validated['instructor_id'] ?? null,
+                'certificate_template' => $validated['certificate_template'] ?? null,
+                // Kita update flag ini nanti setelah menghitung soal
+                'has_pretest' => false,
+                'has_posttest' => false,
             ]);
 
-            $module = Module::create([
-                ...$validated,
+            // 4. Proses Materi (Materials)
+            // PENTING: Gunakan $request->materials untuk memastikan array object terbaca
+            if ($request->has('materials') && is_array($request->materials)) {
+                foreach ($request->materials as $index => $materialData) {
+
+                    // Skip jika data corrupt
+                    if (!isset($materialData['title'])) continue;
+
+                    $filePath = null;
+                    $pdfPath = null;
+                    $fileSize = 0;
+                    $fileName = null;
+
+                    // Handle File Upload
+                    // Syntax: materials[0][file]
+                    if ($request->hasFile("materials.{$index}.file")) {
+                        $file = $request->file("materials.{$index}.file");
+                        $filePath = $file->store('training-materials', 'public');
+                        $fileName = $file->getClientOriginalName();
+                        $fileSize = $file->getSize();
+
+                        // PDF Conversion Logic (Simplified)
+                        $extension = $file->getClientOriginalExtension();
+                        $converter = new PdfConverterService();
+                        if ($converter->needsConversion($extension)) {
+                            // ... logic konversi Anda tetap sama ...
+                            try {
+                                $fullInputPath = storage_path('app/public/' . $filePath);
+                                $outputDir = storage_path('app/public/training-materials/pdf');
+                                $pdfFullPath = $converter->convertToPdf($fullInputPath, $outputDir);
+                                if ($pdfFullPath) {
+                                    $pdfPath = 'training-materials/pdf/' . basename($pdfFullPath);
+                                }
+                            } catch (\Exception $e) {
+                                Log::error("PDF Convert Error: " . $e->getMessage());
+                            }
+                        }
+                    }
+
+                    // Tentukan tipe file
+                    $fileType = $materialData['type'] ?? 'document';
+
+                    // Simpan hanya jika ada File atau URL
+                    if ($filePath || !empty($materialData['url'])) {
+                        TrainingMaterial::create([
+                            'module_id' => $module->id,
+                            'title' => $materialData['title'],
+                            'description' => $materialData['description'] ?? '',
+                            'file_type' => $fileType,
+                            'file_path' => $filePath ?? $materialData['url'], // Simpan URL jika file kosong
+                            'pdf_path' => $pdfPath,
+                            'file_name' => $fileName ?? basename($materialData['url'] ?? 'link'),
+                            'file_size' => $fileSize,
+                            'duration_minutes' => 0, // Bisa diambil dari frontend jika ada
+                            'order' => $index + 1,
+                            'uploaded_by' => $user->id,
+                        ]);
+                    }
+                }
+            }
+
+            // 5. Proses Pertanyaan (Questions)
+            // Kita gabung pre_test_questions dan post_test_questions (jika frontend mengirim terpisah) ke dalam satu array logic
+            $allQuestions = $request->questions ?? [];
+
+            // Jika frontend mengirim terpisah (legacy support untuk storeWithQuestions)
+            if ($request->has('pre_test_questions')) {
+                foreach($request->pre_test_questions as $q) {
+                    $q['question_type'] = $q['question_type'] ?? 'pretest';
+                    $allQuestions[] = $q;
+                }
+            }
+            if ($request->has('post_test_questions')) {
+                foreach($request->post_test_questions as $q) {
+                    $q['question_type'] = $q['question_type'] ?? 'posttest';
+                    $allQuestions[] = $q;
+                }
+            }
+
+            $hasPretest = false;
+            $hasPosttest = false;
+
+            if (!empty($allQuestions)) {
+                foreach ($allQuestions as $index => $qData) {
+                    $imageUrl = null;
+
+                    // Default question_type jika tidak diberikan oleh frontend
+                    $qType = $qData['question_type'] ?? 'pretest';
+
+                    // Handle Image Upload untuk Question
+                    // Cek key di request asli. Karena index di $allQuestions mungkin beda dengan request,
+                    // kita harus hati-hati.
+                    // AMANNYA: Jika format 'questions', gunakan index loop.
+                    // Jika format 'pre_test', kita asumsikan logic upload file sudah ditangani di frontend mengirim 'questions' array.
+
+                    if ($request->hasFile("questions.{$index}.image_url")) {
+                        $imageUrl = $request->file("questions.{$index}.image_url")->store('questions', 'public');
+                    } elseif (isset($qData['image_url']) && is_string($qData['image_url'])) {
+                        // Jika frontend mengirim string path (jarang terjadi di create)
+                        $imageUrl = $qData['image_url'];
+                    }
+
+                    Question::create([
+                        'module_id' => $module->id,
+                        'question_text' => $qData['question_text'],
+                        'question_type' => $qType,
+                        'image_url' => $imageUrl,
+                        'explanation' => $qData['explanation'] ?? null,
+                        'option_a' => $qData['option_a'],
+                        'option_b' => $qData['option_b'],
+                        'option_c' => $qData['option_c'],
+                        'option_d' => $qData['option_d'],
+                        'correct_answer' => $qData['correct_answer'],
+                        'order' => $index + 1,
+                        'difficulty' => 'medium', // Default
+                    ]);
+
+                    if ($qType === 'pretest') $hasPretest = true;
+                    if ($qType === 'posttest') $hasPosttest = true;
+                }
+            }
+
+            // Update status has_pretest/posttest di module
+            $module->update([
+                'has_pretest' => $hasPretest,
+                'has_posttest' => $hasPosttest
             ]);
+
+            DB::commit();
 
             return response()->json([
                 'success' => true,
-                'message' => 'Program pelatihan berhasil dibuat',
+                'message' => 'Program pelatihan berhasil dibuat lengkap dengan materi dan soal.',
                 'data' => $module,
             ], 201);
+
         } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation error',
-                'errors' => $e->errors(),
-            ], 422);
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => 'Validasi gagal', 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {
+            DB::rollBack();
+            // Log full trace for server logs but DO NOT return trace in API response
             Log::error('Create Training Program Error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Error membuat program pelatihan',
-            ], 500);
+            Log::error('Trace: ' . $e->getTraceAsString());
+            return response()->json(['success' => false, 'message' => 'Server Error: ' . $e->getMessage()], 500);
         }
     }
 
@@ -563,11 +562,8 @@ class AdminTrainingProgramController extends Controller
         try {
             $module = Module::findOrFail($id);
             
-            // Disable foreign key constraints for SQLite
-            DB::statement('PRAGMA foreign_keys = OFF');
-            
-            DB::beginTransaction();
-            
+            // Disable foreign key constraints (works with MySQL, PostgreSQL, SQLite)
+            Schema::disableForeignKeyConstraints();
             try {
                 // Delete related records first
                 DB::table('module_assignments')->where('module_id', $id)->delete();
@@ -609,14 +605,14 @@ class AdminTrainingProgramController extends Controller
             }
 
             // Re-enable foreign key constraints
-            DB::statement('PRAGMA foreign_keys = ON');
+            Schema::enableForeignKeyConstraints();
 
             return response()->json([
                 'success' => true,
                 'message' => 'Program pelatihan berhasil dihapus',
             ]);
         } catch (\Exception $e) {
-            DB::statement('PRAGMA foreign_keys = ON');
+            Schema::enableForeignKeyConstraints();
             Log::error('Delete Training Program Error: ' . $e->getMessage());
             return response()->json([
                 'success' => false,

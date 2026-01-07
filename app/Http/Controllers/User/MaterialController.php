@@ -27,7 +27,7 @@ class MaterialController extends Controller
             if (!$training->is_active || $training->approval_status !== 'approved') {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Training is not available',
+                    'message' => 'Training is not available: active=' . $training->is_active . ', approval=' . $training->approval_status,
                     'materials' => [],
                     'total' => 0,
                     'completed' => 0

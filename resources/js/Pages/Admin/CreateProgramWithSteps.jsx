@@ -97,6 +97,12 @@ export default function CreateProgramWithSteps({ auth }) {
         passing_grade: 70,
         category: '',
         is_active: true,
+        allow_retake: false,
+        max_retake_attempts: '',
+        expiry_date: '',
+        prerequisite_module_id: '',
+        instructor_id: '',
+        certificate_template: '',
         xp: 100,
         coverImage: null
     });
@@ -305,6 +311,22 @@ export default function CreateProgramWithSteps({ auth }) {
             formData.append('passing_grade', programData.passing_grade);
             formData.append('category', programData.category);
             formData.append('is_active', programData.is_active ? 1 : 0);
+            formData.append('allow_retake', programData.allow_retake ? 1 : 0);
+            if (programData.max_retake_attempts) {
+                formData.append('max_retake_attempts', programData.max_retake_attempts);
+            }
+            if (programData.expiry_date) {
+                formData.append('expiry_date', programData.expiry_date);
+            }
+            if (programData.prerequisite_module_id) {
+                formData.append('prerequisite_module_id', programData.prerequisite_module_id);
+            }
+            if (programData.instructor_id) {
+                formData.append('instructor_id', programData.instructor_id);
+            }
+            if (programData.certificate_template) {
+                formData.append('certificate_template', programData.certificate_template);
+            }
             formData.append('xp', programData.xp);
 
             // Add cover image jika ada (base64 string bisa langsung append)
@@ -406,7 +428,7 @@ export default function CreateProgramWithSteps({ auth }) {
             });
 
             // Send request with FormData
-            const response = await axios.post('/api/admin/training-programs/with-questions', formData, {
+            const response = await axios.post('/api/admin/training-programs', formData, {
                 headers: {
                     'Content-Type': 'multipart/form-data'
                 }

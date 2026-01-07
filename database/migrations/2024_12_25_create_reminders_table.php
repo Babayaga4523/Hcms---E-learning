@@ -11,6 +11,7 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (!Schema::hasTable('reminders')) {
         Schema::create('reminders', function (Blueprint $table) {
             $table->id();
             $table->string('title');
@@ -21,7 +22,7 @@ return new class extends Migration
             $table->enum('status', ['draft', 'scheduled', 'sent'])->default('draft');
             $table->timestamp('scheduled_at')->nullable();
             $table->timestamp('sent_at')->nullable();
-            $table->foreignId('department_id')->nullable()->constrained('departments')->onDelete('set null');
+            $table->foreignId('department_id')->nullable();
             $table->foreignId('created_by')->constrained('users')->onDelete('cascade');
             $table->timestamps();
         });
@@ -33,6 +34,7 @@ return new class extends Migration
             $table->timestamp('opened_at')->nullable();
             $table->timestamps();
         });
+        }
     }
 
     /**

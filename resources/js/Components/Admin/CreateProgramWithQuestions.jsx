@@ -16,8 +16,10 @@ export default function CreateProgramWithQuestions({ isOpen, onClose, onSuccess 
     });
 
     const [questions, setQuestions] = useState([
-        { question_text: '', option_a: '', option_b: '', option_c: '', option_d: '', correct_answer: 'a' }
+        { question_text: '', option_a: '', option_b: '', option_c: '', option_d: '', correct_answer: 'a', question_type: 'pretest' }
     ]);
+
+    const [materials, setMaterials] = useState([]);
 
     const categories = ['Compliance', 'Technical', 'Leadership', 'Soft Skills', 'Product', 'Security'];
 
@@ -81,9 +83,40 @@ export default function CreateProgramWithQuestions({ isOpen, onClose, onSuccess 
 
         setLoading(true);
         try {
-            const response = await axios.post('/api/admin/training-programs/with-questions', {
-                program: programData,
-                questions: questions
+            // Use FormData to support file uploads in materials (and question images)
+            const formData = new FormData();
+
+            formData.append('title', programData.title);
+            formData.append('description', programData.description);
+            formData.append('duration_minutes', Number(programData.duration_minutes));
+            formData.append('passing_grade', Number(programData.passing_grade));
+            formData.append('category', programData.category);
+            formData.append('is_active', !!programData.is_active);
+
+            // Append questions as nested fields so Laravel parses them as arrays
+            questions.forEach((q, i) => {
+                formData.append(`questions[${i}][question_text]`, q.question_text);
+                formData.append(`questions[${i}][option_a]`, q.option_a);
+                formData.append(`questions[${i}][option_b]`, q.option_b);
+                formData.append(`questions[${i}][option_c]`, q.option_c);
+                formData.append(`questions[${i}][option_d]`, q.option_d);
+                formData.append(`questions[${i}][correct_answer]`, q.correct_answer);
+                formData.append(`questions[${i}][question_type]`, q.question_type || 'pretest');
+            });
+
+            // Append materials (support files)
+            materials.forEach((m, i) => {
+                formData.append(`materials[${i}][title]`, m.title);
+                formData.append(`materials[${i}][type]`, m.type || 'document');
+                formData.append(`materials[${i}][description]`, m.description || '');
+                formData.append(`materials[${i}][url]`, m.url || '');
+                if (m.file) {
+                    formData.append(`materials[${i}][file]`, m.file);
+                }
+            });
+
+            const response = await axios.post('/api/admin/training-programs', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
             });
 
             if (response.data.success) {
@@ -97,8 +130,9 @@ export default function CreateProgramWithQuestions({ isOpen, onClose, onSuccess 
                     is_active: true,
                 });
                 setQuestions([
-                    { question_text: '', option_a: '', option_b: '', option_c: '', option_d: '', correct_answer: 'a' }
+                    { question_text: '', option_a: '', option_b: '', option_c: '', option_d: '', correct_answer: 'a', question_type: 'pretest' }
                 ]);
+                setMaterials([]);
                 onClose();
             }
         } catch (err) {
@@ -223,6 +257,67 @@ export default function CreateProgramWithQuestions({ isOpen, onClose, onSuccess 
                         </div>
                     </div>
 
+                    {/* Materials Section */}
+                    <div>
+                        <h3 className="text-xl font-bold text-gray-900 mb-4">Materi (Opsional)</h3>
+                        <div className="space-y-4">
+                            {materials.map((mat, idx) => (
+                                <div key={idx} className="bg-gray-50 rounded-lg p-4 border">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <strong>Materi {idx + 1}</strong>
+                                        <div className="flex gap-2">
+                                            <button type="button" onClick={() => setMaterials(materials.filter((_, i) => i !== idx))} className="text-red-600">Hapus</button>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="block text-sm font-semibold text-gray-700 mb-1">Judul *</label>
+                                            <input type="text" value={mat.title} onChange={(e) => {
+                                                const arr = [...materials]; arr[idx].title = e.target.value; setMaterials(arr);
+                                            }} className="w-full px-3 py-2 border rounded" />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-semibold text-gray-700 mb-1">Tipe</label>
+                                            <select value={mat.type || 'document'} onChange={(e) => {
+                                                const arr = [...materials]; arr[idx].type = e.target.value; setMaterials(arr);
+                                            }} className="w-full px-3 py-2 border rounded">
+                                                <option value="document">Document</option>
+                                                <option value="video">Video</option>
+                                                <option value="link">Link</option>
+                                            </select>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-semibold text-gray-700 mb-1">File (opsional)</label>
+                                            <input type="file" onChange={(e) => {
+                                                const file = e.target.files[0] || null;
+                                                const arr = [...materials]; arr[idx].file = file; setMaterials(arr);
+                                            }} className="w-full" />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-semibold text-gray-700 mb-1">URL (opsional)</label>
+                                            <input type="text" value={mat.url || ''} onChange={(e) => {
+                                                const arr = [...materials]; arr[idx].url = e.target.value; setMaterials(arr);
+                                            }} className="w-full px-3 py-2 border rounded" />
+                                        </div>
+
+                                        <div className="md:col-span-2">
+                                            <label className="block text-sm font-semibold text-gray-700 mb-1">Deskripsi</label>
+                                            <textarea value={mat.description || ''} onChange={(e) => {
+                                                const arr = [...materials]; arr[idx].description = e.target.value; setMaterials(arr);
+                                            }} className="w-full px-3 py-2 border rounded" rows={2} />
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+
+                            <button type="button" onClick={() => setMaterials([...materials, { title: '', type: 'document', file: null, url: '', description: '' }])} className="px-4 py-2 bg-blue-100 text-blue-600 rounded">Tambah Materi</button>
+                        </div>
+                    </div>
+
                     {/* Questions Section */}
                     <div>
                         <h3 className="text-xl font-bold text-gray-900 mb-4">
@@ -293,6 +388,21 @@ export default function CreateProgramWithQuestions({ isOpen, onClose, onSuccess 
                                                 <option value="b">B</option>
                                                 <option value="c">C</option>
                                                 <option value="d">D</option>
+                                            </select>
+                                        </div>
+
+                                        {/* Question Type (Pre/Post) */}
+                                        <div>
+                                            <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                                Tipe Soal *
+                                            </label>
+                                            <select
+                                                value={question.question_type}
+                                                onChange={(e) => handleQuestionChange(index, 'question_type', e.target.value)}
+                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            >
+                                                <option value="pretest">Pre-Test</option>
+                                                <option value="posttest">Post-Test</option>
                                             </select>
                                         </div>
                                     </div>
