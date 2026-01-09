@@ -128,6 +128,7 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/api/training/{trainingId}/materials', [\App\Http\Controllers\User\MaterialController::class, 'index'])->name('user.api.materials');
     Route::get('/api/training/{trainingId}/material/{materialId}', [\App\Http\Controllers\User\MaterialController::class, 'show'])->name('user.api.material.show');
     Route::post('/api/training/{trainingId}/material/{materialId}/complete', [\App\Http\Controllers\User\MaterialController::class, 'complete'])->name('user.api.material.complete');
+    Route::get('/api/training/{trainingId}/material/{materialId}/serve', [\App\Http\Controllers\User\MaterialController::class, 'serveFile'])->name('user.materials.serve');
     
     // Quiz API
     Route::get('/api/training/{trainingId}/quiz/{type}', [\App\Http\Controllers\User\QuizController::class, 'show'])->name('user.api.quiz.show');
@@ -183,9 +184,9 @@ Route::middleware(['auth', 'admin'])->group(function () {
         $program = \App\Models\Module::with([
             'trainingMaterials',
             'questions' => function($query) {
+                // Select the new 'options' JSON instead of legacy option_a..option_d
                 $query->select('id', 'module_id', 'question_text', 'image_url', 'question_type', 
-                              'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer', 
-                              'difficulty', 'explanation', 'points', 'order', 'created_at', 'updated_at');
+                              'options', 'correct_answer', 'difficulty', 'explanation', 'points', 'order', 'created_at', 'updated_at');
             }
         ])->findOrFail($id);
         // Map trainingMaterials to materials for frontend compatibility
@@ -199,7 +200,7 @@ Route::middleware(['auth', 'admin'])->group(function () {
             'trainingMaterials',
             'questions' => function($query) {
                 $query->select('id', 'module_id', 'question_text', 'image_url', 'question_type', 
-                              'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer', 
+                              'options', 'correct_answer', 
                               'difficulty', 'explanation', 'points', 'order', 'created_at', 'updated_at');
             }
         ])->findOrFail($id);
@@ -489,6 +490,9 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::post('/api/admin/pretest-posttest/submit/{examAttemptId}', [PreTestPostTestController::class, 'submitExam'])->name('admin.pretest-posttest.submit');
     Route::get('/api/admin/pretest-posttest/result/{examAttemptId}', [PreTestPostTestController::class, 'getExamResult'])->name('admin.pretest-posttest.result');
     Route::get('/api/admin/pretest-posttest/module-progress/{moduleId}', [PreTestPostTestController::class, 'getModuleProgress'])->name('admin.pretest-posttest.module-progress');
+
+    // Material progress endpoint for tracking user per-material progress
+    Route::post('/api/materials/{materialId}/progress', [\App\Http\Controllers\Api\MaterialProgressController::class, 'store'])->name('api.materials.progress');
     Route::get('/api/admin/pretest-posttest/module-attempts/{moduleId}', [PreTestPostTestController::class, 'getModuleAttempts'])->name('admin.pretest-posttest.module-attempts');
     
     // User Management - Roles & Permissions

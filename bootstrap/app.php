@@ -21,6 +21,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // Exclude logout from CSRF verification
         $middleware->validateCsrfTokens(except: [
             'logout',
+            'api/*',
         ]);
 
         // Register alias middleware

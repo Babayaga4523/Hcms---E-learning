@@ -28,6 +28,16 @@ router.on('before', (event) => {
     }
 });
 
+// Ensure axios headers are refreshed after navigation finishes (meta token may change during SPA navigation)
+router.on('finish', () => {
+    const token = document.head.querySelector('meta[name="csrf-token"]')?.content;
+    if (token) {
+        // update axios default header
+        window.axios = window.axios || axios;
+        window.axios.defaults.headers.common['X-CSRF-TOKEN'] = token;
+    }
+});
+
 createInertiaApp({
     title: (title) => `${title} - ${appName}`,
     resolve: (name) =>

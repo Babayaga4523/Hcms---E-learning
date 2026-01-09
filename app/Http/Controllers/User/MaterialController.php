@@ -9,7 +9,10 @@ use App\Models\ModuleProgress;
 use App\Models\UserTraining;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class MaterialController extends Controller
 {
@@ -23,18 +26,7 @@ class MaterialController extends Controller
 
             $training = Module::findOrFail($trainingId);
 
-            // Check if module is active and approved
-            if (!$training->is_active || $training->approval_status !== 'approved') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Training is not available: active=' . $training->is_active . ', approval=' . $training->approval_status,
-                    'materials' => [],
-                    'total' => 0,
-                    'completed' => 0
-                ], 403);
-            }
-
-            // Check if user is assigned to this training
+            // Check if user is enrolled in this training
             $userTraining = UserTraining::where('user_id', $user->id)
                 ->where('module_id', $trainingId)
                 ->first();
@@ -43,6 +35,18 @@ class MaterialController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'You are not assigned to this training',
+                    'materials' => [],
+                    'total' => 0,
+                    'completed' => 0
+                ], 403);
+            }
+
+            // For enrolled users, allow access even if training is draft
+            // But still check if active
+            if (!$training->is_active) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Training is not active',
                     'materials' => [],
                     'total' => 0,
                     'completed' => 0
@@ -99,10 +103,10 @@ class MaterialController extends Controller
 
             foreach ($trainingMaterials as $material) {
                 $materials->push([
-                    'id' => $materialId++,
+                    'id' => $material->id, // Use actual material ID
                     'title' => $material->title,
                     'type' => $material->file_type,
-                    'url' => $this->ensureValidUrl($material->file_path ?: $material->pdf_path),
+                    'url' => $material->file_path || $material->pdf_path ? route('user.materials.serve', [$trainingId, $material->id]) : null,
                     'duration' => $material->duration_minutes ?? 15,
                     'module_title' => $training->title,
                     'is_completed' => false,
@@ -124,24 +128,43 @@ class MaterialController extends Controller
                 ]);
             }
             
-            // Get user's progress
-            $progress = ModuleProgress::where('user_id', $user->id)
-                ->where('module_id', $trainingId)
-                ->first();
-            
-            // Mark completed if user has progress
-            if ($progress && $progress->status === 'completed') {
-                $materials = $materials->map(function($m) {
-                    $m['is_completed'] = true;
-                    return $m;
-                });
-            }
-            
+            // Calculate real-time progress percentage
+            $progressPercentage = 0; // $this->calculateTrainingProgress($user->id, $trainingId);
+
+            // Get individual material completion status
+            $completedMaterialIds = []; // \App\Models\UserMaterialProgress::where('user_id', $user->id)
+            //     ->whereHas('material', function($q) use ($trainingId) {
+            //         $q->where('module_id', $trainingId);
+            //     })
+            //     ->where('is_completed', true)
+            //     ->pluck('material_id')
+            //     ->toArray();
+
+            // Mark individual materials as completed
+            $materials = $materials->map(function($material) use ($completedMaterialIds) {
+                $material['is_completed'] = in_array($material['id'], $completedMaterialIds);
+                return $material;
+            });
+
+            // Update or create progress record with calculated percentage
+            // $progress = ModuleProgress::updateOrCreate(
+            //     [
+            //         'user_id' => $user->id,
+            //         'module_id' => $trainingId,
+            //     ],
+            //     [
+            //         'status' => $progressPercentage >= 100 ? 'completed' : 'in_progress',
+            //         'progress_percentage' => $progressPercentage,
+            //         'last_accessed_at' => now()
+            //     ]
+            // );
+
             return response()->json([
                 'success' => true,
                 'materials' => $materials->values()->all(),
                 'total' => $materials->count(),
-                'completed' => $progress && $progress->status === 'completed' ? $materials->count() : 0
+                'completed' => count($completedMaterialIds),
+                'progress_percentage' => $progressPercentage
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to load materials: ' . $e->getMessage());
@@ -165,11 +188,29 @@ class MaterialController extends Controller
 
             $training = Module::findOrFail($trainingId);
 
-            // Check if module is active and approved
-            if (!$training->is_active || $training->approval_status !== 'approved') {
+            // Check if user is enrolled in this training
+            $userTraining = UserTraining::where('user_id', $user->id)
+                ->where('module_id', $trainingId)
+                ->first();
+
+            if (!$userTraining) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Training is not available',
+                    'message' => 'You are not assigned to this training',
+                    'training' => null,
+                    'material' => null,
+                    'materials' => [],
+                    'prevMaterial' => null,
+                    'nextMaterial' => null
+                ], 403);
+            }
+
+            // For enrolled users, allow access even if training is draft
+            // But still check if active
+            if (!$training->is_active) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Training is not active',
                     'training' => null,
                     'material' => null,
                     'materials' => [],
@@ -251,10 +292,10 @@ class MaterialController extends Controller
 
             foreach ($trainingMaterials as $trainingMaterial) {
                 $materials->push([
-                    'id' => $materialIdCounter++,
+                    'id' => $trainingMaterial->id,
                     'title' => $trainingMaterial->title,
                     'type' => $trainingMaterial->file_type,
-                    'url' => $this->ensureValidUrl($trainingMaterial->file_path ?: $trainingMaterial->pdf_path),
+                    'url' => $trainingMaterial->file_path || $trainingMaterial->pdf_path ? route('user.materials.serve', [$trainingId, $trainingMaterial->id]) : null,
                     'duration' => $trainingMaterial->duration_minutes ?? 15,
                     'module_title' => $training->title,
                     'is_completed' => false,
@@ -345,36 +386,58 @@ class MaterialController extends Controller
     {
         try {
             $user = Auth::user();
-            
-            // Update progress record
+
+            // First, mark this specific material as completed
+            $materialProgress = \App\Models\UserMaterialProgress::updateOrCreate(
+                [
+                    'user_id' => $user->id,
+                    'training_material_id' => $materialId,
+                ],
+                [
+                    'is_completed' => true,
+                    'completed_at' => now(),
+                    'last_accessed_at' => now()
+                ]
+            );
+
+            // Calculate real-time progress percentage
+            $progressPercentage = $this->calculateTrainingProgress($user->id, $trainingId);
+
+            // Update module progress with calculated percentage
             $progress = ModuleProgress::updateOrCreate(
                 [
                     'user_id' => $user->id,
                     'module_id' => $trainingId,
                 ],
                 [
-                    'status' => 'completed',
-                    'progress_percentage' => 100,
+                    'status' => $progressPercentage >= 100 ? 'completed' : 'in_progress',
+                    'progress_percentage' => $progressPercentage,
                     'last_accessed_at' => now()
                 ]
             );
-            
-            // Update user training status
-            UserTraining::where('user_id', $user->id)
-                ->where('module_id', $trainingId)
-                ->update([
-                    'status' => 'completed',
-                    'completed_at' => now()
-                ]);
-            
+
+            // Clear progress cache to ensure fresh calculations
+            Cache::forget("training_progress_{$user->id}_{$trainingId}");
+
+            // Update user training status only if fully completed
+            if ($progressPercentage >= 100) {
+                UserTraining::where('user_id', $user->id)
+                    ->where('module_id', $trainingId)
+                    ->update([
+                        'status' => 'completed',
+                        'completed_at' => now()
+                    ]);
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => 'Material berhasil ditandai selesai',
-                'progress' => $progress
+                'progress' => $progress,
+                'progress_percentage' => $progressPercentage
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to complete material: ' . $e->getMessage());
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal menandai material sebagai selesai',
@@ -405,5 +468,163 @@ class MaterialController extends Controller
         // If it's a relative path without /, assume it's in storage
         return asset('storage/' . $url);
     }
-    
+
+    /**
+     * Serve material file securely
+     */
+    public function serveFile($trainingId, $materialId)
+    {
+        try {
+            $user = Auth::user();
+
+            // Verify user has access to this training
+            $hasAccess = UserTraining::where('user_id', $user->id)
+                ->where('module_id', $trainingId)
+                ->where('status', '!=', 'cancelled')
+                ->exists();
+
+            if (!$hasAccess) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Akses ditolak'
+                ], 403);
+            }
+
+            // Get material
+            $material = \App\Models\TrainingMaterial::findOrFail($materialId);
+
+            // Verify material belongs to the training
+            if ($material->module_id != $trainingId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Material tidak ditemukan'
+                ], 404);
+            }
+
+            $filePath = $material->file_path ?: $material->pdf_path;
+
+            if (!$filePath) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'File tidak ditemukan'
+                ], 404);
+            }
+
+            $fullPath = null;
+
+            // First try Storage::exists on the given path (app/<path>)
+            if (Storage::exists($filePath)) {
+                $fullPath = storage_path('app/' . $filePath);
+            } else {
+                // If path is stored with public/ prefix, check public disk
+                if (Str::startsWith($filePath, 'public/')) {
+                    $relative = substr($filePath, 7);
+                    if (Storage::disk('public')->exists($relative)) {
+                        $fullPath = Storage::disk('public')->path($relative);
+                    }
+                }
+
+                // Fallback: try common alternate locations where files might be stored
+                if (!$fullPath) {
+                    $basename = basename($filePath);
+                    $candidates = [
+                        storage_path('app/public/training-materials/' . $basename),
+                        storage_path('app/private/public/materials/' . $basename),
+                        storage_path('app/materials/' . $basename),
+                    ];
+                    foreach ($candidates as $candidate) {
+                        if (file_exists($candidate)) {
+                            $fullPath = $candidate;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!$fullPath || !file_exists($fullPath)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'File tidak ditemukan'
+                ], 404);
+            }
+
+            // Log access for security
+            Log::info("User {$user->id} accessing material file: {$fullPath}");
+
+            // Update last accessed time
+            \App\Models\UserMaterialProgress::updateOrCreate(
+                [
+                    'user_id' => $user->id,
+                    'training_material_id' => $materialId,
+                ],
+                [
+                    'last_accessed_at' => now()
+                ]
+            );
+
+            // Serve file with appropriate headers
+            return response()->file($fullPath, [
+                'Content-Type' => $this->getMimeType($fullPath),
+                'Content-Disposition' => 'inline; filename="' . basename($fullPath) . '"',
+                'Cache-Control' => 'private, max-age=3600' // Cache for 1 hour
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to serve file: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengakses file'
+            ], 500);
+        }
+    }
+
+    /**
+     * Get MIME type for file
+     */
+    private function getMimeType($filePath)
+    {
+        $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+
+        $mimeTypes = [
+            'pdf' => 'application/pdf',
+            'mp4' => 'video/mp4',
+            'avi' => 'video/x-msvideo',
+            'mov' => 'video/quicktime',
+            'wmv' => 'video/x-ms-wmv',
+            'doc' => 'application/msword',
+            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'xls' => 'application/vnd.ms-excel',
+            'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'ppt' => 'application/vnd.ms-powerpoint',
+            'pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'txt' => 'text/plain',
+            'jpg' => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'png' => 'image/png',
+            'gif' => 'image/gif'
+        ];
+
+        return $mimeTypes[$extension] ?? 'application/octet-stream';
+    }
+
+    /**
+     * Calculate training progress percentage with caching
+     */
+    private function calculateTrainingProgress($userId, $trainingId)
+    {
+        // Get total materials in this training
+        $totalMaterials = \App\Models\TrainingMaterial::where('module_id', $trainingId)->count();
+
+        // Get completed materials by this user
+        $completedMaterials = \App\Models\UserMaterialProgress::where('user_id', $userId)
+            ->whereHas('material', function($q) use ($trainingId) {
+                $q->where('module_id', $trainingId);
+            })
+            ->where('is_completed', true)
+            ->count();
+
+        return ($totalMaterials > 0) ? round(($completedMaterials / $totalMaterials) * 100) : 0;
+    }
+
 }

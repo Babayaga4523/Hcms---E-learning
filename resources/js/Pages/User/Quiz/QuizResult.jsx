@@ -186,28 +186,36 @@ const QuestionReviewItem = ({ question, index }) => {
                     >
                         <div className="px-5 pb-5 pt-0 pl-[4.5rem]">
                             <div className="space-y-2 text-sm border-t border-slate-100 pt-4">
-                                {['a','b','c','d'].map(opt => {
-                                    const val = question[`option_${opt}`];
-                                    if(!val) return null;
-                                    
-                                    const isUserAnswer = question.user_answer?.toLowerCase() === opt;
-                                    const isCorrectAnswer = question.correct_answer?.toLowerCase() === opt;
-                                    
-                                    let style = "border-slate-200 bg-white text-slate-600";
-                                    if (isCorrectAnswer) style = "border-emerald-500 bg-emerald-50 text-emerald-900 font-bold";
-                                    else if (isUserAnswer && !isCorrectAnswer) style = "border-red-500 bg-red-50 text-red-900 font-bold";
+                                {(() => {
+                                    let opts = [];
+                                    if (question.options) {
+                                        try { opts = typeof question.options === 'string' ? JSON.parse(question.options) : question.options; } catch (e) { opts = []; }
+                                    }
+                                    if (!opts || opts.length === 0) {
+                                        opts = ['a','b','c','d'].map(o => ({ label: o, text: question[`option_${o}`] }));
+                                    }
 
-                                    return (
-                                        <div key={opt} className={`p-3 rounded-xl border-2 flex justify-between items-center ${style}`}>
-                                            <span className="flex items-center gap-2">
-                                                <span className="uppercase w-6">{opt}.</span>
-                                                {val}
-                                            </span>
-                                            {isCorrectAnswer && <CheckCircle2 size={16} />}
-                                            {isUserAnswer && !isCorrectAnswer && <XCircle size={16} />}
-                                        </div>
-                                    )
-                                })}
+                                    return opts.map(o => {
+                                        if(!o || !o.text) return null;
+                                        const optLabel = (o.label || o.key || '').toLowerCase();
+                                        const isUserAnswer = question.user_answer?.toLowerCase() === optLabel;
+                                        const isCorrectAnswer = question.correct_answer?.toLowerCase() === optLabel;
+                                        let style = "border-slate-200 bg-white text-slate-600";
+                                        if (isCorrectAnswer) style = "border-emerald-500 bg-emerald-50 text-emerald-900 font-bold";
+                                        else if (isUserAnswer && !isCorrectAnswer) style = "border-red-500 bg-red-50 text-red-900 font-bold";
+
+                                        return (
+                                            <div key={optLabel} className={`p-3 rounded-xl border-2 flex justify-between items-center ${style}`}>
+                                                <span className="flex items-center gap-2">
+                                                    <span className="uppercase w-6">{(o.label || o.key).toUpperCase()}.</span>
+                                                    {o.text}
+                                                </span>
+                                                {isCorrectAnswer && <CheckCircle2 size={16} />}
+                                                {isUserAnswer && !isCorrectAnswer && <XCircle size={16} />}
+                                            </div>
+                                        )
+                                    });
+                                })()}
                             </div>
 
                             {question.explanation && (

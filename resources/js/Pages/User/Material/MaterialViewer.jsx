@@ -323,9 +323,37 @@ const PDFViewer = ({ url, title }) => (
     </div>
 );
 
-const IFrameViewer = ({ url, title }) => {
+const IFrameViewer = ({ url, title, type }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [hasError, setHasError] = useState(false);
+    
+    // Check if this is a secure route URL (our backend secure serving)
+    const isSecureRoute = url && url.includes('/api/training/') && url.includes('/serve');
+    
+    // For secure routes, don't try to display in iframe - provide download link instead
+    if (isSecureRoute) {
+        return (
+            <div className="w-full h-full bg-white flex flex-col items-center justify-center text-center p-8">
+                <div className="bg-gradient-to-br from-slate-50 to-slate-100 p-10 rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full">
+                    <div className="w-20 h-20 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-6 text-blue-500">
+                        <FileText size={40} />
+                    </div>
+                    <h3 className="text-2xl font-bold text-slate-900 mb-3 line-clamp-2">{title}</h3>
+                    <p className="text-slate-500 mb-8 text-sm leading-relaxed">
+                        File materi tersedia untuk diakses. Klik tombol di bawah untuk membuka atau mengunduh file.
+                    </p>
+                    <a 
+                        href={url} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="w-full px-6 py-4 bg-[#005E54] text-white rounded-2xl font-bold hover:bg-[#004a44] transition flex items-center justify-center gap-3 shadow-xl"
+                    >
+                        <Download size={20} /> Buka / Download File
+                    </a>
+                </div>
+            </div>
+        );
+    }
     
     return (
         <div className="w-full h-full bg-white relative">
@@ -407,6 +435,7 @@ export default function MaterialViewer({ auth, trainingId, materialId }) {
         
         try {
             setActionLoading(true);
+
             await axios.post(`/api/training/${trainingId}/material/${materialId}/complete`);
             setIsCompleted(true);
             setConfetti(true);
@@ -540,11 +569,11 @@ export default function MaterialViewer({ auth, trainingId, materialId }) {
             const viewerUrl = isDocFile && !url.includes('docs.google.com') 
                 ? `https://docs.google.com/gview?url=${encodeURIComponent(url)}&embedded=true`
                 : url;
-            return <IFrameViewer url={viewerUrl} title={material.title} />;
+            return <IFrameViewer url={viewerUrl} title={material.title} type={material.type} />;
         }
         
         // Default - try iframe viewer for any other type (html, etc)
-        return <IFrameViewer url={url} title={material.title} />;
+        return <IFrameViewer url={url} title={material.title} type={material.type} />;
     };
     
     if (loading) {

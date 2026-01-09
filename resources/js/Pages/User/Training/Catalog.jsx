@@ -5,7 +5,7 @@ import {
     Search, Filter, Star, Clock, Users, BookOpen, 
     TrendingUp, Award, Play, ChevronDown, Grid3x3, 
     List, Sparkles, Target, Zap, Shield, Briefcase,
-    X, Check, Calendar, ArrowRight
+    X, Check, Calendar, ArrowRight, AlertCircle, CheckCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -309,7 +309,7 @@ const FilterSidebar = ({ filters, setFilters, onFilterChange, isMobile, onClose 
 };
 
 // --- Main Component ---
-const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {}, sortBy: initialSort = 'newest', auth }) => {
+const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {}, sortBy: initialSort = 'newest', auth, flash }) => {
     const [filters, setFilters] = useState({
         category: initialFilters.category || 'all',
         difficulty: initialFilters.difficulty || 'all',
@@ -463,6 +463,28 @@ const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {
         <AppLayout user={auth?.user}>
             <Head title="Katalog Training" />
             <WondrStyles />
+            
+            {/* Flash Messages */}
+            {flash?.error && (
+                <div className="fixed top-24 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full shadow-2xl z-[70] flex items-center gap-3 bg-red-600 text-white animate-slide-down">
+                    <AlertCircle className="w-5 h-5" />
+                    <span className="font-bold text-sm">{flash.error}</span>
+                </div>
+            )}
+            
+            {flash?.warning && (
+                <div className="fixed top-24 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full shadow-2xl z-[70] flex items-center gap-3 bg-amber-600 text-white animate-slide-down">
+                    <AlertCircle className="w-5 h-5" />
+                    <span className="font-bold text-sm">{flash.warning}</span>
+                </div>
+            )}
+            
+            {flash?.success && (
+                <div className="fixed top-24 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full shadow-2xl z-[70] flex items-center gap-3 bg-[#002824] text-white animate-slide-down">
+                    <CheckCircle className="w-5 h-5 text-[#D6F84C]" />
+                    <span className="font-bold text-sm">{flash.success}</span>
+                </div>
+            )}
 
             <div className="wondr-font">
                 {/* Hero Section */}

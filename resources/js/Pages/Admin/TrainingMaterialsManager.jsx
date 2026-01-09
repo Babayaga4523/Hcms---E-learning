@@ -31,7 +31,7 @@ const FileIcon = ({ type, extension }) => {
     );
 };
 
-const MaterialCard = ({ material, onView, onDelete }) => (
+const MaterialCard = ({ material, onView, onDelete, onComplete }) => (
     <motion.div
         layout
         initial={{ opacity: 0, scale: 0.9 }}
@@ -58,7 +58,16 @@ const MaterialCard = ({ material, onView, onDelete }) => (
 
         <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
             <span>{material.file_size ? (material.file_size / 1024 / 1024).toFixed(2) + ' MB' : 'Size unknown'}</span>
-            <span className="flex items-center gap-1"><Download size={12} /> {Math.floor(Math.random() * 100)}</span>
+            <div className="flex items-center gap-2">
+                <button
+                    onClick={(e) => { e.stopPropagation(); if (onComplete) onComplete(material); }}
+                    className="px-3 py-1 bg-emerald-50 text-emerald-700 rounded-lg text-[11px] font-bold hover:bg-emerald-100 transition"
+                >
+                    <CheckCircle2 size={12} />
+                    <span className="ml-2">Mark Complete</span>
+                </button>
+                <span className="flex items-center gap-1"><Download size={12} /> {Math.floor(Math.random() * 100)}</span>
+            </div>
         </div>
 
         {material.material_type === 'document' && (
@@ -434,6 +443,19 @@ export default function TrainingMaterialsManager({ program, auth }) {
                                     material={item}
                                     onView={() => { setPreviewFile(item); setAiAnalysis(null); }}
                                     onDelete={handleDelete}
+                                    onComplete={async (material) => {
+                                        try {
+                                            setLoading(true);
+                                            const res = await axios.post(`/api/materials/${material.id}/progress`, { is_completed: true });
+                                            // Update UI to mark completed
+                                            setMaterials(materials.map(m => m.id === material.id ? { ...m, is_completed: true } : m));
+                                            showNotification('Material ditandai selesai');
+                                        } catch (err) {
+                                            showNotification(err.response?.data?.message || 'Gagal menandai selesai', 'error');
+                                        } finally {
+                                            setLoading(false);
+                                        }
+                                    }}
                                 />
                             ))}
                         </AnimatePresence>
@@ -484,19 +506,24 @@ export default function TrainingMaterialsManager({ program, auth }) {
                                             )}
                                             
                                             <div className="grid grid-cols-2 gap-2">
-                                                {['a', 'b', 'c', 'd'].map(opt => (
-                                                    <div 
-                                                        key={opt} 
-                                                        className={`px-3 py-2 rounded-lg text-sm ${
-                                                            question.correct_answer === opt 
-                                                                ? 'bg-green-100 text-green-800 font-semibold border border-green-200' 
-                                                                : 'bg-slate-50 text-slate-600'
-                                                        }`}
-                                                    >
-                                                        <span className="font-bold uppercase mr-2">{opt}.</span>
-                                                        {question[`option_${opt}`]}
-                                                    </div>
-                                                ))}
+                                                {(() => {
+                                                    let opts = [];
+                                                    if (question.options) {
+                                                        try { opts = typeof question.options === 'string' ? JSON.parse(question.options) : question.options; } catch (e) { opts = []; }
+                                                    }
+                                                    if (!opts || opts.length === 0) {
+                                                        opts = ['a','b','c','d'].map(o => ({ label: o, text: question[`option_${o}`] }));
+                                                    } else {
+                                                        opts = opts.map(o => (o.label ? o : { label: (o.label || o.key || '').toString(), text: o.text || o.value || '' }));
+                                                    }
+
+                                                    return opts.map(o => (
+                                                        <div key={o.label} className={`px-3 py-2 rounded-lg text-sm ${question.correct_answer === o.label ? 'bg-green-100 text-green-800 font-semibold border border-green-200' : 'bg-slate-50 text-slate-600'}`}>
+                                                            <span className="font-bold uppercase mr-2">{o.label}.</span>
+                                                            {o.text}
+                                                        </div>
+                                                    ));
+                                                })()}
                                             </div>
                                         </div>
                                     </div>
@@ -547,19 +574,24 @@ export default function TrainingMaterialsManager({ program, auth }) {
                                             )}
                                             
                                             <div className="grid grid-cols-2 gap-2">
-                                                {['a', 'b', 'c', 'd'].map(opt => (
-                                                    <div 
-                                                        key={opt} 
-                                                        className={`px-3 py-2 rounded-lg text-sm ${
-                                                            question.correct_answer === opt 
-                                                                ? 'bg-green-100 text-green-800 font-semibold border border-green-200' 
-                                                                : 'bg-slate-50 text-slate-600'
-                                                        }`}
-                                                    >
-                                                        <span className="font-bold uppercase mr-2">{opt}.</span>
-                                                        {question[`option_${opt}`]}
-                                                    </div>
-                                                ))}
+                                                {(() => {
+                                                    let opts = [];
+                                                    if (question.options) {
+                                                        try { opts = typeof question.options === 'string' ? JSON.parse(question.options) : question.options; } catch (e) { opts = []; }
+                                                    }
+                                                    if (!opts || opts.length === 0) {
+                                                        opts = ['a','b','c','d'].map(o => ({ label: o, text: question[`option_${o}`] }));
+                                                    } else {
+                                                        opts = opts.map(o => (o.label ? o : { label: (o.label || o.key || '').toString(), text: o.text || o.value || '' }));
+                                                    }
+
+                                                    return opts.map(o => (
+                                                        <div key={o.label} className={`px-3 py-2 rounded-lg text-sm ${question.correct_answer === o.label ? 'bg-green-100 text-green-800 font-semibold border border-green-200' : 'bg-slate-50 text-slate-600'}`}>
+                                                            <span className="font-bold uppercase mr-2">{o.label}.</span>
+                                                            {o.text}
+                                                        </div>
+                                                    ));
+                                                })()}
                                             </div>
                                         </div>
                                     </div>
@@ -633,6 +665,15 @@ export default function TrainingMaterialsManager({ program, auth }) {
                                                     src={filePath}
                                                     controls
                                                     className="max-w-full max-h-[70vh] rounded-2xl shadow-2xl"
+                                                    onEnded={async () => {
+                                                        try {
+                                                            await axios.post(`/api/materials/${previewFile.id}/progress`, { is_completed: true });
+                                                            showNotification('Material ditandai selesai');
+                                                            setMaterials(materials.map(m => m.id === previewFile.id ? { ...m, is_completed: true } : m));
+                                                        } catch (err) {
+                                                            showNotification('Gagal menandai selesai', 'error');
+                                                        }
+                                                    }}
                                                 >
                                                     Browser Anda tidak mendukung video preview.
                                                 </video>

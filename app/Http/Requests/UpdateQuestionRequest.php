@@ -31,10 +31,9 @@ class UpdateQuestionRequest extends FormRequest
             'difficulty' => 'required|in:easy,medium,hard',
             'points' => 'nullable|integer|min:1|max:100',
             'explanation' => 'nullable|string|max:5000',
-            'option_a' => 'nullable|string|max:500',
-            'option_b' => 'nullable|string|max:500',
-            'option_c' => 'nullable|string|max:500',
-            'option_d' => 'nullable|string|max:500',
+            'options' => 'nullable|array',
+            'options.*.label' => 'nullable|string|max:5',
+            'options.*.text' => 'nullable|string|max:1000',
             'correct_answer' => 'nullable|string|max:10',
         ];
     }

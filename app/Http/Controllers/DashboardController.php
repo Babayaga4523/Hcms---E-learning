@@ -115,9 +115,11 @@ class DashboardController extends Controller
             })
             ->map(function ($attempt) {
                 $type = $attempt->exam_type === 'pre_test' ? 'Pre-Test' : 'Post-Test';
+                $time = $attempt->finished_at ?? $attempt->started_at ?? null;
                 return [
                     'title' => "{$type} - {$attempt->module->title}",
-                    'time' => $attempt->finished_at ? $attempt->finished_at->diffForHumans() : 'Belum selesai',
+                    'time' => $time ? $time->diffForHumans() : 'Belum selesai',
+                    'timestamp' => $time ? $time->timestamp : 0,
                     'score' => (int)$attempt->percentage,
                     'passed' => $attempt->is_passed,
                 ];
@@ -134,16 +136,29 @@ class DashboardController extends Controller
                 return $training->module !== null;
             })
             ->map(function ($training) {
+                $time = $training->completed_at ?? null;
                 return [
                     'title' => "Training Selesai - {$training->module->title}",
-                    'time' => $training->completed_at->diffForHumans(),
+                    'time' => $time ? $time->diffForHumans() : 'Waktu tidak tersedia',
+                    'timestamp' => $time ? $time->timestamp : 0,
                     'score' => $training->final_score,
                     'passed' => $training->final_score >= ($training->module->passing_grade ?? 70),
                 ];
             });
 
-        // Merge and sort by time (newest first)
-        $activities = $examAttempts->merge($completions)->sortByDesc('time')->values();
+        // Convert to base Support Collections to avoid Eloquent collection merge semantics
+        $examAttempts = $examAttempts->toBase();
+        $completions = $completions->toBase();
+
+        // Merge and sort by timestamp (newest first)
+        $activities = $examAttempts->merge($completions)
+            ->sortByDesc('timestamp')
+            ->values()
+            // Remove timestamp before returning to keep payload clean
+            ->map(function($item) {
+                unset($item['timestamp']);
+                return $item;
+            });
 
         return $activities;
     }

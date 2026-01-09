@@ -1,10 +1,11 @@
 <?php
 
+require 'vendor/autoload.php';
+$app = require 'bootstrap/app.php';
+$app->make('Illuminate\Contracts\Console\Kernel')->bootstrap();
+
 // Check database connection and data
 try {
-    require 'bootstrap/app.php';
-    
-    $app = app();
     
     $users = \App\Models\User::where('role', 'user')->count();
     echo "✓ Total users: " . $users . "\n";

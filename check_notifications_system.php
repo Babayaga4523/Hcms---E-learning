@@ -1,5 +1,9 @@
 <?php
 
+require 'vendor/autoload.php';
+$app = require 'bootstrap/app.php';
+$app->make('Illuminate\Contracts\Console\Kernel')->bootstrap();
+
 use Illuminate\Support\Facades\DB;
 
 echo "=== SISTEM PENGUMUMAN DAN NOTIFIKASI - STATUS CHECK ===\n\n";

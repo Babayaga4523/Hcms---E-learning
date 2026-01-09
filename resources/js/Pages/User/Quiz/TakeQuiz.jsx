@@ -357,33 +357,41 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
 
                             {/* Options */}
                             <div className="space-y-3 mb-8">
-                                {['a', 'b', 'c', 'd'].map((opt) => {
-                                    const val = currentQuestion[`option_${opt}`];
-                                    if(!val) return null;
-                                    const isSelected = answers[currentIndex] === opt;
-                                    
-                                    return (
-                                        <button
-                                            key={opt}
-                                            onClick={() => handleAnswer(opt)}
-                                            className={`option-card w-full p-5 rounded-2xl flex items-center gap-4 text-left group ${isSelected ? 'selected' : ''}`}
-                                        >
-                                            <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all ${
-                                                isSelected 
-                                                ? 'bg-[#005E54] text-white shadow-lg' 
-                                                : 'bg-slate-100 text-slate-500 group-hover:bg-slate-200'
-                                            }`}>
-                                                {opt.toUpperCase()}
-                                            </div>
-                                            <span className={`font-medium text-lg ${isSelected ? 'text-[#005E54]' : 'text-slate-700'}`}>
-                                                {val}
-                                            </span>
-                                            {isSelected && (
-                                                <CheckCircle2 className="ml-auto text-[#005E54]" size={24} />
-                                            )}
-                                        </button>
-                                    );
-                                })}
+                                {(() => {
+                                    let opts = currentQuestion.options || [];
+                                    if (typeof opts === 'string') {
+                                        try { opts = JSON.parse(opts); } catch (e) { opts = []; }
+                                    }
+                                    if (!opts || opts.length === 0) {
+                                        opts = ['a','b','c','d'].map(o => ({ label: o, text: currentQuestion[`option_${o}`] }));
+                                    }
+
+                                    return opts.map((o) => {
+                                        if (!o || !o.text) return null;
+                                        const isSelected = answers[currentIndex] === o.label;
+                                        return (
+                                            <button
+                                                key={o.label}
+                                                onClick={() => handleAnswer(o.label)}
+                                                className={`option-card w-full p-5 rounded-2xl flex items-center gap-4 text-left group ${isSelected ? 'selected' : ''}`}
+                                            >
+                                                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all ${
+                                                    isSelected 
+                                                    ? 'bg-[#005E54] text-white shadow-lg' 
+                                                    : 'bg-slate-100 text-slate-500 group-hover:bg-slate-200'
+                                                }`}>
+                                                    {o.label.toUpperCase()}
+                                                </div>
+                                                <span className={`font-medium text-lg ${isSelected ? 'text-[#005E54]' : 'text-slate-700'}`}>
+                                                    {o.text}
+                                                </span>
+                                                {isSelected && (
+                                                    <CheckCircle2 className="ml-auto text-[#005E54]" size={24} />
+                                                )}
+                                            </button>
+                                        );
+                                    });
+                                })()}
                             </div>
 
                         </motion.div>

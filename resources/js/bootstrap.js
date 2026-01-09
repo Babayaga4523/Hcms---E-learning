@@ -3,12 +3,9 @@ import axios from 'axios';
 // Configure axios defaults
 axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
 axios.defaults.withCredentials = true;
-
-// Get CSRF token from meta tag
-const token = document.querySelector('meta[name="csrf-token"]')?.content;
-if (token) {
-    axios.defaults.headers.common['X-CSRF-TOKEN'] = token;
-}
+// Ensure axios will read XSRF cookie and set X-XSRF-TOKEN header automatically
+axios.defaults.xsrfCookieName = 'XSRF-TOKEN';
+axios.defaults.xsrfHeaderName = 'X-XSRF-TOKEN';
 
 // Make axios available globally
 window.axios = axios;

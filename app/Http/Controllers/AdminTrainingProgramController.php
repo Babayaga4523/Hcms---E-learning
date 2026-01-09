@@ -165,231 +165,258 @@ class AdminTrainingProgramController extends Controller
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
+        // 1. Validation (Security & Data Integrity)
+        $request->validate([
+            'title' => 'required|string|max:255',
+            'description' => 'required|string',
+            'duration_minutes' => 'required|integer|min:1',
+            'passing_grade' => 'required|integer|min:0|max:100',
+            'category' => 'nullable|string|max:255',
+            'is_active' => 'boolean',
+            'allow_retake' => 'boolean',
+            'max_retake_attempts' => 'nullable|integer|min:1',
+            'expiry_date' => 'nullable|date',
+            'prerequisite_module_id' => 'nullable|exists:modules,id',
+            'instructor_id' => 'nullable|exists:users,id',
+            'certificate_template' => 'nullable|string',
+            // Validasi Array Materials
+            'materials.*.file' => 'sometimes|nullable|file|mimes:pdf,mp4,doc,docx,ppt,pptx|max:20480', // Max 20MB, optional for testing
+            'materials.*.title' => 'required|string',
+            'materials.*.description' => 'nullable|string',
+            'materials.*.duration' => 'nullable|integer|min:0',
+            'materials.*.order' => 'nullable|integer|min:0',
+            // Validasi Array Questions (Unified format)
+            'questions.*.question_text' => 'nullable|string',
+            'questions.*.question_type' => 'nullable|in:pretest,posttest',
+            'questions.*.option_a' => 'nullable|string',
+            'questions.*.option_b' => 'nullable|string',
+            'questions.*.option_c' => 'nullable|string',
+            'questions.*.option_d' => 'nullable|string',
+            'questions.*.correct_answer' => 'nullable|in:a,b,c,d',
+            'questions.*.explanation' => 'nullable|string',
+            'questions.*.image_url' => 'nullable|image|max:5120',
+            // Alternative format: separate pre/post test questions
+            'pre_test_questions.*.question_text' => 'nullable|string',
+            'pre_test_questions.*.option_a' => 'nullable|string',
+            'pre_test_questions.*.option_b' => 'nullable|string',
+            'pre_test_questions.*.option_c' => 'nullable|string',
+            'pre_test_questions.*.option_d' => 'nullable|string',
+            'pre_test_questions.*.correct_answer' => 'nullable|in:a,b,c,d',
+            'pre_test_questions.*.explanation' => 'nullable|string',
+            'pre_test_questions.*.image_url' => 'nullable|image|max:5120',
+            'post_test_questions.*.question_text' => 'nullable|string',
+            'post_test_questions.*.option_a' => 'nullable|string',
+            'post_test_questions.*.option_b' => 'nullable|string',
+            'post_test_questions.*.option_c' => 'nullable|string',
+            'post_test_questions.*.option_d' => 'nullable|string',
+            'post_test_questions.*.correct_answer' => 'nullable|in:a,b,c,d',
+            'post_test_questions.*.explanation' => 'nullable|string',
+            'post_test_questions.*.image_url' => 'nullable|image|max:5120',
+        ]);
+
+        // 2. Gunakan Database Transaction
+        // Jika satu part gagal, semua dibatalkan (Rollback)
+        DB::beginTransaction();
+
         try {
-            // Support nested payloads such as { program: { title, ... }, questions: [...], materials: [...] }
-            if ($request->has('program') && is_array($request->program)) {
-                // Merge main program fields to top-level so existing validation and saving logic work
-                $request->merge($request->program);
-
-                // Also merge nested arrays if not provided at top-level
-                if (isset($request->program['questions']) && ! $request->has('questions')) {
-                    $request->merge(['questions' => $request->program['questions']]);
-                }
-                if (isset($request->program['materials']) && ! $request->has('materials')) {
-                    $request->merge(['materials' => $request->program['materials']]);
-                }
-            }
-
-            // Support questions/materials passed as JSON string in multipart/form-data
-            if ($request->has('questions') && is_string($request->questions)) {
-                $decoded = json_decode($request->questions, true);
-                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-                    $request->merge(['questions' => $decoded]);
-                }
-            }
-            if ($request->has('materials') && is_string($request->materials)) {
-                $decoded = json_decode($request->materials, true);
-                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-                    $request->merge(['materials' => $decoded]);
-                }
-            }
-
-            // 1. Validasi Input
-            $validated = $request->validate([
-                'title' => 'required|string|max:255',
-                'description' => 'required|string',
-                'duration_minutes' => 'required|integer|min:1',
-                'passing_grade' => 'required|integer|min:0|max:100',
-                'category' => 'nullable|string|max:255',
-                'is_active' => 'boolean',
-                'allow_retake' => 'boolean',
-                'max_retake_attempts' => 'nullable|integer|min:1',
-                'expiry_date' => 'nullable|date',
-                'prerequisite_module_id' => 'nullable|exists:modules,id',
-                'instructor_id' => 'nullable|exists:users,id',
-                'certificate_template' => 'nullable|string',
-
-                // Validasi Materials
-                'materials' => 'sometimes|array',
-                'materials.*.title' => 'required|string', // Title wajib agar terdeteksi di input
-                'materials.*.type' => 'string',
-                'materials.*.description' => 'nullable|string',
-                'materials.*.url' => 'nullable|string',
-                'materials.*.file' => 'sometimes|file|max:102400', // 100MB
-
-                // Validasi Questions (Support format gabungan)
-                'questions' => 'sometimes|array',
-                'questions.*.question_text' => 'required|string',
-                'questions.*.question_type' => 'required|in:pretest,posttest',
-                'questions.*.option_a' => 'required|string',
-                'questions.*.option_b' => 'required|string',
-                'questions.*.option_c' => 'required|string',
-                'questions.*.option_d' => 'required|string',
-                'questions.*.correct_answer' => 'required|in:a,b,c,d',
-                'questions.*.explanation' => 'nullable|string',
-                'questions.*.image_url' => 'nullable|image|max:5120',
-            ]);
-            DB::beginTransaction();
-
-            // 2. Handle Cover Image
-            $coverImagePath = null;
-            if ($request->hasFile('cover_image')) {
-                $coverImagePath = $request->file('cover_image')->store('training-programs/covers', 'public');
-            }
-
-            // 3. Simpan Module (Program Utama)
+            // A. Simpan Module / Program Utama
             $module = Module::create([
-                'title' => $validated['title'],
-                'description' => $validated['description'],
-                'duration_minutes' => $validated['duration_minutes'],
-                'passing_grade' => $validated['passing_grade'],
-                'category' => $validated['category'] ?? null,
-                'cover_image' => $coverImagePath,
-                'is_active' => filter_var($request->is_active ?? false, FILTER_VALIDATE_BOOLEAN), // Pastikan boolean benar
-                'allow_retake' => ($allowRetake = filter_var($request->allow_retake ?? false, FILTER_VALIDATE_BOOLEAN)),
-                'max_retake_attempts' => $allowRetake ? ($validated['max_retake_attempts'] ?? 3) : 0,
-                'expiry_date' => $validated['expiry_date'] ?? null,
-                'prerequisite_module_id' => $validated['prerequisite_module_id'] ?? null,
-                'instructor_id' => $validated['instructor_id'] ?? null,
-                'certificate_template' => $validated['certificate_template'] ?? null,
+                'title' => $request->title,
+                'description' => $request->description,
+                'duration_minutes' => $request->duration_minutes,
+                'passing_grade' => $request->passing_grade,
+                'category' => $request->category ?? null,
+                'is_active' => filter_var($request->is_active ?? false, FILTER_VALIDATE_BOOLEAN),
+                'allow_retake' => filter_var($request->allow_retake ?? false, FILTER_VALIDATE_BOOLEAN),
+                'max_retake_attempts' => $request->allow_retake ? ($request->max_retake_attempts ?? 3) : 0,
+                'expiry_date' => $request->expiry_date ?? null,
+                'prerequisite_module_id' => $request->prerequisite_module_id ?? null,
+                'instructor_id' => $request->instructor_id ?? null,
+                'certificate_template' => $request->certificate_template ?? null,
                 // Kita update flag ini nanti setelah menghitung soal
                 'has_pretest' => false,
                 'has_posttest' => false,
             ]);
 
-            // 4. Proses Materi (Materials)
-            // PENTING: Gunakan $request->materials untuk memastikan array object terbaca
-            if ($request->has('materials') && is_array($request->materials)) {
-                foreach ($request->materials as $index => $materialData) {
+            // B. Handle Materials (File Upload)
+            if ($request->has('materials')) {
+                foreach ($request->materials as $matData) {
+                    if (isset($matData['file']) && $matData['file']->isValid()) {
 
-                    // Skip jika data corrupt
-                    if (!isset($materialData['title'])) continue;
+                        // Buat nama file unik (Future-proof & Security)
+                        $filename = time() . '_' . preg_replace('/\s+/', '_', $matData['file']->getClientOriginalName());
 
-                    $filePath = null;
-                    $pdfPath = null;
-                    $fileSize = 0;
-                    $fileName = null;
+                        // Simpan ke storage/app/public/materials
+                        $path = $matData['file']->storeAs('public/materials', $filename);
 
-                    // Handle File Upload
-                    // Syntax: materials[0][file]
-                    if ($request->hasFile("materials.{$index}.file")) {
-                        $file = $request->file("materials.{$index}.file");
-                        $filePath = $file->store('training-materials', 'public');
-                        $fileName = $file->getClientOriginalName();
-                        $fileSize = $file->getSize();
-
-                        // PDF Conversion Logic (Simplified)
-                        $extension = $file->getClientOriginalExtension();
-                        $converter = new PdfConverterService();
-                        if ($converter->needsConversion($extension)) {
-                            // ... logic konversi Anda tetap sama ...
-                            try {
-                                $fullInputPath = storage_path('app/public/' . $filePath);
-                                $outputDir = storage_path('app/public/training-materials/pdf');
-                                $pdfFullPath = $converter->convertToPdf($fullInputPath, $outputDir);
-                                if ($pdfFullPath) {
-                                    $pdfPath = 'training-materials/pdf/' . basename($pdfFullPath);
-                                }
-                            } catch (\Exception $e) {
-                                Log::error("PDF Convert Error: " . $e->getMessage());
-                            }
-                        }
-                    }
-
-                    // Tentukan tipe file
-                    $fileType = $materialData['type'] ?? 'document';
-
-                    // Simpan hanya jika ada File atau URL
-                    if ($filePath || !empty($materialData['url'])) {
-                        TrainingMaterial::create([
+                        // Simpan ke Database
+                        $materialData = [
                             'module_id' => $module->id,
-                            'title' => $materialData['title'],
-                            'description' => $materialData['description'] ?? '',
-                            'file_type' => $fileType,
-                            'file_path' => $filePath ?? $materialData['url'], // Simpan URL jika file kosong
-                            'pdf_path' => $pdfPath,
-                            'file_name' => $fileName ?? basename($materialData['url'] ?? 'link'),
-                            'file_size' => $fileSize,
-                            'duration_minutes' => 0, // Bisa diambil dari frontend jika ada
-                            'order' => $index + 1,
+                            'title' => $matData['title'],
+                            'description' => $matData['description'] ?? null,
+                            'file_path' => 'materials/' . $filename, // Path relatif untuk akses public
+                            'file_name' => $matData['file']->getClientOriginalName(), // Nama file asli
+                            'file_type' => $matData['file']->getClientOriginalExtension(),
+                            'file_size' => $matData['file']->getSize(), // Ukuran file dalam bytes
+                            'duration_minutes' => $matData['duration'] ?? 0,
+                            'order' => $matData['order'] ?? 0,
                             'uploaded_by' => $user->id,
-                        ]);
+                        ];
+
+                        // Jika file adalah PDF, set pdf_path juga
+                        if (strtolower($matData['file']->getClientOriginalExtension()) === 'pdf') {
+                            $materialData['pdf_path'] = 'materials/' . $filename;
+                        }
+
+                        TrainingMaterial::create($materialData);
                     }
                 }
             }
 
-            // 5. Proses Pertanyaan (Questions)
-            // Kita gabung pre_test_questions dan post_test_questions (jika frontend mengirim terpisah) ke dalam satu array logic
-            $allQuestions = $request->questions ?? [];
-
-            // Jika frontend mengirim terpisah (legacy support untuk storeWithQuestions)
-            if ($request->has('pre_test_questions')) {
-                foreach($request->pre_test_questions as $q) {
-                    $q['question_type'] = $q['question_type'] ?? 'pretest';
-                    $allQuestions[] = $q;
-                }
-            }
-            if ($request->has('post_test_questions')) {
-                foreach($request->post_test_questions as $q) {
-                    $q['question_type'] = $q['question_type'] ?? 'posttest';
-                    $allQuestions[] = $q;
-                }
-            }
-
+            // C. Handle Questions & Auto-Create Quizzes
             $hasPretest = false;
             $hasPosttest = false;
 
-            if (!empty($allQuestions)) {
-                foreach ($allQuestions as $index => $qData) {
-                    $imageUrl = null;
+            // Combine questions from both formats (unified and separate)
+            $allQuestions = [];
 
-                    // Default question_type jika tidak diberikan oleh frontend
-                    $qType = $qData['question_type'] ?? 'pretest';
+            // Handle unified questions format (if provided)
+            if ($request->has('questions') && is_array($request->questions) && count($request->questions) > 0) {
+                foreach ($request->questions as $qData) {
+                    if (!empty($qData['question_text']) && !empty($qData['question_type'])) {
+                        $allQuestions[] = $qData;
+                    }
+                }
+            }
+
+            // Handle separate pre/post test questions format (from frontend)
+            if ($request->has('pre_test_questions') && is_array($request->pre_test_questions)) {
+                foreach ($request->pre_test_questions as $qData) {
+                    if (!empty($qData['question_text'])) {
+                        $qData['question_type'] = 'pretest';
+                        $allQuestions[] = $qData;
+                    }
+                }
+            }
+
+            if ($request->has('post_test_questions') && is_array($request->post_test_questions)) {
+                foreach ($request->post_test_questions as $qData) {
+                    if (!empty($qData['question_text'])) {
+                        $qData['question_type'] = 'posttest';
+                        $allQuestions[] = $qData;
+                    }
+                }
+            }
+
+            Log::info('Questions data received:', ['questions' => $allQuestions]);
+
+            if (count($allQuestions) > 0) {
+                Log::info('Processing ' . count($allQuestions) . ' questions');
+
+                foreach ($allQuestions as $index => $qData) {
+                    Log::info('Processing question ' . $index, ['data' => $qData]);
+
+                    $qType = $qData['question_type'] ?? 'pretest'; // Default to pretest if not specified
+
+                    // Opsional: Buat Quiz Header jika belum ada (sesuai logic Anda)
+                    $quiz = \App\Models\Quiz::firstOrCreate(
+                        ['module_id' => $module->id, 'type' => $qType],
+                        [
+                            'name' => ucfirst($qType) . ' for ' . $module->title,
+                            'description' => 'Auto-created ' . $qType . ' for this training.',
+                            'is_active' => true,
+                            'question_count' => 0, // Will be updated later
+                            'time_limit' => 15,
+                            'passing_score' => $module->passing_grade ?? 70,
+                        ]
+                    );
+
+                    Log::info('Quiz created/found', ['quiz_id' => $quiz->id, 'type' => $qType]);
 
                     // Handle Image Upload untuk Question
-                    // Cek key di request asli. Karena index di $allQuestions mungkin beda dengan request,
-                    // kita harus hati-hati.
-                    // AMANNYA: Jika format 'questions', gunakan index loop.
-                    // Jika format 'pre_test', kita asumsikan logic upload file sudah ditangani di frontend mengirim 'questions' array.
+                    $imageUrl = null;
+                    if (isset($qData['image_url']) && $qData['image_url']->isValid()) {
+                        try {
+                            $imageFilename = time() . '_question_' . uniqid() . '.' . $qData['image_url']->getClientOriginalExtension();
+                            $path = $qData['image_url']->storeAs('public/questions', $imageFilename);
 
-                    if ($request->hasFile("questions.{$index}.image_url")) {
-                        $imageUrl = $request->file("questions.{$index}.image_url")->store('questions', 'public');
-                    } elseif (isset($qData['image_url']) && is_string($qData['image_url'])) {
-                        // Jika frontend mengirim string path (jarang terjadi di create)
-                        $imageUrl = $qData['image_url'];
+                            // Verify file was actually stored
+                            if (Storage::exists('public/questions/' . $imageFilename)) {
+                                $imageUrl = 'questions/' . $imageFilename; // Path relatif untuk akses public
+                                Log::info('Question image uploaded successfully', ['filename' => $imageFilename, 'path' => $path]);
+                            } else {
+                                Log::error('Question image upload failed - file not found after storage', ['filename' => $imageFilename]);
+                            }
+                        } catch (\Exception $e) {
+                            Log::error('Question image upload failed', [
+                                'error' => $e->getMessage(),
+                                'question_text' => substr($qData['question_text'], 0, 50) . '...'
+                            ]);
+                        }
                     }
 
-                    Question::create([
+                    // Simpan Question dengan format options JSON
+                    $question = Question::create([
                         'module_id' => $module->id,
+                        'quiz_id' => $quiz->id,
                         'question_text' => $qData['question_text'],
                         'question_type' => $qType,
-                        'image_url' => $imageUrl,
-                        'explanation' => $qData['explanation'] ?? null,
-                        'option_a' => $qData['option_a'],
-                        'option_b' => $qData['option_b'],
-                        'option_c' => $qData['option_c'],
-                        'option_d' => $qData['option_d'],
+                        'options' => json_encode([
+                            ['label' => 'a', 'text' => $qData['option_a']],
+                            ['label' => 'b', 'text' => $qData['option_b']],
+                            ['label' => 'c', 'text' => $qData['option_c']],
+                            ['label' => 'd', 'text' => $qData['option_d']],
+                        ]),
                         'correct_answer' => $qData['correct_answer'],
-                        'order' => $index + 1,
-                        'difficulty' => 'medium', // Default
+                        'explanation' => $qData['explanation'] ?? null,
+                        'image_url' => $imageUrl,
+                        'order' => $index + 1, // Use index for order
+                        'difficulty' => 'medium',
                     ]);
+
+                    Log::info('Question created', ['question_id' => $question->id, 'type' => $qType]);
 
                     if ($qType === 'pretest') $hasPretest = true;
                     if ($qType === 'posttest') $hasPosttest = true;
                 }
+
+                Log::info('Questions processing complete', ['hasPretest' => $hasPretest, 'hasPosttest' => $hasPosttest]);
+            } else {
+                Log::info('No questions received or questions array is empty');
             }
 
-            // Update status has_pretest/posttest di module
+            // Update module flags
             $module->update([
                 'has_pretest' => $hasPretest,
                 'has_posttest' => $hasPosttest
             ]);
 
+            Log::info('Module flags updated', ['module_id' => $module->id, 'has_pretest' => $hasPretest, 'has_posttest' => $hasPosttest]);
+
+            // Update quiz question counts
+            if ($hasPretest) {
+                $pretestQuiz = \App\Models\Quiz::where('module_id', $module->id)->where('type', 'pretest')->first();
+                if ($pretestQuiz) {
+                    $questionCount = Question::where('module_id', $module->id)->where('question_type', 'pretest')->count();
+                    $pretestQuiz->update(['question_count' => $questionCount]);
+                    Log::info('Pretest quiz updated', ['quiz_id' => $pretestQuiz->id, 'question_count' => $questionCount]);
+                }
+            }
+            if ($hasPosttest) {
+                $posttestQuiz = \App\Models\Quiz::where('module_id', $module->id)->where('type', 'posttest')->first();
+                if ($posttestQuiz) {
+                    $questionCount = Question::where('module_id', $module->id)->where('question_type', 'posttest')->count();
+                    $posttestQuiz->update(['question_count' => $questionCount]);
+                    Log::info('Posttest quiz updated', ['quiz_id' => $posttestQuiz->id, 'question_count' => $questionCount]);
+                }
+            }
+
+            // Jika semua lancar, Commit ke database
             DB::commit();
 
             return response()->json([
                 'success' => true,
-                'message' => 'Program pelatihan berhasil dibuat lengkap dengan materi dan soal.',
+                'message' => 'Training Program, Materi, dan Quiz berhasil dibuat.',
                 'data' => $module,
             ], 201);
 
@@ -397,11 +424,15 @@ class AdminTrainingProgramController extends Controller
             DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Validasi gagal', 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {
+            // Jika ada error, batalkan semua perubahan database
             DB::rollBack();
-            // Log full trace for server logs but DO NOT return trace in API response
-            Log::error('Create Training Program Error: ' . $e->getMessage());
+
+            // Log error untuk developer (Observability)
+            Log::error('Gagal membuat Training Program: ' . $e->getMessage());
             Log::error('Trace: ' . $e->getTraceAsString());
-            return response()->json(['success' => false, 'message' => 'Server Error: ' . $e->getMessage()], 500);
+
+            // Kembalikan ke form dengan pesan error
+            return response()->json(['success' => false, 'message' => 'Terjadi kesalahan sistem: ' . $e->getMessage()], 500);
         }
     }
 

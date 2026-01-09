@@ -10,6 +10,7 @@ use App\Models\UserExamAnswer;
 use App\Models\Module;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
@@ -70,18 +71,38 @@ class QuizController extends Controller
             
             // Get questions from module
             $questions = Question::where('module_id', $trainingId)
-                ->select(['id', 'question_text', 'option_a', 'option_b', 'option_c', 'option_d', 'difficulty', 'points', 'image_url'])
+                ->where('question_type', $type)
+                ->select(['id', 'question_text', 'options', 'difficulty', 'points', 'image_url'])
                 ->inRandomOrder()
                 ->limit($quiz->question_count ?? 5)
                 ->get()
                 ->map(function($q) {
+                    // Normalize options: prefer JSON 'options', fallback to legacy fields if present
+                    $opts = [];
+                    if ($q->options) {
+                        $opts = is_string($q->options) ? json_decode($q->options, true) : $q->options;
+                        if ($opts instanceof \Illuminate\Support\Collection) {
+                            $opts = $opts->toArray();
+                        }
+                    }
+                    if (!$opts || !is_array($opts) || count($opts) === 0) {
+                        // Legacy fallback: attempt to read option_a..d if available
+                        $opts = [];
+                        foreach (['a','b','c','d'] as $label) {
+                            $field = 'option_' . $label;
+                            if (isset($q->$field)) {
+                                $opts[] = ['label' => $label, 'text' => $q->$field];
+                            }
+                        }
+                    }
+
+                    // Shuffle options within each question for additional security
+                    shuffle($opts);
+
                     return [
                         'id' => $q->id,
                         'question_text' => $q->question_text,
-                        'option_a' => $q->option_a,
-                        'option_b' => $q->option_b,
-                        'option_c' => $q->option_c,
-                        'option_d' => $q->option_d,
+                        'options' => $opts,
                         'difficulty' => $q->difficulty,
                         'points' => $q->points,
                         'image_url' => $q->image_url,
@@ -176,10 +197,42 @@ class QuizController extends Controller
             
             // Get questions from module (not from quiz directly since questions table uses module_id)
             $questions = Question::where('module_id', $trainingId)
-                ->select(['id', 'question_text', 'option_a', 'option_b', 'option_c', 'option_d', 'difficulty', 'points', 'image_url'])
-                ->inRandomOrder()
+                ->where('question_type', $type)
+                ->select(['id', 'question_text', 'options', 'difficulty', 'points', 'image_url'])
+                ->inRandomOrder() // Shuffle questions for security
                 ->limit($quiz->question_count ?? 5)
-                ->get();
+                ->get()
+                ->map(function($q) {
+                    $opts = [];
+                    if ($q->options) {
+                        $opts = is_string($q->options) ? json_decode($q->options, true) : $q->options;
+                        if ($opts instanceof \Illuminate\Support\Collection) {
+                            $opts = $opts->toArray();
+                        }
+                    }
+                    if (!$opts || !is_array($opts) || count($opts) === 0) {
+                        $opts = [];
+                        foreach (['a','b','c','d'] as $label) {
+                            $field = 'option_' . $label;
+                            if (isset($q->$field)) {
+                                $opts[] = ['label' => $label, 'text' => $q->$field];
+                            }
+                        }
+                    }
+
+                    // Shuffle options within each question for additional security
+                    shuffle($opts);
+
+                    return [
+                        'id' => $q->id,
+                        'question_text' => $q->question_text,
+                        'options' => $opts,
+                        'difficulty' => $q->difficulty,
+                        'points' => $q->points,
+                        'image_url' => $q->image_url,
+                        // Intentionally exclude correct_answer for security
+                    ];
+                });
             
             // Check for existing attempts
             $examType = $type === 'pretest' ? 'pre_test' : 'post_test';
@@ -253,16 +306,39 @@ class QuizController extends Controller
                 ->where('type', $type)
                 ->where('is_active', true)
                 ->firstOrFail();
-            
-            // Check if already has an ongoing attempt
+
+            // Define exam type
             $examType = $type === 'pretest' ? 'pre_test' : 'post_test';
+
+            // Check attempt limit (max 3 attempts per quiz type)
+            $existingAttempts = ExamAttempt::where('user_id', $user->id)
+                ->where('module_id', $trainingId)
+                ->where('exam_type', $examType)
+                ->count();
+
+            if ($existingAttempts >= 3) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Anda telah mencapai batas maksimal percobaan (3 kali) untuk quiz ini'
+                ], 403);
+            }
+
+            // Check if already has an ongoing attempt
             $ongoingAttempt = ExamAttempt::where('user_id', $user->id)
                 ->where('module_id', $trainingId)
                 ->where('exam_type', $examType)
                 ->whereNull('finished_at')
                 ->first();
-            
+
             if ($ongoingAttempt) {
+                // Cache quiz draft for this attempt
+                $cacheKey = "quiz_draft_{$user->id}_{$trainingId}_{$type}_{$ongoingAttempt->id}";
+                Cache::put($cacheKey, [
+                    'attempt_id' => $ongoingAttempt->id,
+                    'started_at' => $ongoingAttempt->started_at,
+                    'time_limit' => $quiz->time_limit
+                ], 3600); // Cache for 1 hour
+
                 return response()->json([
                     'success' => true,
                     'attempt' => [
@@ -272,7 +348,7 @@ class QuizController extends Controller
                     'message' => 'Resuming existing attempt'
                 ]);
             }
-            
+
             // Create new attempt
             $attempt = ExamAttempt::create([
                 'user_id' => $user->id,
@@ -283,7 +359,15 @@ class QuizController extends Controller
                 'is_passed' => false,
                 'started_at' => now()
             ]);
-            
+
+            // Cache quiz draft for new attempt
+            $cacheKey = "quiz_draft_{$user->id}_{$trainingId}_{$type}_{$attempt->id}";
+            Cache::put($cacheKey, [
+                'attempt_id' => $attempt->id,
+                'started_at' => $attempt->started_at,
+                'time_limit' => $quiz->time_limit
+            ], 3600); // Cache for 1 hour
+
             return response()->json([
                 'success' => true,
                 'attempt' => [

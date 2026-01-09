@@ -80,6 +80,69 @@ class QuestionController extends Controller
 
             $question = Question::create($validated);
 
+            // If question is a pretest/posttest, ensure module flags & quiz entry exist for user discovery
+            try {
+                $moduleId = $validated['module_id'] ?? null;
+                if (!$moduleId && !empty($validated['quiz_id'])) {
+                    $quiz = \App\Models\Quiz::find($validated['quiz_id']);
+                    if ($quiz) $moduleId = $quiz->module_id;
+                }
+
+                if ($moduleId && in_array($validated['question_type'], ['pretest','posttest'])) {
+                    $module = \App\Models\Module::find($moduleId);
+                    if ($module) {
+                        $updates = [];
+                        if ($validated['question_type'] === 'pretest' && !$module->has_pretest) {
+                            $updates['has_pretest'] = true;
+
+                            $exists = \App\Models\Quiz::where(function($q) use ($module) {
+                                $q->where('module_id', $module->id)->orWhere('training_program_id', $module->id);
+                            })->where('type', 'pretest')->exists();
+
+                            if (! $exists) {
+                                \App\Models\Quiz::create([
+                                    'module_id' => $module->id,
+                                    'name' => $module->title . ' - Pre-Test',
+                                    'type' => 'pretest',
+                                    'description' => 'Auto-created pretest for this training.',
+                                    'is_active' => true,
+                                    'question_count' => \App\Models\Question::where('module_id', $module->id)->where('question_type', 'pretest')->count() ?: 5,
+                                    'time_limit' => 15,
+                                    'passing_score' => $module->passing_grade ?? 70,
+                                ]);
+                            }
+                        }
+
+                        if ($validated['question_type'] === 'posttest' && !$module->has_posttest) {
+                            $updates['has_posttest'] = true;
+
+                            $exists = \App\Models\Quiz::where(function($q) use ($module) {
+                                $q->where('module_id', $module->id)->orWhere('training_program_id', $module->id);
+                            })->where('type', 'posttest')->exists();
+
+                            if (! $exists) {
+                                \App\Models\Quiz::create([
+                                    'module_id' => $module->id,
+                                    'name' => $module->title . ' - Post-Test',
+                                    'type' => 'posttest',
+                                    'description' => 'Auto-created posttest for this training.',
+                                    'is_active' => true,
+                                    'question_count' => \App\Models\Question::where('module_id', $module->id)->where('question_type', 'posttest')->count() ?: 5,
+                                    'time_limit' => 15,
+                                    'passing_score' => $module->passing_grade ?? 70,
+                                ]);
+                            }
+                        }
+
+                        if (! empty($updates)) {
+                            $module->update($updates);
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                // Non-fatal: don't break question creation on auxiliary failures
+            }
+
             return response()->json($question, 201);
         } catch (\Exception $e) {
             return response()->json([

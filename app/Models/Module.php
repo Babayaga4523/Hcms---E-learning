@@ -14,9 +14,7 @@ class Module extends Model
     protected $fillable = [
         'title',
         'description',
-        'video_url',
-        'document_url',
-        'presentation_url',
+        
         'passing_grade',
         'has_pretest',
         'has_posttest',
@@ -100,6 +98,14 @@ class Module extends Model
     }
 
     /**
+     * Relasi ke Training Materials
+     */
+    public function trainingMaterials(): HasMany
+    {
+        return $this->hasMany(TrainingMaterial::class);
+    }
+
+    /**
      * Relasi ke Instructor (User)
      */
     public function instructor()
@@ -145,14 +151,6 @@ class Module extends Model
     public function enrollmentMetrics()
     {
         return $this->hasMany(ProgramEnrollmentMetric::class);
-    }
-
-    /**
-     * Relasi ke Training Materials
-     */
-    public function trainingMaterials(): HasMany
-    {
-        return $this->hasMany(TrainingMaterial::class);
     }
 
     /**

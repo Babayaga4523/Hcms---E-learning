@@ -80,12 +80,12 @@ echo "\n3. Checking User Enrollment:\n";
 $enrollment = DB::table('user_trainings')
     ->where('user_id', $user->id)
     ->where('module_id', $moduleId)
+    ->select('id', 'status')
     ->first();
 
 if ($enrollment) {
     echo "   ✓ User enrolled (ID: {$enrollment->id})\n";
-    echo "     Status: {$enrollment->enrollment_status}\n";
-    echo "     Progress: {$enrollment->progress_percentage}%\n";
+    echo "     Status: {$enrollment->status}\n";
 } else {
     echo "   ❌ User NOT enrolled in this module\n";
     echo "   Creating enrollment...\n";
@@ -93,8 +93,7 @@ if ($enrollment) {
     $enrollmentId = DB::table('user_trainings')->insertGetId([
         'user_id' => $user->id,
         'module_id' => $moduleId,
-        'enrollment_status' => 'active',
-        'progress_percentage' => 0,
+        'status' => 'in_progress',
         'enrolled_at' => now(),
         'created_at' => now(),
         'updated_at' => now(),
@@ -108,7 +107,8 @@ echo "   GET /api/training/{$moduleId}/quiz/pretest\n";
 
 if ($pretest) {
     $pretestQuestions = Question::where('module_id', $moduleId)
-        ->select(['id', 'question_text', 'option_a', 'option_b', 'option_c', 'option_d', 'difficulty', 'points'])
+        ->where('question_type', 'pretest')
+        ->select(['id', 'question_text', 'options', 'difficulty', 'points'])
         ->limit($pretest->question_count ?? 5)
         ->get();
     
@@ -130,15 +130,32 @@ if ($pretest) {
             'show_answers' => $pretest->show_answers ?? true
         ],
         'questions' => $pretestQuestions->map(function($q) {
+            // Normalize options like QuizController does
+            $opts = [];
+            if ($q->options) {
+                $opts = is_string($q->options) ? json_decode($q->options, true) : $q->options;
+                if ($opts instanceof \Illuminate\Support\Collection) {
+                    $opts = $opts->toArray();
+                }
+            }
+            if (!$opts || !is_array($opts) || count($opts) === 0) {
+                // Legacy fallback
+                $opts = [];
+                foreach (['a','b','c','d'] as $label) {
+                    $field = 'option_' . $label;
+                    if (isset($q->$field)) {
+                        $opts[] = ['label' => $label, 'text' => $q->$field];
+                    }
+                }
+            }
+
+            // Shuffle options like QuizController does
+            shuffle($opts);
+
             return [
                 'id' => $q->id,
                 'question_text' => $q->question_text,
-                'options' => [
-                    'A' => $q->option_a,
-                    'B' => $q->option_b,
-                    'C' => $q->option_c,
-                    'D' => $q->option_d,
-                ]
+                'options' => $opts
             ];
         })->take(2), // Show only first 2 for brevity
     ];

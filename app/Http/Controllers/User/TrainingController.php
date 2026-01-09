@@ -216,7 +216,13 @@ class TrainingController extends Controller
         try {
             $user = Auth::user();
 
-            $training = Module::with(['questions'])->findOrFail($id);
+            $training = Module::with(['questions'])->find($id);
+
+            if (!$training) {
+                // Training not found - redirect to catalog with error message
+                return redirect()->route('user.catalog')
+                    ->with('error', 'Training yang Anda cari tidak ditemukan. ID training: ' . $id);
+            }
 
             // Check if user is assigned to this training
             $enrollment = UserTraining::where('user_id', $user->id)
@@ -224,13 +230,9 @@ class TrainingController extends Controller
                 ->first();
 
             if (!$enrollment) {
-                return Inertia::render('User/Training/Detail', [
-                    'training' => null,
-                    'enrollment' => null,
-                    'progress' => null,
-                    'quizzes' => [],
-                    'error' => 'You are not assigned to this training'
-                ]);
+                // User not enrolled - redirect to catalog with message
+                return redirect()->route('user.catalog')
+                    ->with('warning', 'Anda belum terdaftar untuk training ini: ' . $training->title);
             }
 
             // Add enrollment count
@@ -296,14 +298,8 @@ class TrainingController extends Controller
         } catch (\Exception $e) {
             Log::error('Failed to load training detail: ' . $e->getMessage());
             
-            return Inertia::render('User/Training/TrainingDetail', [
-                'training' => null,
-                'enrollment' => null,
-                'progress' => null,
-                'quizAttempts' => [],
-                'completedMaterials' => [],
-                'error' => 'Training tidak ditemukan'
-            ]);
+            return redirect()->route('user.catalog')
+                ->with('error', 'Terjadi kesalahan saat memuat detail training. Silakan coba lagi.');
         }
     }
     
@@ -315,7 +311,15 @@ class TrainingController extends Controller
         try {
             $user = Auth::user();
 
-            $training = Module::with(['questions'])->findOrFail($id);
+            $training = Module::with(['questions'])->find($id);
+
+            if (!$training) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Training tidak ditemukan. ID: ' . $id,
+                    'training' => null
+                ], 404);
+            }
 
             // Check if user is assigned to this training
             $enrollment = UserTraining::where('user_id', $user->id)
@@ -325,7 +329,7 @@ class TrainingController extends Controller
             if (!$enrollment) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'You are not assigned to this training',
+                    'message' => 'Anda belum terdaftar untuk training ini: ' . $training->title,
                     'training' => null
                 ], 403);
             }
@@ -352,11 +356,11 @@ class TrainingController extends Controller
             
             return response()->json([
                 'success' => false,
-                'message' => 'Training tidak ditemukan',
+                'message' => 'Terjadi kesalahan saat memuat detail training',
                 'training' => null,
                 'enrollment' => null,
                 'completedMaterials' => []
-            ], 404);
+            ], 500);
         }
     }
     

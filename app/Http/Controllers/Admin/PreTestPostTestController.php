@@ -42,15 +42,11 @@ class PreTestPostTestController extends Controller
                 'exam_type' => $examType,
                 'total_questions' => $questions->count(),
                 'questions' => $questions->map(function ($q) {
+                    // Use getOptions() to support both JSON options and legacy option_a..d fields
                     return [
                         'id' => $q->id,
                         'question_text' => $q->question_text,
-                        'options' => [
-                            'a' => $q->option_a,
-                            'b' => $q->option_b,
-                            'c' => $q->option_c,
-                            'd' => $q->option_d,
-                        ]
+                        'options' => $q->getOptions()
                     ];
                 })
             ]
@@ -228,18 +224,14 @@ class PreTestPostTestController extends Controller
         }
 
         $answers = $examAttempt->answers->map(function ($answer) {
+            $opts = $answer->question->getOptions();
             return [
                 'question_id' => $answer->question_id,
                 'question_text' => $answer->question->question_text,
                 'user_answer' => $answer->user_answer,
                 'correct_answer' => $answer->correct_answer,
                 'is_correct' => $answer->is_correct,
-                'option' => [
-                    'a' => $answer->question->option_a,
-                    'b' => $answer->question->option_b,
-                    'c' => $answer->question->option_c,
-                    'd' => $answer->question->option_d,
-                ]
+                'option' => $opts
             ];
         });
 

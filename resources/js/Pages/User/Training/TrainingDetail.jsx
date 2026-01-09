@@ -533,7 +533,8 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
                             {[
                                 { id: 'curriculum', label: 'Curriculum' },
                                 { id: 'about', label: 'About' },
-                                { id: 'quiz', label: 'Quiz' },
+                                // Only show quiz tab if there are quizzes available
+                                ...(Object.keys(initialQuizAttempts || {}).length > 0 ? [{ id: 'quiz', label: 'Quiz' }] : []),
                             ].map(tab => (
                                 <button
                                     key={tab.id}
