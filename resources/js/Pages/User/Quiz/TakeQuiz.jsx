@@ -380,58 +380,63 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
                             {/* Options */}
                             <div className="space-y-3 mb-8">
                                 {(() => {
-                                    let opts = currentQuestion.options || [];
-                                    if (typeof opts === 'string') {
-                                        try { opts = JSON.parse(opts); } catch (e) { opts = []; }
+                                    // Use memo-like local normalization for readability and deterministic output
+                                    let raw = currentQuestion?.options ?? [];
+                                    if (typeof raw === 'string') {
+                                        try { raw = JSON.parse(raw); } catch (e) { raw = []; }
                                     }
 
-                                    // Normalize many possible formats: associative object, array of strings, array of {text}/objects
-                                    const normalized = [];
-
-                                    // Handle associative object like { a: 'Teks A', b: 'Teks B' }
-                                    if (opts && typeof opts === 'object' && !Array.isArray(opts)) {
-                                        Object.entries(opts).forEach(([k, v]) => {
-                                            if (!v) return;
-                                            if (typeof v === 'string') {
-                                                normalized.push({ label: k, text: v });
-                                            } else if (v && typeof v === 'object') {
-                                                const text = v.text || v.value || v.content || v[0] || null;
-                                                const label = v.label || k;
-                                                if (text) normalized.push({ label, text });
-                                            }
-                                        });
-                                    } else if (Array.isArray(opts) && opts.length > 0) {
-                                        // If array of strings
-                                        if (opts.every(x => typeof x === 'string')) {
-                                            const labels = ['a','b','c','d','e','f'];
-                                            opts.forEach((txt, i) => {
-                                                normalized.push({ label: labels[i] || String(i), text: txt });
-                                            });
-                                        } else {
-                                            // array of objects
-                                            const labels = ['a','b','c','d','e','f'];
-                                            opts.forEach((item, i) => {
-                                                if (!item) return;
-                                                if (typeof item === 'string') {
-                                                    normalized.push({ label: labels[i] || String(i), text: item });
-                                                    return;
+                                    const normalize = (opts) => {
+                                        const out = [];
+                                        if (opts && typeof opts === 'object' && !Array.isArray(opts)) {
+                                            Object.entries(opts).forEach(([k,v]) => {
+                                                if (!v) return;
+                                                if (typeof v === 'string') out.push({ label: k, text: v });
+                                                else if (v && typeof v === 'object') {
+                                                    const text = v.text || v.value || v.content || (v[0] ?? null);
+                                                    const label = v.label || k;
+                                                    if (text) out.push({ label, text });
                                                 }
-                                                const text = item.text || item.value || item.content || item[0] || null;
-                                                const label = (item.label || labels[i] || (item.key && item.key.toString()) || String(i)).toString();
-                                                if (text) normalized.push({ label, text });
                                             });
+                                            return out;
                                         }
-                                    } else {
-                                        // Fallback to legacy option_a..option_d fields
-                                        const fields = ['a','b','c','d'];
-                                        fields.forEach(f => {
+
+                                        if (Array.isArray(opts) && opts.length > 0) {
+                                            if (opts.every(x => typeof x === 'string')) {
+                                                const labels = ['a','b','c','d','e','f'];
+                                                opts.forEach((txt,i) => out.push({ label: labels[i]||String(i), text: txt }));
+                                                return out;
+                                            }
+                                            const labels = ['a','b','c','d','e','f'];
+                                            opts.forEach((item,i) => {
+                                                if (!item) return;
+                                                if (typeof item === 'string') out.push({ label: labels[i]||String(i), text: item });
+                                                else {
+                                                    const text = item.text || item.value || item.content || item[0] || null;
+                                                    const label = (item.label || labels[i] || (item.key && item.key.toString()) || String(i)).toString();
+                                                    if (text) out.push({ label, text });
+                                                }
+                                            });
+                                            return out;
+                                        }
+
+                                        // Legacy fallback
+                                        ['a','b','c','d'].forEach(f => {
                                             const key = `option_${f}`;
-                                            if (currentQuestion[key]) normalized.push({ label: f, text: currentQuestion[key] });
+                                            if (currentQuestion[key]) out.push({ label: f, text: currentQuestion[key] });
                                         });
+                                        return out;
+                                    };
+
+                                    const normalized = normalize(raw);
+
+                                    if (!normalized || normalized.length === 0) {
+                                        return (
+                                            <div className="text-sm text-slate-500 italic">Opsi jawaban belum tersedia untuk soal ini.</div>
+                                        );
                                     }
 
                                     return normalized.map((o, idx) => {
-                                        if (!o || !o.text) return null;
                                         const label = (o.label || String.fromCharCode(97 + idx)).toString();
                                         const isSelected = answers[currentIndex] === label;
                                         return (
