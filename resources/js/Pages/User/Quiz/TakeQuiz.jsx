@@ -362,17 +362,50 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
                                     if (typeof opts === 'string') {
                                         try { opts = JSON.parse(opts); } catch (e) { opts = []; }
                                     }
-                                    if (!opts || opts.length === 0) {
-                                        opts = ['a','b','c','d'].map(o => ({ label: o, text: currentQuestion[`option_${o}`] }));
+
+                                    // Normalize many possible formats: associative object, array of strings, array of {text}/objects
+                                    const normalized = [];
+                                    if (Array.isArray(opts) && opts.length > 0) {
+                                        const isAssoc = (typeof opts === 'object' && !Array.isArray(opts)) ? false : (Array.isArray(opts) && (Array.isArray(opts) && opts.length > 0 && opts.every((x, i) => typeof i === 'number')));
+
+                                        // If array of strings
+                                        if (opts.every(x => typeof x === 'string')) {
+                                            const labels = ['a','b','c','d','e','f'];
+                                            opts.forEach((txt, i) => {
+                                                normalized.push({ label: labels[i] || String(i), text: txt });
+                                            });
+                                        } else {
+                                            // array of objects
+                                            let labels = ['a','b','c','d','e','f'];
+                                            opts.forEach((item, i) => {
+                                                if (!item) return;
+                                                if (typeof item === 'string') {
+                                                    normalized.push({ label: labels[i] || String(i), text: item });
+                                                    return;
+                                                }
+                                                // item might be {label, text} or {text} or {value} or {content}
+                                                const text = item.text || item.value || item.content || item[0] || null;
+                                                const label = (item.label || labels[i] || (typeof item.key === 'string' ? item.key : (item[0] && item[0].label) || String(i))).toString();
+                                                if (text) normalized.push({ label, text });
+                                            });
+                                        }
+                                    } else {
+                                        // Fallback to legacy option_a..option_d fields
+                                        const fields = ['a','b','c','d'];
+                                        fields.forEach(f => {
+                                            const key = `option_${f}`;
+                                            if (currentQuestion[key]) normalized.push({ label: f, text: currentQuestion[key] });
+                                        });
                                     }
 
-                                    return opts.map((o) => {
+                                    return normalized.map((o, idx) => {
                                         if (!o || !o.text) return null;
-                                        const isSelected = answers[currentIndex] === o.label;
+                                        const label = (o.label || String.fromCharCode(97 + idx)).toString();
+                                        const isSelected = answers[currentIndex] === label;
                                         return (
                                             <button
-                                                key={o.label}
-                                                onClick={() => handleAnswer(o.label)}
+                                                key={label}
+                                                onClick={() => handleAnswer(label)}
                                                 className={`option-card w-full p-5 rounded-2xl flex items-center gap-4 text-left group ${isSelected ? 'selected' : ''}`}
                                             >
                                                 <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all ${
@@ -380,7 +413,7 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
                                                     ? 'bg-[#005E54] text-white shadow-lg' 
                                                     : 'bg-slate-100 text-slate-500 group-hover:bg-slate-200'
                                                 }`}>
-                                                    {o.label.toUpperCase()}
+                                                    {label.toUpperCase()}
                                                 </div>
                                                 <span className={`font-medium text-lg ${isSelected ? 'text-[#005E54]' : 'text-slate-700'}`}>
                                                     {o.text}

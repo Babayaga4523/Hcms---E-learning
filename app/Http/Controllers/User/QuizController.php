@@ -70,9 +70,15 @@ class QuizController extends Controller
             }
             
             // Get questions from module
+            // Build select dynamically: only include legacy option_* if the column exists in this DB
+            $select = ['id', 'question_text', 'options', 'difficulty', 'points', 'image_url'];
+            if (\Illuminate\Support\Facades\Schema::hasColumn('questions', 'option_a')) {
+                $select = array_merge($select, ['option_a', 'option_b', 'option_c', 'option_d']);
+            }
+
             $questions = Question::where('module_id', $trainingId)
                 ->where('question_type', $type)
-                ->select(['id', 'question_text', 'options', 'difficulty', 'points', 'image_url'])
+                ->select($select)
                 ->inRandomOrder()
                 ->limit($quiz->question_count ?? 5)
                 ->get()
@@ -85,12 +91,47 @@ class QuizController extends Controller
                             $opts = $opts->toArray();
                         }
                     }
+
+                    // If options is associative like ['a' => 'text', ...], convert to normalized array
+                    if (is_array($opts) && count($opts) > 0) {
+                        // detect associative (keys like a,b,c) or sequential with strings/objects
+                        $normalized = [];
+                        $isAssoc = array_keys($opts) !== range(0, count($opts) - 1);
+
+                        if ($isAssoc) {
+                            foreach ($opts as $k => $v) {
+                                // v may be string or ['text' => '...'] or ['label'=>'a','text'=>'...']
+                                if (is_string($v)) {
+                                    $normalized[] = ['label' => $k, 'text' => $v];
+                                } elseif (is_array($v) && isset($v['text'])) {
+                                    $normalized[] = ['label' => ($v['label'] ?? $k), 'text' => $v['text']];
+                                }
+                            }
+                        } else {
+                            // sequential array
+                            $labels = ['a','b','c','d','e','f'];
+                            foreach ($opts as $i => $v) {
+                                if (is_string($v)) {
+                                    $normalized[] = ['label' => ($v['label'] ?? $labels[$i] ?? (string)$i), 'text' => $v];
+                                } elseif (is_array($v)) {
+                                    if (isset($v['text'])) {
+                                        $normalized[] = ['label' => ($v['label'] ?? ($labels[$i] ?? (string)$i)), 'text' => $v['text']];
+                                    } elseif (isset($v[0])) {
+                                        $normalized[] = ['label' => ($v['label'] ?? ($labels[$i] ?? (string)$i)), 'text' => $v[0]];
+                                    }
+                                }
+                            }
+                        }
+
+                        $opts = $normalized;
+                    }
+
                     if (!$opts || !is_array($opts) || count($opts) === 0) {
                         // Legacy fallback: attempt to read option_a..d if available
                         $opts = [];
                         foreach (['a','b','c','d'] as $label) {
                             $field = 'option_' . $label;
-                            if (isset($q->$field)) {
+                            if (isset($q->$field) && $q->$field !== null && $q->$field !== '') {
                                 $opts[] = ['label' => $label, 'text' => $q->$field];
                             }
                         }
@@ -196,9 +237,15 @@ class QuizController extends Controller
             }
             
             // Get questions from module (not from quiz directly since questions table uses module_id)
+            // Get questions from module (not from quiz directly since questions table uses module_id)
+            $select = ['id', 'question_text', 'options', 'difficulty', 'points', 'image_url'];
+            if (\Illuminate\Support\Facades\Schema::hasColumn('questions', 'option_a')) {
+                $select = array_merge($select, ['option_a', 'option_b', 'option_c', 'option_d']);
+            }
+
             $questions = Question::where('module_id', $trainingId)
                 ->where('question_type', $type)
-                ->select(['id', 'question_text', 'options', 'difficulty', 'points', 'image_url'])
+                ->select($select)
                 ->inRandomOrder() // Shuffle questions for security
                 ->limit($quiz->question_count ?? 5)
                 ->get()
@@ -210,11 +257,43 @@ class QuizController extends Controller
                             $opts = $opts->toArray();
                         }
                     }
+
+                    // Normalization (handle associative, sequential, and simple string formats)
+                    if (is_array($opts) && count($opts) > 0) {
+                        $normalized = [];
+                        $isAssoc = array_keys($opts) !== range(0, count($opts) - 1);
+
+                        if ($isAssoc) {
+                            foreach ($opts as $k => $v) {
+                                if (is_string($v)) {
+                                    $normalized[] = ['label' => $k, 'text' => $v];
+                                } elseif (is_array($v) && isset($v['text'])) {
+                                    $normalized[] = ['label' => ($v['label'] ?? $k), 'text' => $v['text']];
+                                }
+                            }
+                        } else {
+                            $labels = ['a','b','c','d','e','f'];
+                            foreach ($opts as $i => $v) {
+                                if (is_string($v)) {
+                                    $normalized[] = ['label' => ($v['label'] ?? $labels[$i] ?? (string)$i), 'text' => $v];
+                                } elseif (is_array($v)) {
+                                    if (isset($v['text'])) {
+                                        $normalized[] = ['label' => ($v['label'] ?? ($labels[$i] ?? (string)$i)), 'text' => $v['text']];
+                                    } elseif (isset($v[0])) {
+                                        $normalized[] = ['label' => ($v['label'] ?? ($labels[$i] ?? (string)$i)), 'text' => $v[0]];
+                                    }
+                                }
+                            }
+                        }
+
+                        $opts = $normalized;
+                    }
+
                     if (!$opts || !is_array($opts) || count($opts) === 0) {
                         $opts = [];
                         foreach (['a','b','c','d'] as $label) {
                             $field = 'option_' . $label;
-                            if (isset($q->$field)) {
+                            if (isset($q->$field) && $q->$field !== null && $q->$field !== '') {
                                 $opts[] = ['label' => $label, 'text' => $q->$field];
                             }
                         }
