@@ -302,6 +302,17 @@ class QuizController extends Controller
                     // Shuffle options within each question for additional security
                     shuffle($opts);
 
+                    // Normalize numeric keys and clean text
+                    $opts = array_values(array_map(function($o){
+                        if (!is_array($o)) return null;
+                        $label = isset($o['label']) ? (string)$o['label'] : null;
+                        $text = isset($o['text']) ? trim((string)$o['text']) : (isset($o[0]) ? trim((string)$o[0]) : null);
+                        if (!$text) return null;
+                        return ['label' => $label ?? '', 'text' => $text];
+                    }, $opts));
+                    // Remove any nulls (invalid options)
+                    $opts = array_values(array_filter($opts));
+
                     return [
                         'id' => $q->id,
                         'question_text' => $q->question_text,

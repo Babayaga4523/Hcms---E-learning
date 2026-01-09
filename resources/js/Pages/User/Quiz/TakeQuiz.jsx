@@ -179,6 +179,28 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
         }));
     };
 
+    // Debugging: log current question and normalized options to console to aid debugging
+    useEffect(() => {
+        try {
+            const opts = (() => {
+                let o = currentQuestion?.options || [];
+                if (!o) return [];
+                if (typeof o === 'string') {
+                    try { o = JSON.parse(o); } catch (e) { return []; }
+                }
+                if (!o) return [];
+                if (Array.isArray(o)) return o;
+                // object -> entries
+                return Object.entries(o).map(([k, v]) => ({ label: k, text: (typeof v === 'string' ? v : (v?.text || v?.value || '')) }));
+            })();
+            // eslint-disable-next-line no-console
+            console.debug('TakeQuiz currentQuestion', { id: currentQuestion?.id, optionsRaw: currentQuestion?.options, normalizedOptions: opts });
+        } catch (e) {
+            // eslint-disable-next-line no-console
+            console.error('TakeQuiz debug error', e);
+        }
+    }, [currentQuestion]);
+
     // Handle flag toggle
     const toggleFlag = () => {
         setFlagged(prev => 
@@ -365,9 +387,20 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
 
                                     // Normalize many possible formats: associative object, array of strings, array of {text}/objects
                                     const normalized = [];
-                                    if (Array.isArray(opts) && opts.length > 0) {
-                                        const isAssoc = (typeof opts === 'object' && !Array.isArray(opts)) ? false : (Array.isArray(opts) && (Array.isArray(opts) && opts.length > 0 && opts.every((x, i) => typeof i === 'number')));
 
+                                    // Handle associative object like { a: 'Teks A', b: 'Teks B' }
+                                    if (opts && typeof opts === 'object' && !Array.isArray(opts)) {
+                                        Object.entries(opts).forEach(([k, v]) => {
+                                            if (!v) return;
+                                            if (typeof v === 'string') {
+                                                normalized.push({ label: k, text: v });
+                                            } else if (v && typeof v === 'object') {
+                                                const text = v.text || v.value || v.content || v[0] || null;
+                                                const label = v.label || k;
+                                                if (text) normalized.push({ label, text });
+                                            }
+                                        });
+                                    } else if (Array.isArray(opts) && opts.length > 0) {
                                         // If array of strings
                                         if (opts.every(x => typeof x === 'string')) {
                                             const labels = ['a','b','c','d','e','f'];
@@ -376,16 +409,15 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
                                             });
                                         } else {
                                             // array of objects
-                                            let labels = ['a','b','c','d','e','f'];
+                                            const labels = ['a','b','c','d','e','f'];
                                             opts.forEach((item, i) => {
                                                 if (!item) return;
                                                 if (typeof item === 'string') {
                                                     normalized.push({ label: labels[i] || String(i), text: item });
                                                     return;
                                                 }
-                                                // item might be {label, text} or {text} or {value} or {content}
                                                 const text = item.text || item.value || item.content || item[0] || null;
-                                                const label = (item.label || labels[i] || (typeof item.key === 'string' ? item.key : (item[0] && item[0].label) || String(i))).toString();
+                                                const label = (item.label || labels[i] || (item.key && item.key.toString()) || String(i)).toString();
                                                 if (text) normalized.push({ label, text });
                                             });
                                         }
