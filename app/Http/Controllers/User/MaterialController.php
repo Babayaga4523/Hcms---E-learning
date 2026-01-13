@@ -128,17 +128,32 @@ class MaterialController extends Controller
                 ]);
             }
             
-            // Calculate real-time progress percentage
-            $progressPercentage = 0; // $this->calculateTrainingProgress($user->id, $trainingId);
+            // Calculate real-time progress percentage using actual completed materials
+            // Consider both legacy (module-level) and training_materials IDs for completion
+            $module = Module::find($trainingId);
+            $expectedIds = [];
+            $nextId = 1;
+            if ($module) {
+                if ($module->video_url) $expectedIds[] = $nextId++;
+                if ($module->document_url) $expectedIds[] = $nextId++;
+                if ($module->presentation_url) $expectedIds[] = $nextId++;
+            }
+            $trainingMaterialIds = \App\Models\TrainingMaterial::where('module_id', $trainingId)->pluck('id')->toArray();
+            $expectedIds = array_merge($expectedIds, $trainingMaterialIds);
 
-            // Get individual material completion status
-            $completedMaterialIds = []; // \App\Models\UserMaterialProgress::where('user_id', $user->id)
-            //     ->whereHas('material', function($q) use ($trainingId) {
-            //         $q->where('module_id', $trainingId);
-            //     })
-            //     ->where('is_completed', true)
-            //     ->pluck('material_id')
-            //     ->toArray();
+            $completedMaterialIds = \App\Models\UserMaterialProgress::where('user_id', $user->id)
+                ->whereIn('training_material_id', $expectedIds)
+                ->where('is_completed', true)
+                ->pluck('training_material_id')
+                ->toArray();
+
+            $progressPercentage = $this->calculateTrainingProgress($user->id, $trainingId);
+
+            // Ensure ModuleProgress record exists and is up-to-date
+            \App\Models\ModuleProgress::updateOrCreate(
+                ['user_id' => $user->id, 'module_id' => $trainingId],
+                ['progress_percentage' => $progressPercentage, 'status' => $progressPercentage === 100 ? 'completed' : ($progressPercentage > 0 ? 'in_progress' : 'locked')]
+            );
 
             // Mark individual materials as completed
             $materials = $materials->map(function($material) use ($completedMaterialIds) {
@@ -338,14 +353,28 @@ class MaterialController extends Controller
             $progress = ModuleProgress::where('user_id', $user->id)
                 ->where('module_id', $trainingId)
                 ->first();
-            
-            // Mark materials as completed if user has completed progress
+
+            // Determine completed materials for this user/module
+            $completedMaterialIds = \App\Models\UserMaterialProgress::where('user_id', $user->id)
+                ->where('is_completed', true)
+                ->whereHas('material', function($q) use ($trainingId) {
+                    $q->where('module_id', $trainingId);
+                })->pluck('training_material_id')->toArray();
+
+            // If module is fully completed, mark all as completed; otherwise mark individually
             if ($progress && $progress->status === 'completed') {
                 $materials = $materials->map(function($m) {
                     $m['is_completed'] = true;
                     return $m;
                 });
                 $material['is_completed'] = true;
+            } else {
+                $materials = $materials->map(function($m) use ($completedMaterialIds) {
+                    $m['is_completed'] = in_array($m['id'], $completedMaterialIds);
+                    return $m;
+                });
+                // Ensure the single material reflects its own completed flag
+                $material['is_completed'] = in_array($material['id'], $completedMaterialIds) || ($progress && $progress->status === 'completed');
             }
             
             // Get prev/next materials for navigation
@@ -613,14 +642,32 @@ class MaterialController extends Controller
      */
     private function calculateTrainingProgress($userId, $trainingId)
     {
-        // Get total materials in this training
-        $totalMaterials = \App\Models\TrainingMaterial::where('module_id', $trainingId)->count();
+        // Build material ids list including legacy module-level assets and training_materials
+        $module = \App\Models\Module::find($trainingId);
+        $materialIds = [];
+        $nextId = 1;
 
-        // Get completed materials by this user
+        if ($module) {
+            if ($module->video_url) {
+                $materialIds[] = $nextId++;
+            }
+            if ($module->document_url) {
+                $materialIds[] = $nextId++;
+            }
+            if ($module->presentation_url) {
+                $materialIds[] = $nextId++;
+            }
+        }
+
+        $trainingMaterialIds = \App\Models\TrainingMaterial::where('module_id', $trainingId)->orderBy('order')->pluck('id')->toArray();
+        // Append the actual training material IDs
+        $materialIds = array_merge($materialIds, $trainingMaterialIds);
+
+        $totalMaterials = count($materialIds);
+
+        // Get completed materials by this user (match training_material_id to our material id list)
         $completedMaterials = \App\Models\UserMaterialProgress::where('user_id', $userId)
-            ->whereHas('material', function($q) use ($trainingId) {
-                $q->where('module_id', $trainingId);
-            })
+            ->whereIn('training_material_id', $materialIds)
             ->where('is_completed', true)
             ->count();
 

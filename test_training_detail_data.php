@@ -51,6 +51,8 @@ if ($enrollments->isEmpty()) {
     ]);
     
     // Create progress
+    // Note: progress percentage is stored in the module_progress (ModuleProgress) table
+    // in the `progress_percentage` column — not on `user_trainings`.
     $progress = ModuleProgress::create([
         'user_id' => 1,
         'module_id' => 5,

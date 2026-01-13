@@ -135,7 +135,7 @@ export default function EmailConfiguration() {
 
     const runDiagnostic = () => {
         if(!testEmail) {
-            alert("Masukkan email tujuan");
+            showToast("Masukkan email tujuan", 'warning');
             return;
         }
         setIsTesting(true);

@@ -165,6 +165,25 @@ class AdminTrainingProgramController extends Controller
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
+        // Support nested payload: accept { program: { ... } } for backward compatibility
+        if ($request->has('program') && is_array($request->program)) {
+            $program = $request->input('program');
+            // Merge top-level scalar and array fields into request root for validation and processing
+            foreach ($program as $k => $v) {
+                $request->merge([$k => $v]);
+            }
+            // Also ensure nested questions arrays are available at expected keys
+            if (isset($program['questions']) && is_array($program['questions'])) {
+                $request->merge(['questions' => $program['questions']]);
+            }
+            if (isset($program['pre_test_questions']) && is_array($program['pre_test_questions'])) {
+                $request->merge(['pre_test_questions' => $program['pre_test_questions']]);
+            }
+            if (isset($program['post_test_questions']) && is_array($program['post_test_questions'])) {
+                $request->merge(['post_test_questions' => $program['post_test_questions']]);
+            }
+        }
+
         // 1. Validation (Security & Data Integrity)
         $request->validate([
             'title' => 'required|string|max:255',
@@ -180,7 +199,7 @@ class AdminTrainingProgramController extends Controller
             'instructor_id' => 'nullable|exists:users,id',
             'certificate_template' => 'nullable|string',
             // Validasi Array Materials
-            'materials.*.file' => 'sometimes|nullable|file|mimes:pdf,mp4,doc,docx,ppt,pptx|max:20480', // Max 20MB, optional for testing
+            'materials.*.file' => 'sometimes|nullable|file|mimes:pdf,mp4,doc,docx,ppt,pptx,xls,xlsx|max:20480', // Max 20MB, optional for testing
             'materials.*.title' => 'required|string',
             'materials.*.description' => 'nullable|string',
             'materials.*.duration' => 'nullable|integer|min:0',
@@ -195,6 +214,12 @@ class AdminTrainingProgramController extends Controller
             'questions.*.correct_answer' => 'nullable|in:a,b,c,d',
             'questions.*.explanation' => 'nullable|string',
             'questions.*.image_url' => 'nullable|image|max:5120',
+            // New: quiz time limits in minutes
+            'pretest_duration' => 'nullable|integer|min:1',
+            'posttest_duration' => 'nullable|integer|min:1',
+            // Also accept frontend field names with _minutes suffix for compatibility
+            'pretest_duration_minutes' => 'nullable|integer|min:1',
+            'posttest_duration_minutes' => 'nullable|integer|min:1',
             // Alternative format: separate pre/post test questions
             'pre_test_questions.*.question_text' => 'nullable|string',
             'pre_test_questions.*.option_a' => 'nullable|string',
@@ -311,25 +336,74 @@ class AdminTrainingProgramController extends Controller
             Log::info('Questions data received:', ['questions' => $allQuestions]);
 
             if (count($allQuestions) > 0) {
+                // Debug: dump first question payload when running tests
+                try {
+                    if (app()->runningInConsole()) {
+                        fwrite(STDOUT, "AllQuestions payload: " . json_encode(array_slice($allQuestions,0,3)) . "\n");
+                    }
+                } catch (\Exception $e) {
+                    Log::info('Could not write debug output: ' . $e->getMessage());
+                }
+
                 Log::info('Processing ' . count($allQuestions) . ' questions');
+
+                // Prepare explicit quiz headers using requested durations (if provided).
+                // Accept either `pretest_duration` or `pretest_duration_minutes` from frontend (backwards/forwards compatible).
+                $pretestTime = $request->input('pretest_duration') ?? $request->input('pretest_duration_minutes') ?? 30;
+                $posttestTime = $request->input('posttest_duration') ?? $request->input('posttest_duration_minutes') ?? 60;
+
+                // Ensure integer values
+                $pretestTime = is_numeric($pretestTime) ? intval($pretestTime) : 30;
+                $posttestTime = is_numeric($posttestTime) ? intval($posttestTime) : 60;
+
+                $pretestQuiz = \App\Models\Quiz::firstOrCreate(
+                    ['module_id' => $module->id, 'type' => 'pretest'],
+                    [
+                        'name' => 'Pre-Test: ' . $module->title,
+                        'description' => 'Ujian awal untuk mengukur pengetahuan sebelum materi.',
+                        'is_active' => true,
+                        'time_limit' => $pretestTime,
+                        'passing_score' => 0,
+                        'question_count' => 0
+                    ]
+                );
+
+                $posttestQuiz = \App\Models\Quiz::firstOrCreate(
+                    ['module_id' => $module->id, 'type' => 'posttest'],
+                    [
+                        'name' => 'Post-Test: ' . $module->title,
+                        'description' => 'Ujian akhir untuk evaluasi kelulusan.',
+                        'is_active' => true,
+                        'time_limit' => $posttestTime,
+                        'passing_score' => $module->passing_grade ?? 70,
+                        'question_count' => 0
+                    ]
+                );
 
                 foreach ($allQuestions as $index => $qData) {
                     Log::info('Processing question ' . $index, ['data' => $qData]);
 
                     $qType = $qData['question_type'] ?? 'pretest'; // Default to pretest if not specified
 
-                    // Opsional: Buat Quiz Header jika belum ada (sesuai logic Anda)
-                    $quiz = \App\Models\Quiz::firstOrCreate(
-                        ['module_id' => $module->id, 'type' => $qType],
-                        [
-                            'name' => ucfirst($qType) . ' for ' . $module->title,
-                            'description' => 'Auto-created ' . $qType . ' for this training.',
-                            'is_active' => true,
-                            'question_count' => 0, // Will be updated later
-                            'time_limit' => 15,
-                            'passing_score' => $module->passing_grade ?? 70,
-                        ]
-                    );
+                    // Determine quiz header based on question type
+                    if ($qType === 'pretest') {
+                        $quiz = $pretestQuiz;
+                    } elseif ($qType === 'posttest') {
+                        $quiz = $posttestQuiz;
+                    } else {
+                        // fallback: create or find a generic quiz of this type
+                        $quiz = \App\Models\Quiz::firstOrCreate(
+                            ['module_id' => $module->id, 'type' => $qType],
+                            [
+                                'name' => ucfirst($qType) . ' for ' . $module->title,
+                                'description' => 'Auto-created ' . $qType . ' for this training.',
+                                'is_active' => true,
+                                'question_count' => 0, // Will be updated later
+                                'time_limit' => 30,
+                                'passing_score' => $module->passing_grade ?? 70,
+                            ]
+                        );
+                    }
 
                     Log::info('Quiz created/found', ['quiz_id' => $quiz->id, 'type' => $qType]);
 
@@ -342,7 +416,7 @@ class AdminTrainingProgramController extends Controller
 
                             // Verify file was actually stored
                             if (Storage::exists('public/questions/' . $imageFilename)) {
-                                $imageUrl = 'questions/' . $imageFilename; // Path relatif untuk akses public
+                                $imageUrl = 'storage/questions/' . $imageFilename; // Path relatif untuk akses public
                                 Log::info('Question image uploaded successfully', ['filename' => $imageFilename, 'path' => $path]);
                             } else {
                                 Log::error('Question image upload failed - file not found after storage', ['filename' => $imageFilename]);
@@ -355,24 +429,36 @@ class AdminTrainingProgramController extends Controller
                         }
                     }
 
-                    // Simpan Question dengan format options JSON
-                    $question = Question::create([
+                    // Build normalized options array and also keep legacy fields for compatibility
+                    $normalizedOptions = [
+                        ['label' => 'a', 'text' => ($qData['option_a'] ?? null)],
+                        ['label' => 'b', 'text' => ($qData['option_b'] ?? null)],
+                        ['label' => 'c', 'text' => ($qData['option_c'] ?? null)],
+                        ['label' => 'd', 'text' => ($qData['option_d'] ?? null)],
+                    ];
+
+                    $questionData = [
                         'module_id' => $module->id,
                         'quiz_id' => $quiz->id,
                         'question_text' => $qData['question_text'],
                         'question_type' => $qType,
-                        'options' => json_encode([
-                            ['label' => 'a', 'text' => $qData['option_a']],
-                            ['label' => 'b', 'text' => $qData['option_b']],
-                            ['label' => 'c', 'text' => $qData['option_c']],
-                            ['label' => 'd', 'text' => $qData['option_d']],
-                        ]),
-                        'correct_answer' => $qData['correct_answer'],
+                        'options' => $normalizedOptions,
+                        'correct_answer' => $qData['correct_answer'] ?? null,
                         'explanation' => $qData['explanation'] ?? null,
                         'image_url' => $imageUrl,
                         'order' => $index + 1, // Use index for order
-                        'difficulty' => 'medium',
-                    ]);
+                        'difficulty' => $qData['difficulty'] ?? 'medium',
+                    ];
+
+                    // Only set legacy option columns if DB has them
+                    if (Schema::hasColumn('questions', 'option_a')) {
+                        $questionData['option_a'] = $qData['option_a'] ?? null;
+                        $questionData['option_b'] = $qData['option_b'] ?? null;
+                        $questionData['option_c'] = $qData['option_c'] ?? null;
+                        $questionData['option_d'] = $qData['option_d'] ?? null;
+                    }
+
+                    $question = Question::create($questionData);
 
                     Log::info('Question created', ['question_id' => $question->id, 'type' => $qType]);
 
@@ -418,6 +504,8 @@ class AdminTrainingProgramController extends Controller
                 'success' => true,
                 'message' => 'Training Program, Materi, dan Quiz berhasil dibuat.',
                 'data' => $module,
+                // Include `program` key for frontends that expect it (backwards compatibility)
+                'program' => $module,
             ], 201);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -452,9 +540,10 @@ class AdminTrainingProgramController extends Controller
 
             // Get enrollment and completion statistics
             $enrollmentCount = DB::table('user_trainings')->where('module_id', $id)->count();
+            // Rely on status = 'completed' for completed enrollments
             $completionCount = DB::table('user_trainings')
                 ->where('module_id', $id)
-                ->where('is_completed', true)
+                ->where('status', 'completed')
                 ->count();
             $completionRate = $enrollmentCount > 0 ? round(($completionCount / $enrollmentCount) * 100, 2) : 0;
 
@@ -506,17 +595,27 @@ class AdminTrainingProgramController extends Controller
                     'updated_at' => $program->updated_at,
                 ],
                 'materials' => $materials,
-                'questions' => $program->questions->map(fn($q) => [
-                    'id' => $q->id,
-                    'text' => $q->question_text,
-                    'type' => $q->question_type,
-                    'difficulty' => $q->difficulty,
-                    'explanation' => $q->explanation,
-                    'option_a' => $q->option_a,
-                    'option_b' => $q->option_b,
-                    'option_c' => $q->option_c,
-                    'option_d' => $q->option_d,
-                ]),
+                'questions' => $program->questions->map(function($q) {
+                    // Ensure options is treated as array
+                    $opts = is_array($q->options) ? $q->options : (is_string($q->options) ? json_decode($q->options, true) : []);
+                    
+                    return [
+                        'id' => $q->id,
+                        'text' => $q->question_text,
+                        'type' => $q->question_type,
+                        'difficulty' => $q->difficulty,
+                        'explanation' => $q->explanation,
+                        'correct_answer' => $q->correct_answer, // Include correct answer for admin view
+                        'image_url' => $q->image_url,
+                        'options' => $opts, // Include the JSON options array for frontend compatibility
+                        
+                        // Fallback logic: Check legacy columns first, then JSON options
+                        'option_a' => $q->option_a ?? ($opts[0]['text'] ?? null),
+                        'option_b' => $q->option_b ?? ($opts[1]['text'] ?? null),
+                        'option_c' => $q->option_c ?? ($opts[2]['text'] ?? null),
+                        'option_d' => $q->option_d ?? ($opts[3]['text'] ?? null),
+                    ];
+                }),
                 'stats' => [
                     'enrollment_count' => $enrollmentCount,
                     'completion_count' => $completionCount,
@@ -526,6 +625,9 @@ class AdminTrainingProgramController extends Controller
                 'discussions' => $discussions,
                 'auth' => ['user' => (array) $user],
             ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            // If the program was not found, return 404
+            abort(404, 'Program not found');
         } catch (\Exception $e) {
             Log::error('Training Program Detail Error: ' . $e->getMessage());
             abort(500, 'Error loading training program');
@@ -559,11 +661,25 @@ class AdminTrainingProgramController extends Controller
                 'prerequisite_module_id' => 'nullable|exists:modules,id',
                 'instructor_id' => 'nullable|exists:users,id',
                 'certificate_template' => 'nullable|string',
+                'pretest_duration' => 'nullable|integer|min:1',
+                'posttest_duration' => 'nullable|integer|min:1',
             ]);
 
             $module->update([
                 ...$validated,
             ]);
+
+            // If admin provided new durations, update corresponding quizzes
+            // Update quizzes if admin provided duration in either accepted field name
+            $preDurationToUpdate = $validated['pretest_duration'] ?? $validated['pretest_duration_minutes'] ?? null;
+            $postDurationToUpdate = $validated['posttest_duration'] ?? $validated['posttest_duration_minutes'] ?? null;
+
+            if ($preDurationToUpdate !== null) {
+                \App\Models\Quiz::where('module_id', $module->id)->where('type', 'pretest')->update(['time_limit' => intval($preDurationToUpdate)]);
+            }
+            if ($postDurationToUpdate !== null) {
+                \App\Models\Quiz::where('module_id', $module->id)->where('type', 'posttest')->update(['time_limit' => intval($postDurationToUpdate)]);
+            }
 
             return response()->json([
                 'success' => true,
@@ -591,10 +707,19 @@ class AdminTrainingProgramController extends Controller
         }
 
         try {
-            $module = Module::findOrFail($id);
+            $module = Module::find($id);
+            
+            if (!$module) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Program pelatihan tidak ditemukan',
+                ], 404);
+            }
             
             // Disable foreign key constraints (works with MySQL, PostgreSQL, SQLite)
             Schema::disableForeignKeyConstraints();
+            
+            DB::beginTransaction();
             try {
                 // Delete related records first
                 DB::table('module_assignments')->where('module_id', $id)->delete();
@@ -622,9 +747,6 @@ class AdminTrainingProgramController extends Controller
                 
                 // Delete questions
                 DB::table('questions')->where('module_id', $id)->delete();
-                
-                // Delete training discussions
-                DB::table('training_discussions')->where('module_id', $id)->delete();
                 
                 // Delete module directly using query builder to bypass Eloquent constraints
                 DB::table('modules')->where('id', $id)->delete();
@@ -904,14 +1026,50 @@ class AdminTrainingProgramController extends Controller
                 'option_d' => 'required|string',
                 'correct_answer' => 'required|in:a,b,c,d',
                 'difficulty' => 'required|in:easy,medium,hard',
-                'question_type' => 'required|in:multiple_choice,true_false,short_answer',
+                // Allow either multiple_choice/true_false/short_answer OR pretest/posttest for compatibility
+                'question_type' => 'required|string',
                 'explanation' => 'nullable|string',
+                'image_url' => 'sometimes|nullable|image|max:5120',
             ]);
 
-            $question = Question::create([
+            // Handle image upload if provided
+            $imageUrl = null;
+            if ($request->hasFile('image_url') && $request->file('image_url')->isValid()) {
+                $image = $request->file('image_url');
+                $imageFilename = time() . '_question_' . uniqid() . '.' . $image->getClientOriginalExtension();
+                $path = $image->storeAs('public/questions', $imageFilename);
+                if (Storage::exists('public/questions/' . $imageFilename)) {
+                    $imageUrl = 'storage/questions/' . $imageFilename;
+                }
+            }
+
+            // Normalize options and save both JSON and legacy fields
+            $normalizedOptions = [
+                ['label' => 'a', 'text' => ($validated['option_a'] ?? null)],
+                ['label' => 'b', 'text' => ($validated['option_b'] ?? null)],
+                ['label' => 'c', 'text' => ($validated['option_c'] ?? null)],
+                ['label' => 'd', 'text' => ($validated['option_d'] ?? null)],
+            ];
+
+            $questionData = [
                 'module_id' => $id,
-                ...$validated,
-            ]);
+                'question_text' => $validated['question_text'],
+                'options' => $normalizedOptions,
+                'correct_answer' => $validated['correct_answer'],
+                'difficulty' => $validated['difficulty'],
+                'question_type' => $validated['question_type'],
+                'explanation' => $validated['explanation'] ?? null,
+                'image_url' => $imageUrl,
+            ];
+
+            if (Schema::hasColumn('questions', 'option_a')) {
+                $questionData['option_a'] = $validated['option_a'] ?? null;
+                $questionData['option_b'] = $validated['option_b'] ?? null;
+                $questionData['option_c'] = $validated['option_c'] ?? null;
+                $questionData['option_d'] = $validated['option_d'] ?? null;
+            }
+
+            $question = Question::create($questionData);
 
             return response()->json([
                 'success' => true,
@@ -949,11 +1107,34 @@ class AdminTrainingProgramController extends Controller
                 'option_d' => 'required|string',
                 'correct_answer' => 'required|in:a,b,c,d',
                 'difficulty' => 'required|in:easy,medium,hard',
-                'question_type' => 'required|in:multiple_choice,true_false,short_answer',
+                'question_type' => 'required|string',
                 'explanation' => 'nullable|string',
+                'image_url' => 'sometimes|nullable|image|max:5120',
             ]);
 
-            $question->update($validated);
+            // Handle optional image upload
+            $imageUrl = $question->image_url;
+            if ($request->hasFile('image_url') && $request->file('image_url')->isValid()) {
+                $image = $request->file('image_url');
+                $imageFilename = time() . '_question_' . uniqid() . '.' . $image->getClientOriginalExtension();
+                $path = $image->storeAs('public/questions', $imageFilename);
+                if (Storage::exists('public/questions/' . $imageFilename)) {
+                    $imageUrl = 'storage/questions/' . $imageFilename;
+                }
+            }
+
+            // Normalize options and update both legacy option columns and JSON options
+            $normalizedOptions = [
+                ['label' => 'a', 'text' => ($validated['option_a'] ?? null)],
+                ['label' => 'b', 'text' => ($validated['option_b'] ?? null)],
+                ['label' => 'c', 'text' => ($validated['option_c'] ?? null)],
+                ['label' => 'd', 'text' => ($validated['option_d'] ?? null)],
+            ];
+
+            $question->update(array_merge($validated, [
+                'options' => $normalizedOptions,
+                'image_url' => $imageUrl,
+            ]));
 
             return response()->json([
                 'success' => true,
@@ -1240,7 +1421,7 @@ class AdminTrainingProgramController extends Controller
                     $completions = DB::table('user_trainings')
                         ->join('modules', 'user_trainings.module_id', '=', 'modules.id')
                         ->where('modules.category', $module->category)
-                        ->where('user_trainings.is_completed', true)
+                        ->where('user_trainings.status', 'completed')
                         ->count();
                     
                     $total = DB::table('user_trainings')
@@ -1277,7 +1458,7 @@ class AdminTrainingProgramController extends Controller
             // Overall statistics
             $totalEnrollments = DB::table('user_trainings')->count();
             $totalCompletions = DB::table('user_trainings')
-                ->where('is_completed', true)
+                ->where('status', 'completed')
                 ->count();
             $avgCompletionRate = $totalEnrollments > 0 
                 ? round(($totalCompletions / $totalEnrollments) * 100, 1) 
@@ -1294,7 +1475,7 @@ class AdminTrainingProgramController extends Controller
                 [
                     'status' => 'In Progress',
                     'count' => DB::table('user_trainings')
-                        ->where('is_completed', false)
+                        ->where('status', '!=', 'completed')
                         ->count(),
                     'percentage' => 100 - $avgCompletionRate,
                     'color' => '#F59E0B'
@@ -1314,7 +1495,7 @@ class AdminTrainingProgramController extends Controller
                     
                     $completions = DB::table('user_trainings')
                         ->whereIn('user_id', $deptUsers)
-                        ->where('is_completed', true)
+                        ->where('status', 'completed')
                         ->count();
                     
                     $total = DB::table('user_trainings')
@@ -1409,7 +1590,7 @@ class AdminTrainingProgramController extends Controller
                         ->join('modules', 'user_trainings.module_id', '=', 'modules.id')
                         ->where('user_trainings.user_id', $user->id)
                         ->where('modules.category', 'Compliance')
-                        ->where('user_trainings.is_completed', false)
+                        ->where('user_trainings.status', '!=', 'completed')
                         ->count();
 
                     $riskScore = $incompleteMandatory > 0 ? round((min($incompleteMandatory, 5) / 5) * 100, 1) : 0;

@@ -187,10 +187,23 @@ const QuestionReviewItem = ({ question, index }) => {
                         <div className="px-5 pb-5 pt-0 pl-[4.5rem]">
                             <div className="space-y-2 text-sm border-t border-slate-100 pt-4">
                                 {(() => {
-                                    let opts = [];
+                                    // Normalize options
+                                    let optsRaw = [];
                                     if (question.options) {
-                                        try { opts = typeof question.options === 'string' ? JSON.parse(question.options) : question.options; } catch (e) { opts = []; }
+                                        try { optsRaw = typeof question.options === 'string' ? JSON.parse(question.options) : question.options; } catch (e) { optsRaw = []; }
                                     }
+
+                                    let opts = [];
+                                    if (Array.isArray(optsRaw)) {
+                                        opts = optsRaw.map(o => {
+                                            if (!o) return null;
+                                            if (typeof o === 'string') return { label: '', text: o };
+                                            return { label: (o.label ?? o.key ?? o.value ?? '').toString(), text: (o.text ?? o.value ?? '') };
+                                        }).filter(Boolean);
+                                    } else if (optsRaw && typeof optsRaw === 'object') {
+                                        opts = Object.entries(optsRaw).map(([k, v]) => ({ label: k, text: (v && typeof v === 'object') ? (v.text ?? v.value ?? '') : v })).filter(o => o.text);
+                                    }
+
                                     if (!opts || opts.length === 0) {
                                         opts = ['a','b','c','d'].map(o => ({ label: o, text: question[`option_${o}`] }));
                                     }
@@ -244,23 +257,38 @@ export default function QuizResult({ auth, training = {}, quiz = {}, result = {}
     const correctCount = result.correct_count || questions.filter(q => q.is_correct).length;
     const wrongCount = result.wrong_count || (questions.length - correctCount);
     
-    // Format time spent nicely
+    // Format time spent nicely and resiliently (handle missing or negative values)
     const formatTimeSpent = (timeStr) => {
-        if (!timeStr || timeStr === '-') return '-';
-        
+        // Normalize missing or explicit dash to 0s
+        if (!timeStr || timeStr === '-') return '0s';
+
+        // Remove any stray negative signs and whitespace
+        const cleaned = String(timeStr).replace(/-/g, '').trim();
+
         // If already in MM:SS format
-        if (timeStr.includes(':')) {
-            const [mins, secs] = timeStr.split(':').map(Number);
-            if (mins > 0 && secs > 0) {
-                return `${mins}m ${secs}s`;
-            } else if (mins > 0) {
-                return `${mins}m`;
-            } else {
-                return `${secs}s`;
-            }
+        if (cleaned.includes(':')) {
+            const [minsRaw, secsRaw] = cleaned.split(':');
+            const mins = Math.abs(Number(minsRaw) || 0);
+            const secs = Math.abs(Number(secsRaw) || 0);
+
+            if (mins > 0 && secs > 0) return `${mins}m ${secs}s`;
+            if (mins > 0) return `${mins}m`;
+            return `${secs}s`;
         }
-        
-        return timeStr;
+
+        // If it's a plain number, treat as seconds
+        const num = Number(cleaned);
+        if (!Number.isNaN(num)) {
+            const n = Math.abs(Math.floor(num));
+            if (n >= 60) {
+                const m = Math.floor(n / 60);
+                const s = n % 60;
+                return s > 0 ? `${m}m ${s}s` : `${m}m`;
+            }
+            return `${n}s`;
+        }
+
+        return '0s';
     };
     
     const timeSpent = formatTimeSpent(result.time_spent);
@@ -313,9 +341,6 @@ export default function QuizResult({ auth, training = {}, quiz = {}, result = {}
                             <div className="flex flex-wrap gap-4 justify-center md:justify-start">
                                 {isPassed ? (
                                     <>
-                                        <Link href={`/training/${training.id}/certificate`} className="px-8 py-4 bg-[#D6F84C] hover:bg-[#c2e43c] text-[#002824] rounded-2xl font-bold shadow-lg shadow-[#D6F84C]/20 transition-all hover:scale-105 flex items-center gap-2">
-                                            <Award size={20} /> Klaim Sertifikat
-                                        </Link>
                                         <button className="px-6 py-4 bg-white/10 hover:bg-white/20 text-white rounded-2xl font-bold backdrop-blur-md transition flex items-center gap-2">
                                             <Share2 size={20} /> Bagikan
                                         </button>
@@ -447,14 +472,7 @@ export default function QuizResult({ auth, training = {}, quiz = {}, result = {}
                                     </div>
                                     <div className="text-sm font-bold text-slate-700">Kembali ke Training</div>
                                 </Link>
-                                {isPassed && (
-                                    <Link href="/reports" className="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 transition group">
-                                        <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center group-hover:bg-[#005E54] group-hover:text-white transition-colors">
-                                            <TrendingUp size={18} />
-                                        </div>
-                                        <div className="text-sm font-bold text-slate-700">Lihat Leaderboard</div>
-                                    </Link>
-                                )}
+
                             </div>
                         </div>
 

@@ -22,6 +22,9 @@ if (!$userWithEnrollments) {
 echo "👤 Testing with user: {$userWithEnrollments->name} (ID: {$userWithEnrollments->id})\n\n";
 
 // Simulate what the API returns
+// Note: `enrollment_status` is an alias for `user_trainings.status` and `progress`
+// is sourced from `user_trainings.final_score`. Progress percentage for materials
+// is stored separately in `module_progress.progress_percentage` when applicable.
 $trainings = Module::query()
     ->select([
         'modules.*',
@@ -50,7 +53,8 @@ foreach ($trainings as $t) {
     echo "      - Materials Count: {$materialsCount}\n";
     echo "      - Category: {$t->category}\n";
     echo "      - Status: {$t->enrollment_status}\n";
-    echo "      - Progress: {$t->progress}%\n";
+    // Show progress with a sensible default when final_score is null
+    echo "      - Progress: " . (is_null($t->progress) ? '0' : $t->progress) . "%\n";
     echo "      - Video URL: " . ($t->video_url ? 'Yes' : 'No') . "\n";
     echo "      - Document URL: " . ($t->document_url ? 'Yes' : 'No') . "\n";
     echo "      - Presentation URL: " . ($t->presentation_url ? 'Yes' : 'No') . "\n";

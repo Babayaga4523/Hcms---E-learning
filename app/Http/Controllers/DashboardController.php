@@ -47,6 +47,9 @@ class DashboardController extends Controller
                     'module_progress' => $training->module->progress()
                         ->where('user_id', $userId)
                         ->first(),
+                    // Top-level numeric progress for compatibility with frontend components
+                    'progress' => ($training->module->progress()->where('user_id', $userId)->first() ? (int)$training->module->progress()->where('user_id', $userId)->first()->progress_percentage : ($training->final_score ?? 0)),
+                    
                 ];
             });
 
@@ -166,6 +169,43 @@ class DashboardController extends Controller
     /**
      * Get dashboard statistics
      */
+    public function getRecentActivityApi()
+    {
+        $user = Auth::user();
+        $activities = $this->getRecentActivity($user);
+        return response()->json($activities);
+    }
+
+
+    public function getUpcomingTrainingsApi()
+    {
+        $user = Auth::user();
+
+        $userId = $user->id;
+
+        $enrolledModuleIds = UserTraining::where('user_id', $userId)
+            ->pluck('module_id')
+            ->toArray();
+
+        $assignedModuleIds = \App\Models\ModuleAssignment::where('user_id', $userId)
+            ->pluck('module_id')
+            ->toArray();
+
+        $upcomingTrainings = Module::whereIn('id', $assignedModuleIds)
+            ->whereNotIn('id', $enrolledModuleIds)
+            ->where('is_active', true)
+            ->limit(10)
+            ->get()
+            ->map(fn($m) => [
+                'id' => $m->id,
+                'title' => $m->title,
+                'description' => $m->description,
+                'start_date' => $m->start_date ?? null,
+            ]);
+
+        return response()->json($upcomingTrainings);
+    }
+
     public function getStatistics()
     {
         $user = Auth::user();
@@ -228,6 +268,8 @@ class DashboardController extends Controller
                         'progress_percentage' => $progress->progress_percentage,
                         'status' => $progress->status,
                     ] : null,
+                    // Top-level progress for compatibility with components expecting `progress`
+                    'progress' => $progress ? (int)$progress->progress_percentage : ($training->final_score ?? 0),
                 ];
             });
 

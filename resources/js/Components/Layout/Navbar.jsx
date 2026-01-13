@@ -101,6 +101,12 @@ export default function Navbar({ user }) {
     const [dropdownOpen, setDropdownOpen] = useState(null); // 'learning', 'reports', 'profile'
     const dropdownRef = useRef(null);
 
+    // Search state
+    const [searchQuery, setSearchQuery] = useState('');
+    const [mobileSearchQuery, setMobileSearchQuery] = useState('');
+    const searchRef = useRef(null);
+    const mobileSearchRef = useRef(null);
+
     // Close dropdown on outside click
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -109,8 +115,29 @@ export default function Navbar({ user }) {
             }
         };
         document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
+
+        // Keyboard shortcut: focus search with Cmd/Ctrl+K
+        const handleKey = (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                if (searchRef.current) searchRef.current.focus();
+            }
+            // Enter in mobile search should navigate too
+            if (document.activeElement === mobileSearchRef.current && e.key === 'Enter') {
+                e.preventDefault();
+                if (mobileSearchQuery) {
+                    router.visit(`/catalog?search=${encodeURIComponent(mobileSearchQuery)}`);
+                    setMobileMenuOpen(false);
+                }
+            }
+        };
+        document.addEventListener('keydown', handleKey);
+
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+            document.removeEventListener('keydown', handleKey);
+        };
+    }, [mobileSearchQuery]);
 
     const toggleDropdown = (name) => {
         setDropdownOpen(dropdownOpen === name ? null : name);
@@ -209,13 +236,19 @@ export default function Navbar({ user }) {
                             {/* Search */}
                             <div className="relative group">
                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-[#005E54] transition-colors" size={18} />
-                                <input 
-                                    type="text" 
-                                    placeholder="Cari materi..." 
-                                    className="search-input pl-10 pr-4 py-2.5 bg-slate-50 border border-transparent rounded-xl text-sm font-medium w-48 focus:w-64 transition-all outline-none"
-                                />
+                                <form onSubmit={(e) => { e.preventDefault(); if (searchQuery) router.visit(`/catalog?search=${encodeURIComponent(searchQuery)}`); }}>
+                                    <input 
+                                        ref={searchRef}
+                                        type="text" 
+                                        placeholder="Cari materi..." 
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        className="search-input pl-10 pr-4 py-2.5 bg-slate-50 border border-transparent rounded-xl text-sm font-medium w-48 focus:w-64 transition-all outline-none"
+                                    />
+                                </form>
                                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                                    <span className="text-[10px] text-slate-400 font-bold bg-white px-1.5 py-0.5 rounded border border-slate-200">⌘K</span>
+                                    <button onClick={() => { if (searchQuery) router.visit(`/catalog?search=${encodeURIComponent(searchQuery)}`); }} className="text-[10px] text-slate-400 font-bold bg-white px-2 py-1 rounded border border-slate-200">Cari</button>
+                                    <span className="text-[10px] text-slate-400 font-bold bg-white px-1.5 py-0.5 rounded border border-slate-200 ml-2">⌘K</span>
                                 </div>
                             </div>
 
@@ -267,9 +300,6 @@ export default function Navbar({ user }) {
                                             <Link href="/profile" className="dropdown-item flex items-center gap-3 p-3 rounded-xl text-slate-700">
                                                 <User size={18} /> Profile Saya
                                             </Link>
-                                            <Link href="/settings" className="dropdown-item flex items-center gap-3 p-3 rounded-xl text-slate-700">
-                                                <Settings size={18} /> Pengaturan
-                                            </Link>
                                             
                                             {user?.role === 'admin' && (
                                                 <>
@@ -320,8 +350,11 @@ export default function Navbar({ user }) {
                                 <div className="relative">
                                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                                     <input 
+                                        ref={mobileSearchRef}
                                         type="text" 
                                         placeholder="Cari materi..." 
+                                        value={mobileSearchQuery}
+                                        onChange={(e) => setMobileSearchQuery(e.target.value)}
                                         className="w-full pl-10 pr-4 py-3 bg-slate-50 rounded-xl text-sm font-medium focus:ring-2 focus:ring-[#005E54] outline-none"
                                     />
                                 </div>

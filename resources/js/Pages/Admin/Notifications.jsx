@@ -86,7 +86,7 @@ export default function Notifications() {
 
     const handleSendNotification = async () => {
         if (!formData.title || !formData.message) {
-            alert('Title dan message harus diisi');
+            showToast('Title dan message harus diisi', 'warning');
             return;
         }
 
@@ -102,7 +102,7 @@ export default function Notifications() {
             });
 
             if (res.ok) {
-                alert('Notifikasi berhasil dikirim');
+                showToast('Notifikasi berhasil dikirim', 'success');
                 setShowCompose(false);
                 setFormData({
                     title: '',
@@ -114,11 +114,11 @@ export default function Notifications() {
                 });
                 loadNotifications();
             } else {
-                alert('Gagal mengirim notifikasi');
+                showToast('Gagal mengirim notifikasi', 'error');
             }
         } catch (err) {
             console.error(err);
-            alert('Gagal mengirim notifikasi');
+            showToast('Gagal mengirim notifikasi', 'error');
         } finally {
             setSending(false);
         }
@@ -137,7 +137,7 @@ export default function Notifications() {
 
             if (res.ok) {
                 loadNotifications();
-                alert('Notifikasi berhasil dihapus');
+                showToast('Notifikasi berhasil dihapus', 'success');
             }
         } catch (err) {
             console.error(err);

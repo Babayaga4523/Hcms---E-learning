@@ -1,0 +1,56 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - generic [ref=e8]:
+    - generic [ref=e9]:
+      - generic [ref=e11]: W
+      - generic [ref=e12]: Wondr Learning
+    - heading "Tingkatkan Potensi Tanpa Batas." [level=1] [ref=e13]:
+      - text: Tingkatkan Potensi
+      - text: Tanpa Batas.
+    - paragraph [ref=e14]: Platform pembelajaran terintegrasi untuk pengembangan karir profesional Anda. Akses ribuan materi, kuis interaktif, dan sertifikasi resmi.
+    - generic [ref=e15]:
+      - generic [ref=e16]:
+        - img [ref=e17]
+        - generic [ref=e20]: Secure Platform
+      - generic [ref=e21]:
+        - img [ref=e22]
+        - generic [ref=e24]: Official Certification
+  - generic [ref=e26]:
+    - generic [ref=e27]:
+      - heading "Selamat Datang! 👋" [level=2] [ref=e28]
+      - paragraph [ref=e29]: Silakan masuk ke akun Anda untuk melanjutkan.
+    - generic [ref=e30]:
+      - generic [ref=e31]:
+        - generic [ref=e32]:
+          - textbox "Email Address" [ref=e33]: andi@example.com
+          - generic: Email Address
+          - img [ref=e35]
+        - paragraph [ref=e38]: These credentials do not match our records.
+      - generic [ref=e40]:
+        - textbox "Password" [ref=e41]
+        - generic: Password
+        - img [ref=e43]
+        - button [ref=e46] [cursor=pointer]:
+          - img [ref=e47]
+      - generic [ref=e50]:
+        - generic [ref=e51] [cursor=pointer]:
+          - checkbox "Ingat saya" [ref=e53]
+          - generic [ref=e55]: Ingat saya
+        - link "Lupa Password?" [ref=e56] [cursor=pointer]:
+          - /url: http://127.0.0.1:8000/forgot-password
+      - button "Masuk Sekarang" [ref=e57] [cursor=pointer]:
+        - text: Masuk Sekarang
+        - img [ref=e58]
+    - generic [ref=e60]:
+      - generic [ref=e65]: Atau masuk dengan
+      - generic [ref=e66]:
+        - button "Google" [ref=e67] [cursor=pointer]:
+          - img [ref=e68]
+          - text: Google
+        - button "Apple" [ref=e71] [cursor=pointer]:
+          - img [ref=e72]
+          - text: Apple
+    - paragraph [ref=e75]: © 2026 BNI Corp University. All rights reserved.
+```

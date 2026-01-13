@@ -265,6 +265,8 @@ export default function TrainingProgram({ programs = [], stats = {}, auth }) {
     const [selectedProgram, setSelectedProgram] = useState(null);
     const [filterStatus, setFilterStatus] = useState('all');
     const [filterCategory, setFilterCategory] = useState('all');
+    // Guard to prevent duplicate delete requests
+    const [deletingId, setDeletingId] = useState(null);
 
     // Form State
     const [formData, setFormData] = useState({
@@ -367,21 +369,48 @@ export default function TrainingProgram({ programs = [], stats = {}, auth }) {
 
     const handleDelete = async () => {
         if (!selectedProgram) return;
-        
-        if (!confirm('Yakin ingin menghapus program ini?')) return;
-        
+
+        if (!confirm('Apakah Anda yakin ingin menghapus program ini?')) return;
+
+        // Prevent duplicate delete for same program
+        if (deletingId === selectedProgram?.id) return;
+        setDeletingId(selectedProgram?.id);
+        // Close modal early so user can't press multiple times
+        setActiveModal(null);
         setLoading(true);
         try {
-            const response = await axios.delete(`/api/admin/training-programs/${selectedProgram.id}`);
-            if (response.data.success) {
-                showToast('Program berhasil dihapus!', 'success');
-                setActiveModal(null);
-                refreshData();
-            }
+            // 1. Kirim request hapus ke backend
+            await axios.delete(`/api/admin/training-programs/${selectedProgram.id}`);
+
+            // 2. JIKA SUKSES (200): Hapus item dari State React secara manual
+            // Ini membuat UI langsung berubah tanpa reload halaman
+            setProgramsData((prevPrograms) => {
+                const updatedPrograms = prevPrograms.filter(program => program.id !== selectedProgram.id);
+                sessionStorage.setItem('trainingPrograms', JSON.stringify(updatedPrograms));
+                return updatedPrograms;
+            });
+
+            showToast('Program berhasil dihapus!', 'success');
+
         } catch (error) {
-            console.error('Error deleting:', error);
-            showToast('Gagal menghapus program', 'error');
+            // 3. JIKA ERROR 404 (Data sudah hilang duluan di database)
+            if (error.response && error.response.status === 404) {
+                // Tetap hapus dari UI agar sinkron dengan database
+                setProgramsData((prevPrograms) => {
+                    const updatedPrograms = prevPrograms.filter(program => program.id !== selectedProgram.id);
+                    sessionStorage.setItem('trainingPrograms', JSON.stringify(updatedPrograms));
+                    return updatedPrograms;
+                });
+
+                // Don't log this as an unexpected error; user intent was achieved
+                showToast('Data sudah tidak ditemukan di server (mungkin sudah dihapus). Tampilan telah diperbarui.', 'warning');
+            } else {
+                // Error lain (500, 403, dll)
+                console.error('Error deleting:', error);
+                showToast('Gagal menghapus program. Silakan coba lagi.', 'error');
+            }
         } finally {
+            setDeletingId(null);
             setLoading(false);
         }
     };
@@ -1288,7 +1317,7 @@ export default function TrainingProgram({ programs = [], stats = {}, auth }) {
                     </button>
                     <button 
                         onClick={handleDelete}
-                        disabled={loading}
+                        disabled={loading || deletingId === selectedProgram?.id}
                         className="flex flex-col items-center justify-center p-6 bg-red-50 rounded-[24px] hover:bg-red-100 transition-colors group disabled:opacity-50"
                     >
                         <Trash2 className="w-8 h-8 text-red-500 mb-3 group-hover:scale-110 transition-transform" />

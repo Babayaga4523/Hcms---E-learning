@@ -9,6 +9,7 @@ import {
     AlertCircle, Play, Pause, RotateCcw, Zap, Share2
 } from 'lucide-react';
 import axios from 'axios';
+import showToast from '@/Utils/toast';
 
 // --- Wondr Style System ---
 const WondrStyles = () => (
@@ -159,7 +160,14 @@ const QuizSection = ({ type, quiz, training, onStart }) => {
                 </div>
                 
                 <button
-                    onClick={() => onStart(type)}
+                    onClick={() => {
+                        if (isPassed && quiz?.attempt_id) {
+                            // If user passed and we have an attempt id, go directly to result page
+                            router.visit(`/training/${training.id}/quiz/${type}/result/${quiz.attempt_id}`);
+                        } else {
+                            onStart(type);
+                        }
+                    }}
                     className={`w-full py-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 ${
                         isPassed
                             ? 'bg-white/10 text-white hover:bg-white/20'
@@ -189,7 +197,7 @@ const QuizSection = ({ type, quiz, training, onStart }) => {
 };
 
 // Main Component
-export default function TrainingDetail({ auth, training: initialTraining, enrollment: initialEnrollment, progress: initialProgress, quizAttempts: initialQuizAttempts, completedMaterials: initialCompletedMaterials }) {
+export default function TrainingDetail({ auth, training: initialTraining, enrollment: initialEnrollment, progress: initialProgress, quizAttempts: initialQuizAttempts, completedMaterials: initialCompletedMaterials, certificateEligible = false, certificateRequirements = {} }) {
     const user = auth?.user || {};
     const [training, setTraining] = useState(initialTraining || {});
     const [materials, setMaterials] = useState([]);
@@ -323,7 +331,8 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
                 category: trainingData.category,
                 is_mandatory: trainingData.is_mandatory,
                 status: enrollment?.status || 'not_started',
-                progress: enrollment?.progress || 0,
+                // Prefer server-provided ModuleProgress percentage when available, fall back to final_score
+                progress: (trainingRes.data.progress?.progress_percentage) ?? (enrollment?.final_score ?? 0),
                 duration: trainingData.duration,
                 due_date: trainingData.end_date,
                 enrolled_count: trainingData.enrollments_count || 0,
@@ -367,6 +376,7 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
                         is_passed: pretestRes.data.is_passed || false,
                         score: pretestRes.data.score || 0,
                         attempts: pretestRes.data.attempts || 0,
+                        attempt_id: pretestRes.data.attempt_id || null,
                         duration: pretestRes.data.quiz.duration,
                         questions_count: pretestRes.data.quiz.questions_count
                     });
@@ -382,6 +392,7 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
                         is_passed: posttestRes.data.is_passed || false,
                         score: posttestRes.data.score || 0,
                         attempts: posttestRes.data.attempts || 0,
+                        attempt_id: posttestRes.data.attempt_id || null,
                         duration: posttestRes.data.quiz.duration,
                         questions_count: posttestRes.data.quiz.questions_count
                     });
@@ -414,7 +425,16 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
             await loadTrainingData();
         } catch (error) {
             console.error('Failed to start training:', error);
-            alert('Gagal memulai training. Silakan coba lagi.');
+            // If unauthenticated, redirect to login so user can authenticate and retry
+            if (error?.response?.status === 401) {
+                window.location.href = '/login';
+                return;
+            }
+            // Prefer explicit server message when available (message or validation errors)
+            const serverMsg = error?.response?.data?.message
+                || (error?.response?.data?.errors && Object.values(error.response.data.errors)[0]?.[0])
+                || 'Gagal memulai training. Silakan coba lagi.';
+            showToast(serverMsg, 'error');
         } finally {
             setLoading(false);
         }
@@ -433,6 +453,13 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
             </AppLayout>
         );
     }
+
+    // If a passing attempt exists, prefer posttest result, otherwise pretest
+    const resultLink = posttest?.is_passed && posttest?.attempt_id
+        ? `/training/${training.id}/quiz/posttest/result/${posttest.attempt_id}`
+        : pretest?.is_passed && pretest?.attempt_id
+            ? `/training/${training.id}/quiz/pretest/result/${pretest.attempt_id}`
+            : null;
 
     return (
         <AppLayout user={user}>
@@ -776,13 +803,29 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
                                     )}
                                 </button>
                             ) : training.status === 'completed' ? (
-                                <Link
-                                    href={`/training/${training.id}/certificate`}
-                                    className="w-full py-4 bg-gradient-to-br from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-white rounded-2xl font-bold shadow-lg transition-all hover:scale-[1.02] flex items-center justify-center gap-2"
-                                >
-                                    <Award size={20} />
-                                    Unduh Sertifikat
-                                </Link>
+                                <div className="space-y-3">
+                                    {certificateEligible ? (
+                                        <Link
+                                            href={`/training/${training.id}/certificate`}
+                                            className="w-full py-3 bg-gradient-to-br from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-white rounded-2xl font-bold shadow-lg transition-all hover:scale-[1.02] flex items-center justify-center gap-2"
+                                        >
+                                            <Award size={20} />
+                                            Unduh Sertifikat
+                                        </Link>
+                                    ) : (
+                                        <div className="w-full py-3 bg-slate-100 text-slate-500 rounded-2xl font-bold shadow-sm border border-slate-200 flex items-center justify-center gap-2">
+                                            <Lock size={18} /> Sertifikat terkunci. Selesaikan semua persyaratan.
+                                        </div>
+                                    )}
+
+                                    <Link
+                                        href={`/training/${training.id}/results`}
+                                        className="w-full py-3 bg-white text-[#002824] rounded-2xl font-bold shadow-sm border border-slate-200 flex items-center justify-center gap-2 hover:bg-slate-50"
+                                    >
+                                        <FileText size={18} />
+                                        Review Hasil
+                                    </Link>
+                                </div>
                             ) : (
                                 <button
                                     onClick={() => {

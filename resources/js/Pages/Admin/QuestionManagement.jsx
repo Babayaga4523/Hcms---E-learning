@@ -9,6 +9,7 @@ import {
     ListOrdered, AlignCenter, AlignRight, Strikethrough
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import showToast from '@/Utils/toast';
 
 // Add styles for contenteditable
 const editorStyles = `
@@ -352,13 +353,13 @@ export default function QuestionManagement({ question = null, module_id = null, 
     const handleImageUpload = (file) => {
         // Validate file type
         if (!file.type.startsWith('image/')) {
-            alert('Harap upload file gambar');
+            showToast('Harap upload file gambar', 'warning');
             return;
         }
 
         // Validate file size (max 5MB)
         if (file.size > 5 * 1024 * 1024) {
-            alert('Ukuran file maksimal 5MB');
+            showToast('Ukuran file maksimal 5MB', 'warning');
             return;
         }
 

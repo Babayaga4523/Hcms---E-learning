@@ -76,7 +76,7 @@ try {
         'instructor_id' => 'nullable|exists:users,id',
         'certificate_template' => 'nullable|string',
         // Materials validation
-        'materials.*.file' => 'sometimes|nullable|file|mimes:pdf,mp4,doc,docx,ppt,pptx|max:20480',
+        'materials.*.file' => 'sometimes|nullable|file|mimes:pdf,mp4,doc,docx,ppt,pptx,xls,xlsx|max:20480',
         'materials.*.title' => 'required|string',
         'materials.*.description' => 'nullable|string',
         'materials.*.duration' => 'nullable|integer|min:0',

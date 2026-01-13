@@ -222,15 +222,15 @@ export default function TrainingProgramDetail({ program: initialProgram, materia
                             <div className="flex flex-wrap gap-6 text-slate-300 font-medium">
                                 <div className="flex items-center gap-2">
                                     <Users className="w-5 h-5 text-[#D6F84C]" />
-                                    {formData.enrollment_count.toLocaleString()} Peserta
+                                    {(Number(formData.enrollment_count ?? 0) || 0).toLocaleString()} Peserta
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <Clock className="w-5 h-5 text-[#D6F84C]" />
-                                    {formData.duration_hours} Jam Pembelajaran
+                                    {formData.duration_hours ? formData.duration_hours : 0} Jam Pembelajaran
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <Shield className="w-5 h-5 text-[#D6F84C]" />
-                                    {formData.instructor_name}
+                                    {formData.instructor_name || '-'}
                                 </div>
                             </div>
                         </div>
@@ -371,7 +371,7 @@ export default function TrainingProgramDetail({ program: initialProgram, materia
                                                             <Users className="w-5 h-5 text-[#005E54]" /> Target Audience
                                                         </h3>
                                                         <div className="flex flex-wrap gap-2">
-                                                            {formData.target_audience.split('&').map((tag, i) => (
+                                                            {(formData.target_audience ? formData.target_audience.split('&') : []).map((tag, i) => (
                                                                 <span key={i} className="px-3 py-1 bg-white border border-slate-200 rounded-lg text-sm font-semibold text-slate-600">
                                                                     {tag.trim()}
                                                                 </span>

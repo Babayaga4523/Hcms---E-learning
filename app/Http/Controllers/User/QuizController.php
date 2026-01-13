@@ -138,7 +138,7 @@ class QuizController extends Controller
                     }
 
                     // Shuffle options within each question for additional security
-                    shuffle($opts);
+                    //shuffle($opts); // disabled global shuffling to preserve original option order
 
                     return [
                         'id' => $q->id,
@@ -300,7 +300,7 @@ class QuizController extends Controller
                     }
 
                     // Shuffle options within each question for additional security
-                    shuffle($opts);
+                    //shuffle($opts); // disabled global shuffling to preserve original option order
 
                     // Normalize numeric keys and clean text
                     $opts = array_values(array_map(function($o){
@@ -556,24 +556,53 @@ class QuizController extends Controller
                     
                     if ($userTraining) {
                         if ($isPassed) {
-                            // PASSED: Update status to completed and create certificate
+                            // PASSED: Update status to completed
                             $userTraining->update([
                                 'status' => 'completed',
                                 'final_score' => $percentage,
-                                'is_certified' => true,
                                 'completed_at' => now()
                             ]);
-                            
-                            // Create certificate if not exists
-                            $existingCert = \App\Models\Certificate::where('user_id', $user->id)
-                                ->where('module_id', $attempt->module_id)
-                                ->first();
-                            
-                            if (!$existingCert) {
-                                $certificate = \App\Models\Certificate::createForUser($user->id, $attempt->module_id);
-                                if ($certificate) {
-                                    $userTraining->update(['certificate_id' => $certificate->id]);
+
+                            // Only create certificate and mark certified if user completed all materials and pretest (if required)
+                            $moduleId = $attempt->module_id;
+
+                            $module = \App\Models\Module::with(['trainingMaterials', 'questions'])->find($moduleId);
+                            $materialsTotal = $module->trainingMaterials->count();
+                            $completedMaterials = \App\Models\UserMaterialProgress::where('user_id', $user->id)
+                                ->whereIn('training_material_id', $module->trainingMaterials->pluck('id')->toArray())
+                                ->where('is_completed', true)
+                                ->count();
+
+                            $pretestCount = $module->questions->where('question_type', 'pretest')->count();
+                            $pretestPassed = true;
+                            if ($pretestCount > 0) {
+                                $pretestPassed = \App\Models\ExamAttempt::where('user_id', $user->id)
+                                    ->where('module_id', $moduleId)
+                                    ->where('exam_type', 'pre_test')
+                                    ->where('is_passed', true)
+                                    ->exists();
+                            }
+
+                            $allMaterialsDone = $materialsTotal === $completedMaterials;
+
+                            if ($allMaterialsDone && $pretestPassed) {
+                                // Create certificate if not exists
+                                $existingCert = \App\Models\Certificate::where('user_id', $user->id)
+                                    ->where('module_id', $moduleId)
+                                    ->first();
+                                
+                                if (!$existingCert) {
+                                    $certificate = \App\Models\Certificate::createForUser($user->id, $moduleId);
+                                    if ($certificate) {
+                                        $userTraining->update(['certificate_id' => $certificate->id, 'is_certified' => true]);
+                                    }
+                                } else {
+                                    // mark as certified if already exists
+                                    $userTraining->update(['is_certified' => true]);
                                 }
+                            } else {
+                                // Not yet eligible for certificate — keep is_certified false
+                                $userTraining->update(['is_certified' => false]);
                             }
                         } else {
                             // FAILED: Keep status as in_progress, allow retake
@@ -690,13 +719,14 @@ class QuizController extends Controller
             $wrongCount = $userAnswers->where('is_correct', false)->count();
             
             // Format time spent properly
-            $timeSpent = '-';
+            // Default to 00:00 instead of '-' so UI can display 0s rather than '-'
+            $timeSpent = '00:00';
             if ($attempt->started_at && $attempt->finished_at) {
                 $diffInSeconds = $attempt->finished_at->diffInSeconds($attempt->started_at);
                 $minutes = floor($diffInSeconds / 60);
                 $seconds = $diffInSeconds % 60;
                 $timeSpent = sprintf('%02d:%02d', $minutes, $seconds);
-            } elseif ($attempt->duration_minutes) {
+            } elseif (isset($attempt->duration_minutes) && $attempt->duration_minutes !== null) {
                 $minutes = floor($attempt->duration_minutes);
                 $seconds = round(($attempt->duration_minutes - $minutes) * 60);
                 $timeSpent = sprintf('%02d:%02d', $minutes, $seconds);

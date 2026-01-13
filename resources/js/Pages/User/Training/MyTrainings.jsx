@@ -241,10 +241,36 @@ export default function MyTrainings({ auth }) {
     const [searchQuery, setSearchQuery] = useState('');
     const [loading, setLoading] = useState(true);
 
+    // Server-side search state
+    const [searchResults, setSearchResults] = useState(null);
+    const [searchPage, setSearchPage] = useState(1);
+    const [searchTotalPages, setSearchTotalPages] = useState(1);
+    const [searchLoading, setSearchLoading] = useState(false);
+    const [searchError, setSearchError] = useState(null);
+
+    // Page-level error (e.g. server 500)
+    const [pageError, setPageError] = useState(null);
+
     // Load trainings on mount
     useEffect(() => {
         loadTrainings();
     }, []);
+
+    // Debounced server-side search when `searchQuery` changes
+    useEffect(() => {
+        const handler = setTimeout(() => {
+            if (!searchQuery || !searchQuery.trim()) {
+                // empty query -> clear search results
+                setSearchResults(null);
+                setSearchPage(1);
+                setSearchTotalPages(1);
+            } else {
+                fetchSearch(1);
+            }
+        }, 400); // 400ms debounce
+
+        return () => clearTimeout(handler);
+    }, [searchQuery]);
 
     const loadTrainings = async () => {
         try {
@@ -297,27 +323,75 @@ export default function MyTrainings({ auth }) {
             }
         } catch (error) {
             console.error('Failed to load trainings:', error);
+            // surface server message if available
+            const msg = error?.response?.data?.message || error?.message || 'Gagal memuat data dari server';
+            setPageError(msg);
         } finally {
             setLoading(false);
         }
     };
 
+    // Server-side search function
+    const fetchSearch = async (page = 1) => {
+        if (!searchQuery || !searchQuery.trim()) {
+            setSearchResults(null);
+            setSearchPage(1);
+            setSearchTotalPages(1);
+            return;
+        }
+
+        setSearchLoading(true);
+        setSearchError(null);
+
+        try {
+            const res = await axios.get('/api/user/trainings', { params: { search: searchQuery, page } });
+            const data = res.data.trainings?.data || res.data.trainings || [];
+
+            // try to read pagination meta (common Laravel structure)
+            const meta = res.data.trainings?.meta || res.data.meta || {};
+            const current = res.data.trainings?.current_page || meta.current_page || page;
+            const last = res.data.trainings?.last_page || meta.last_page || (meta.total && meta.per_page ? Math.ceil(meta.total / meta.per_page) : page);
+
+            setSearchResults(Array.isArray(data) ? data : []);
+            setSearchPage(current || page);
+            setSearchTotalPages(last || 1);
+        } catch (err) {
+            console.error('Search failed:', err);
+            setSearchError('Gagal melakukan pencarian.');
+            setSearchResults([]);
+            setSearchPage(1);
+            setSearchTotalPages(1);
+        } finally {
+            setSearchLoading(false);
+        }
+    };
     // Featured Course (First in-progress mandatory course, or just first in-progress)
     const featuredCourse = useMemo(() => {
         return trainings.find(t => t.status === 'in_progress' && t.is_mandatory) || 
                trainings.find(t => t.status === 'in_progress');
     }, [trainings]);
 
+    // Safe flag for rendering featured course (protect against HMR partial states)
+    const showFeatured = (() => {
+        try {
+            return activeTab !== 'completed' && featuredCourse && !searchQuery;
+        } catch (e) {
+            console.warn('featuredCourse not available yet:', e);
+            return false;
+        }
+    })();
+
     // Filtering
     const filteredTrainings = useMemo(() => {
-        return trainings.filter(t => {
+        const base = (searchQuery && searchResults !== null) ? searchResults : trainings;
+
+        return base.filter(t => {
             const matchesTab = activeTab === 'all' || 
                                (activeTab === 'active' && (t.status === 'in_progress' || t.status === 'not_started' || t.status === 'enrolled')) ||
                                (activeTab === 'completed' && t.status === 'completed');
-            const matchesSearch = !searchQuery || t.title?.toLowerCase().includes(searchQuery.toLowerCase());
-            return matchesTab && matchesSearch;
+            return matchesTab;
         });
-    }, [trainings, activeTab, searchQuery]);
+    }, [trainings, activeTab, searchQuery, searchResults]);
 
     return (
         <AppLayout user={user}>
@@ -378,8 +452,30 @@ export default function MyTrainings({ auth }) {
                                     placeholder="Cari judul training..." 
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
-                                    className="w-full pl-12 pr-4 py-4 bg-white/10 backdrop-blur-sm border border-white/10 rounded-2xl text-white placeholder-white/50 focus:bg-white/20 focus:outline-none focus:border-[#D6F84C]/50 transition-all font-medium"
+                                    className="w-full pl-12 pr-20 py-4 bg-white/10 backdrop-blur-sm border border-white/10 rounded-2xl text-white placeholder-white/50 focus:bg-white/20 focus:outline-none focus:border-[#D6F84C]/50 transition-all font-medium"
                                 />
+
+                                {/* Clear button */}
+                                {searchQuery && (
+                                    <button
+                                        type="button"
+                                        onClick={() => { setSearchQuery(''); setSearchResults(null); }}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-xs px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white"
+                                    >
+                                        Hapus
+                                    </button>
+                                )}
+
+                                {/* Search loading indicator */}
+                                {searchLoading && (
+                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs px-3 py-1 rounded-full bg-white/10 text-white">...</div>
+                                )}
+
+                                {/* Search error */}
+                                {searchError && (
+                                    <div className="mt-2 text-xs text-red-400">{searchError}</div>
+                                )}
+
                             </div>
                         </div>
                     </div>
@@ -397,7 +493,7 @@ export default function MyTrainings({ auth }) {
                     </div>
 
                     {/* Featured Course */}
-                    {activeTab !== 'completed' && featuredCourse && !searchQuery && (
+                    {activeTab !== 'completed' && typeof featuredCourse !== 'undefined' && featuredCourse && !searchQuery && (
                         <div className="mb-10">
                             <FeaturedCourse course={featuredCourse} />
                         </div>
@@ -421,11 +517,36 @@ export default function MyTrainings({ auth }) {
                                 <p className="text-slate-500 font-medium">Memuat data...</p>
                             </div>
                         ) : filteredTrainings.length > 0 ? (
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                {filteredTrainings.map((t, idx) => (
-                                    <CourseCard key={t.id} training={t} index={idx} />
-                                ))}
-                            </div>
+                            <>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                    {filteredTrainings.map((t, idx) => (
+                                        <CourseCard key={t.id} training={t} index={idx} />
+                                    ))}
+                                </div>
+
+                                {/* Pagination for server-side search */}
+                                {searchQuery && searchResults && searchTotalPages > 1 && (
+                                    <div className="flex justify-center mt-6 gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => fetchSearch(Math.max(1, searchPage - 1))}
+                                            disabled={searchPage <= 1 || searchLoading}
+                                            className="px-3 py-1 rounded-md bg-white/10 text-sm text-white disabled:opacity-40"
+                                        >
+                                            Sebelumnya
+                                        </button>
+                                        <span className="px-4 py-1 rounded-md bg-white/10 text-sm text-white">Halaman {searchPage} / {searchTotalPages}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => fetchSearch(Math.min(searchTotalPages, searchPage + 1))}
+                                            disabled={searchPage >= searchTotalPages || searchLoading}
+                                            className="px-3 py-1 rounded-md bg-white/10 text-sm text-white disabled:opacity-40"
+                                        >
+                                            Selanjutnya
+                                        </button>
+                                    </div>
+                                )}
+                            </>
                         ) : (
                             <div className="glass-panel rounded-[32px] p-16 text-center">
                                 <div className="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6">

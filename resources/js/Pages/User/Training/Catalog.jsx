@@ -5,8 +5,9 @@ import {
     Search, Filter, Star, Clock, Users, BookOpen, 
     TrendingUp, Award, Play, ChevronDown, Grid3x3, 
     List, Sparkles, Target, Zap, Shield, Briefcase,
-    X, Check, Calendar, ArrowRight, AlertCircle, CheckCircle
+    X, Check, Calendar, ArrowRight, AlertCircle, CheckCircle, Loader2
 } from 'lucide-react';
+import showToast from '@/Utils/toast';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // --- Wondr Styles ---
@@ -164,7 +165,11 @@ const TrainingCard = ({ training }) => {
                     </div>
                     <div className="flex items-center gap-1">
                         <Star size={14} className="fill-amber-400 text-amber-400" />
-                        <span className="font-bold text-slate-700">{training.rating}</span>
+                        {training.rating ? (
+                            <span className="font-bold text-slate-700">{Number(training.rating).toFixed(1)}</span>
+                        ) : (
+                            <span className="text-slate-400">—</span>
+                        )}
                     </div>
                 </div>
 
@@ -192,17 +197,71 @@ const TrainingCard = ({ training }) => {
                             <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
                         </Link>
                     ) : (
-                        <Link
-                            href={`/training/${training.id}/enroll`}
+                        <button
+                            onClick={async (e) => {
+                                const btn = e.currentTarget;
+                                try {
+                                    // Disable/enroll feedback
+                                    btn.setAttribute('disabled', 'disabled');
+
+                                    await axios.post(`/api/training/${training.id}/start`);
+
+                                    // navigate to training detail
+                                    window.location.href = `/training/${training.id}`;
+                                } catch (err) {
+                                    console.error('Enroll failed', err);
+                                    if (err?.response?.status === 401) {
+                                        window.location.href = '/login';
+                                        return;
+                                    }
+                                    const serverMsg = err?.response?.data?.message
+                                        || (err?.response?.data?.errors && Object.values(err.response.data.errors)[0]?.[0])
+                                        || 'Gagal mendaftar. Coba lagi.';
+                                    showToast(serverMsg, 'error');
+                                    btn.removeAttribute('disabled');
+                                }
+                            }}
                             className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[#005E54] text-white rounded-xl font-bold hover:bg-[#00403a] transition-all group"
                         >
                             Daftar Sekarang
                             <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
-                        </Link>
+                        </button>
                     )}
                 </div>
             </div>
         </motion.div>
+    );
+};
+
+// Card for user's enrolled trainings (shows progress & action)
+const EnrolledCard = ({ training }) => {
+    const status = training.enrollment_status || training.enrollment_status || '';
+    const progress = training.progress ?? 0;
+
+    return (
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col justify-between">
+            <div>
+                <h4 className="font-bold text-slate-900 text-lg line-clamp-2">{training.title}</h4>
+                {training.description && <p className="text-xs text-slate-500 mt-1 line-clamp-2">{training.description}</p>}
+
+                <div className="mt-3">
+                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                        <div className="h-2 bg-emerald-500" style={{ width: `${progress}%` }} />
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-slate-500 mt-2">
+                        <span>{progress}%</span>
+                        <span className="capitalize">{status.replace('_', ' ')}</span>
+                    </div>
+                </div>
+            </div>
+            <div className="mt-4 flex items-center gap-2">
+                {status === 'completed' ? (
+                    <Link href={`/training/${training.id}/results`} className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold hover:bg-slate-50">Review Hasil</Link>
+                ) : (
+                    <Link href={`/training/${training.id}`} className="px-4 py-2 bg-[#005E54] text-white rounded-xl text-sm font-bold hover:bg-[#00403a]">Lanjutkan</Link>
+                )}
+            </div>
+        </div>
     );
 };
 
@@ -319,8 +378,15 @@ const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {
     const [viewMode, setViewMode] = useState('grid'); // grid or list
     const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
 
-    // Use trainings from backend
-    const trainings = initialTrainings || [];
+    // Trainings state (fetched from backend). Initialize from server-passed prop if present
+    const [trainings, setTrainings] = useState(Array.isArray(initialTrainings) ? initialTrainings : []);
+    const [trainingsLoading, setTrainingsLoading] = useState(false);
+    const [trainingsPage, setTrainingsPage] = useState(1);
+    const [trainingsTotalPages, setTrainingsTotalPages] = useState(1);
+    const [trainingsError, setTrainingsError] = useState(null);
+
+    // Search/loading ui state (derived)
+    const [isSearching, setIsSearching] = useState(false); // still used for input spinner
 
     // Apply filters and sorting via URL (server-side)
     const applyFilters = (newFilters, newSort = sortBy) => {
@@ -357,107 +423,155 @@ const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {
         applyFilters(filters, newSort);
     };
 
-    // Handle search with debounce
+    // Handle search with debounce (server-side search endpoint /api/user/trainings)
     useEffect(() => {
         const timer = setTimeout(() => {
             if (filters.search !== initialFilters.search) {
-                applyFilters(filters);
+                // Trigger a fetch with new search term
+                fetchTrainings(1);
             }
         }, 500);
 
         return () => clearTimeout(timer);
-    }, [filters.search]);
+    }, [filters.search, filters.category, filters.difficulty, sortBy]);
 
-    // SAMPLE DATA FALLBACK (if database is empty)
-    const sampleTrainings = [
-        {
-            id: 1,
-            title: 'Compliance & Risk Management Fundamentals',
-            description: 'Memahami prinsip dasar kepatuhan dan manajemen risiko dalam industri perbankan sesuai regulasi OJK.',
-            category: 'compliance',
-            difficulty: 'beginner',
-            duration: '4 jam',
-            enrolled_count: 1234,
-            rating: 4.8,
-            instructor: 'Dr. Ahmad Santoso',
-            thumbnail: null,
-            enrolled: false,
-            is_new: true
-        },
-        {
-            id: 2,
-            title: 'Leadership Excellence Program',
-            description: 'Program pengembangan kepemimpinan untuk manager dan calon leader masa depan.',
-            category: 'leadership',
-            difficulty: 'intermediate',
-            duration: '8 jam',
-            enrolled_count: 856,
-            rating: 4.9,
-            instructor: 'Siti Nurhaliza',
-            thumbnail: null,
-            enrolled: true,
-            is_new: false
-        },
-        {
-            id: 3,
-            title: 'Advanced Data Analytics for Banking',
-            description: 'Teknik analisis data lanjutan menggunakan Python dan SQL untuk decision making.',
-            category: 'technical',
-            difficulty: 'advanced',
-            duration: '12 jam',
-            enrolled_count: 432,
-            rating: 4.7,
-            instructor: 'Budi Prasetyo',
-            thumbnail: null,
-            enrolled: false,
-            is_new: false
-        },
-        {
-            id: 4,
-            title: 'Effective Communication Skills',
-            description: 'Meningkatkan kemampuan komunikasi interpersonal dan presentasi profesional.',
-            category: 'soft-skills',
-            difficulty: 'beginner',
-            duration: '3 jam',
-            enrolled_count: 2145,
-            rating: 4.6,
-            instructor: 'Maya Anggraini',
-            thumbnail: null,
-            enrolled: false,
-            is_new: false
-        },
-        {
-            id: 5,
-            title: 'BNI Credit Card Products Mastery',
-            description: 'Deep dive ke semua produk kartu kredit BNI dan strategi cross-selling.',
-            category: 'product',
-            difficulty: 'intermediate',
-            duration: '6 jam',
-            enrolled_count: 1567,
-            rating: 4.8,
-            instructor: 'Rudi Hermawan',
-            thumbnail: null,
-            enrolled: true,
-            is_new: true
-        },
-        {
-            id: 6,
-            title: 'Cybersecurity Awareness for Banking',
-            description: 'Kesadaran keamanan siber dan best practices untuk melindungi data nasabah.',
-            category: 'compliance',
-            difficulty: 'beginner',
-            duration: '2 jam',
-            enrolled_count: 3421,
-            rating: 4.9,
-            instructor: 'Andi Wijaya',
-            thumbnail: null,
-            enrolled: false,
-            is_new: false
+    // Fetch initial trainings on mount
+    useEffect(() => {
+        fetchTrainings(1);
+    }, []);
+
+    // --- Remove sample/dummy fallback for production. Use data from server only.
+    // Available trainings are provided from server as `initialTrainings` prop.
+    const availableTrainings = Array.isArray(initialTrainings) ? initialTrainings : [];
+
+    // Use backend user trainings state (enrolled/in-progress/completed)
+    const displayTrainings = trainings;
+
+    // Fetch trainings from backend with filters (GET /api/trainings?...)
+    const fetchTrainings = async (page = 1) => {
+        setTrainingsLoading(true);
+        setTrainingsError(null);
+        setIsSearching(true);
+
+        const params = new URLSearchParams();
+        if (filters.category && filters.category !== 'all') params.append('category', filters.category);
+        if (filters.difficulty && filters.difficulty !== 'all') params.append('difficulty', filters.difficulty);
+        if (filters.search && filters.search.trim()) params.append('search', filters.search.trim());
+        if (sortBy && sortBy !== 'newest') params.append('sort', sortBy);
+        params.append('page', page);
+
+        try {
+            const url = `/api/user/trainings?${params.toString()}`;
+            console.log('fetchTrainings requesting', url);
+            const res = await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+
+            // If the server redirected us to login or returned 401, go to login
+            if (res.redirected || res.status === 401 || (res.url && res.url.includes('/login'))) {
+                console.warn('fetchTrainings detected unauthenticated response, redirecting to login.');
+                window.location.href = '/login';
+                return;
+            }
+
+            if (!res.ok) {
+                console.error('fetchTrainings response', res.status, res.statusText, url);
+                // Try parse message for better error
+                let body = null;
+                try { body = await res.json(); } catch (e) { /* ignore */ }
+                const msg = body?.message || `Network response not ok: ${res.status}`;
+                throw new Error(msg);
+            }
+
+            const data = await res.json();
+
+            if (Array.isArray(data)) {
+                setTrainings(data);
+                setTrainingsTotalPages(1);
+            } else if (data.data) {
+                setTrainings(Array.isArray(data.data) ? data.data : []);
+                const last = data?.meta?.last_page || data?.last_page || 1;
+                setTrainingsTotalPages(Number(last));
+            } else {
+                setTrainings([]);
+                setTrainingsTotalPages(1);
+            }
+
+            setTrainingsPage(page);
+        } catch (err) {
+            console.error('Fetch trainings failed:', err);
+            setTrainingsError(err?.message || 'Gagal memuat daftar training');
+            setTrainings([]);
+            setTrainingsTotalPages(1);
+        } finally {
+            setTrainingsLoading(false);
+            setIsSearching(false);
         }
-    ];
+    };
 
-    // Use backend data, fallback to sample if empty
-    const displayTrainings = trainings.length > 0 ? trainings : sampleTrainings;
+    // Current list to render
+    const currentList = displayTrainings;
+
+    // User-enrolled trainings (completed/in_progress/not_started)
+    const [enrolledTrainings, setEnrolledTrainings] = useState([]);
+    const [enrolledPage, setEnrolledPage] = useState(1);
+    const [enrolledTotalPages, setEnrolledTotalPages] = useState(1);
+    const [enrolledLoading, setEnrolledLoading] = useState(false);
+    const [enrolledError, setEnrolledError] = useState(null);
+    const [enrolledStatusFilter, setEnrolledStatusFilter] = useState('all');
+    const [enrolledStats, setEnrolledStats] = useState({ total: 0, in_progress: 0, completed: 0, not_started: 0 });
+
+    // Merge user's trainings (on top) with available trainings
+    const mergedTrainings = (() => {
+        const enrolledIds = new Set(enrolledTrainings.map(t => t.id));
+        const remaining = availableTrainings.filter(a => !enrolledIds.has(a.id));
+        return [
+            ...enrolledTrainings.map(t => ({ ...t, _isEnrolled: true })),
+            ...remaining
+        ];
+    })();
+
+    // Fetch enrolled trainings for the current user (API: /api/user/trainings)
+    const fetchEnrolledTrainings = async (status = 'all', page = 1) => {
+        setEnrolledLoading(true);
+        setEnrolledError(null);
+
+        const params = new URLSearchParams();
+        if (status && status !== 'all') params.append('status', status);
+        if (filters.search && filters.search.trim()) params.append('search', filters.search.trim());
+        params.append('page', page);
+
+        try {
+            const url = `/api/user/trainings?${params.toString()}`;
+            console.log('fetchEnrolledTrainings requesting', url);
+            const res = await fetch(url, { headers: { Accept: 'application/json' } });
+            if (!res.ok) {
+                console.error('fetchEnrolledTrainings response', res.status, res.statusText, url);
+                throw new Error(`Network response not ok: ${res.status}`);
+            }
+            const data = await res.json();
+
+            // API returns { success:true, trainings: Pagination, stats }
+            const pageData = data.trainings || data.data || [];
+            const items = Array.isArray(pageData.data) ? pageData.data : ([]);
+            setEnrolledTrainings(items);
+            const lastPage = (pageData?.last_page) || (data.trainings?.last_page) || 1;
+            setEnrolledTotalPages(Number(lastPage));
+            setEnrolledPage(page);
+
+            if (data.stats) setEnrolledStats(data.stats);
+        } catch (err) {
+            console.error('Fetch enrolled trainings failed:', err);
+            setEnrolledError('Gagal memuat daftar training Anda');
+            setEnrolledTrainings([]);
+            setEnrolledTotalPages(1);
+        } finally {
+            setEnrolledLoading(false);
+        }
+    };
+
+    // Load enrolled trainings on mount
+    useEffect(() => {
+        fetchEnrolledTrainings(enrolledStatusFilter, 1);
+    }, []);
 
     return (
         <AppLayout user={auth?.user}>
@@ -513,25 +627,38 @@ const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {
                                     placeholder="Cari training berdasarkan judul atau deskripsi..."
                                     value={filters.search}
                                     onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                                    className="w-full pl-12 pr-4 py-4 bg-white/95 backdrop-blur-sm rounded-2xl border-2 border-transparent focus:border-[#D6F84C] outline-none text-slate-900 font-medium placeholder:text-slate-400"
+                                    className="w-full pl-12 pr-12 py-4 bg-white/95 backdrop-blur-sm rounded-2xl border-2 border-transparent focus:border-[#D6F84C] outline-none text-slate-900 font-medium placeholder:text-slate-400"
                                 />
+                                {/* Right-side control: loading spinner or clear button */}
+                                {isSearching ? (
+                                    <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 animate-spin" />
+                                ) : filters.search ? (
+                                    <button type="button" onClick={() => { setFilters({ ...filters, search: '' }); setTrainingsError(null); fetchTrainings(1); }} className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full hover:bg-slate-100">
+                                        <X className="w-4 h-4 text-slate-500" />
+                                    </button>
+                                ) : null} 
                             </div>
                         </div>
 
-                        {/* Stats */}
-                        <div className="mt-6 flex flex-wrap gap-6">
-                            <div className="flex items-center gap-2 text-white/80">
-                                <BookOpen size={18} />
-                                <span className="text-sm font-semibold">{displayTrainings.length} Training Tersedia</span>
+                        {/* Hero stats (improved) */}
+                        <div className="mt-6 flex flex-wrap gap-6 items-center">
+                            <div className="bg-white/10 rounded-lg px-4 py-2 flex items-center gap-3">
+                                <BookOpen size={18} className="text-white/90" />
+                                <div className="text-white text-sm">
+                                    <div className="font-bold text-base">{mergedTrainings.length}</div>
+                                    <div className="text-xs">Training Tersedia</div>
+                                </div>
                             </div>
-                            <div className="flex items-center gap-2 text-white/80">
-                                <Users size={18} />
-                                <span className="text-sm font-semibold">5,000+ Peserta Aktif</span>
+
+                            <div className="bg-white/10 rounded-lg px-4 py-2 flex items-center gap-3">
+                                <Award size={18} className="text-white/90" />
+                                <div className="text-white text-sm">
+                                    <div className="font-bold text-base">{enrolledStats?.completed ?? '-'}</div>
+                                    <div className="text-xs">Selesai oleh Anda</div>
+                                </div>
                             </div>
-                            <div className="flex items-center gap-2 text-white/80">
-                                <Award size={18} />
-                                <span className="text-sm font-semibold">100% Tersertifikasi OJK</span>
-                            </div>
+
+
                         </div>
                     </div>
                 </div>
@@ -548,7 +675,7 @@ const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {
                         </button>
 
                         <div className="text-sm text-slate-600 font-medium">
-                            Menampilkan <span className="font-bold text-slate-900">{displayTrainings.length}</span> training
+                            Menampilkan <span className="font-bold text-slate-900">{mergedTrainings.length}</span> training
                         </div>
                     </div>
 
@@ -599,10 +726,23 @@ const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {
 
                     {/* Training Grid */}
                     <div className="lg:col-span-9">
-                        {displayTrainings.length > 0 ? (
+                        {/* Search status */}
+                        {filters.search && !isSearching && (
+                            <div className="mb-4 text-sm text-slate-600">Menampilkan hasil untuk "{filters.search}"</div>
+                        )}
+                        {trainingsError && (
+                            <div className="mb-4 text-sm text-red-500">{trainingsError}</div>
+                        )}
+
+                        {/* Merged trainings: enrolled trainings first, then available trainings */}
+                        {mergedTrainings.length > 0 ? (
                             <div className={`grid gap-6 ${viewMode === 'grid' ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3' : 'grid-cols-1'}`}>
-                                {displayTrainings.map((training, index) => (
-                                    <TrainingCard key={training.id} training={training} />
+                                {mergedTrainings.map((t) => (
+                                    (t.enrollment_status || t._isEnrolled || t.enrolled) ? (
+                                        <EnrolledCard key={t.id} training={t} />
+                                    ) : (
+                                        <TrainingCard key={t.id} training={t} />
+                                    )
                                 ))}
                             </div>
                         ) : (
@@ -618,6 +758,15 @@ const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {
                                 >
                                     Reset Filter
                                 </button>
+                            </div>
+                        )}
+
+                        {/* Pagination for search results */}
+                        {filters.search && trainingsTotalPages > 1 && (
+                            <div className="mt-6 flex items-center justify-center gap-3">
+                                <button disabled={trainingsPage <= 1 || isSearching} onClick={() => fetchTrainings(trainingsPage - 1)} className="px-3 py-2 rounded bg-white border">Prev</button>
+                                <span className="text-sm">Halaman {trainingsPage} dari {trainingsTotalPages}</span>
+                                <button disabled={trainingsPage >= trainingsTotalPages || isSearching} onClick={() => fetchTrainings(trainingsPage + 1)} className="px-3 py-2 rounded bg-white border">Next</button>
                             </div>
                         )}
                     </div>

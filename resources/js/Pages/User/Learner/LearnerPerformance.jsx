@@ -6,6 +6,7 @@ import {
     Download, ArrowUpRight, ArrowDownRight, Zap, ChevronDown, 
     CheckCircle, AlertCircle, BookOpen, Filter
 } from 'lucide-react';
+import showToast from '@/Utils/toast';
 import { 
     LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
     ResponsiveContainer, AreaChart, Area, RadarChart, PolarGrid, 
@@ -150,10 +151,17 @@ export default function LearnerPerformance() {
             const response = await fetch(`/api/learner/performance?period=${period}`, {
                 headers: { 'Accept': 'application/json' },
             });
+            if (!response.ok) {
+                const errText = await response.text().catch(() => 'Failed to fetch');
+                console.error('Error fetching performance data, status:', response.status, errText);
+                showToast('Gagal memuat data performa. Silakan coba lagi.', 'error');
+                return;
+            }
             const data = await response.json();
             setPerformanceData(data);
         } catch (error) {
             console.error('Error fetching performance data:', error);
+            showToast('Gagal memuat data performa. Silakan coba lagi.', 'error');
         } finally {
             setLoading(false);
         }
@@ -168,10 +176,17 @@ export default function LearnerPerformance() {
             const response = await fetch(url, {
                 headers: { 'Accept': 'application/json' },
             });
+            if (!response.ok) {
+                const errText = await response.text().catch(() => 'Failed to fetch');
+                console.error('Error fetching progress data, status:', response.status, errText);
+                showToast('Gagal memuat data progress. Silakan coba lagi.', 'error');
+                return;
+            }
             const data = await response.json();
             setProgressData(data);
         } catch (error) {
             console.error('Error fetching progress data:', error);
+            showToast('Gagal memuat data progress. Silakan coba lagi.', 'error');
         } finally {
             setLoading(false);
         }

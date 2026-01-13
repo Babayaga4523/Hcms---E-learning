@@ -175,7 +175,7 @@ export default function TrainingCalendar() {
 
     const handleSyncCalendar = () => {
         if (trainings.length === 0) {
-            alert('No training schedules to export');
+            showToast('No training schedules to export', 'info');
             return;
         }
 
@@ -306,7 +306,7 @@ export default function TrainingCalendar() {
         console.log(`Export complete: ${successCount} success, ${errorCount} errors`);
 
         if (successCount === 0) {
-            alert('Failed to export events. Check console for details.');
+            showToast('Failed to export events. Check console for details.', 'error');
             return;
         }
 
@@ -322,7 +322,7 @@ export default function TrainingCalendar() {
         window.URL.revokeObjectURL(url);
 
         if (errorCount > 0) {
-            alert(`Calendar exported with ${successCount} events (${errorCount} events skipped due to errors)`);
+            showToast(`Calendar exported with ${successCount} events (${errorCount} events skipped due to errors)`, 'success');
         }
     };
 

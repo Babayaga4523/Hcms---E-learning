@@ -507,14 +507,25 @@ export default function TrainingMaterialsManager({ program, auth }) {
                                             
                                             <div className="grid grid-cols-2 gap-2">
                                                 {(() => {
-                                                    let opts = [];
+                                                    // Normalize options into an array of {label, text}
+                                                    let optsRaw = [];
                                                     if (question.options) {
-                                                        try { opts = typeof question.options === 'string' ? JSON.parse(question.options) : question.options; } catch (e) { opts = []; }
+                                                        try { optsRaw = typeof question.options === 'string' ? JSON.parse(question.options) : question.options; } catch (e) { optsRaw = []; }
                                                     }
+
+                                                    let opts = [];
+                                                    if (Array.isArray(optsRaw)) {
+                                                        opts = optsRaw.map(o => {
+                                                            if (!o) return null;
+                                                            if (typeof o === 'string') return { label: '', text: o };
+                                                            return { label: (o.label ?? o.key ?? o.value ?? '').toString(), text: (o.text ?? o.value ?? '') };
+                                                        }).filter(Boolean);
+                                                    } else if (optsRaw && typeof optsRaw === 'object') {
+                                                        opts = Object.entries(optsRaw).map(([k, v]) => ({ label: k, text: (v && typeof v === 'object') ? (v.text ?? v.value ?? '') : v })).filter(o => o.text);
+                                                    }
+
                                                     if (!opts || opts.length === 0) {
                                                         opts = ['a','b','c','d'].map(o => ({ label: o, text: question[`option_${o}`] }));
-                                                    } else {
-                                                        opts = opts.map(o => (o.label ? o : { label: (o.label || o.key || '').toString(), text: o.text || o.value || '' }));
                                                     }
 
                                                     return opts.map(o => (
@@ -575,14 +586,25 @@ export default function TrainingMaterialsManager({ program, auth }) {
                                             
                                             <div className="grid grid-cols-2 gap-2">
                                                 {(() => {
-                                                    let opts = [];
+                                                    // Normalize options into an array of {label, text}
+                                                    let optsRaw = [];
                                                     if (question.options) {
-                                                        try { opts = typeof question.options === 'string' ? JSON.parse(question.options) : question.options; } catch (e) { opts = []; }
+                                                        try { optsRaw = typeof question.options === 'string' ? JSON.parse(question.options) : question.options; } catch (e) { optsRaw = []; }
                                                     }
+
+                                                    let opts = [];
+                                                    if (Array.isArray(optsRaw)) {
+                                                        opts = optsRaw.map(o => {
+                                                            if (!o) return null;
+                                                            if (typeof o === 'string') return { label: '', text: o };
+                                                            return { label: (o.label ?? o.key ?? o.value ?? '').toString(), text: (o.text ?? o.value ?? '') };
+                                                        }).filter(Boolean);
+                                                    } else if (optsRaw && typeof optsRaw === 'object') {
+                                                        opts = Object.entries(optsRaw).map(([k, v]) => ({ label: k, text: (v && typeof v === 'object') ? (v.text ?? v.value ?? '') : v })).filter(o => o.text);
+                                                    }
+
                                                     if (!opts || opts.length === 0) {
                                                         opts = ['a','b','c','d'].map(o => ({ label: o, text: question[`option_${o}`] }));
-                                                    } else {
-                                                        opts = opts.map(o => (o.label ? o : { label: (o.label || o.key || '').toString(), text: o.text || o.value || '' }));
                                                     }
 
                                                     return opts.map(o => (

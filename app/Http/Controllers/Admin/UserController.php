@@ -293,10 +293,18 @@ class UserController
             'failed' => UserTraining::where('status', 'failed')->count(),
             'enrolled' => UserTraining::where('status', 'enrolled')->count(),
             'completion_rate' => round((UserTraining::where('status', 'completed')->count() / ($totalEnrollments ?: 1)) * 100),
-            'avg_completion_days' => round(UserTraining::where('status', 'completed')
-                ->selectRaw('AVG(DATEDIFF(completed_at, enrolled_at)) as avg_days')
-                ->pluck('avg_days')
-                ->first() ?? 0),
+            'avg_completion_days' => (function() {
+                $completed = UserTraining::where('status', 'completed')
+                    ->whereNotNull('completed_at')
+                    ->whereNotNull('enrolled_at')
+                    ->get();
+
+                if ($completed->count() === 0) return 0;
+
+                $avgDays = (int) round($completed->map(function($e) { return $e->completed_at->diffInDays($e->enrolled_at); })->avg());
+
+                return $avgDays;
+            })(),
             'certified_users' => UserTraining::where('is_certified', true)->distinct('user_id')->count('user_id'),
             'avg_score' => round(UserTraining::whereNotNull('final_score')->avg('final_score') ?? 0),
         ];

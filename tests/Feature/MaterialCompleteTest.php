@@ -1,6 +1,5 @@
 <?php
 
-uses(Tests\TestCase::class, Illuminate\Foundation\Testing\RefreshDatabase::class);
 
 it('allows user to mark material complete', function () {
     /** @var \Tests\TestCase $this */

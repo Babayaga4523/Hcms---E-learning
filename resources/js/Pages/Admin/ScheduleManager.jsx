@@ -5,6 +5,7 @@ import {
     CheckCircle2, ArrowRight, ZoomIn, Plus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import showToast from '@/Utils/toast';
 
 // Custom scrollbar styles
 const scrollbarStyles = `
@@ -226,7 +227,7 @@ export default function ScheduleManager({ date = null, schedule = null, onClose 
 
     const handleSave = async () => {
         if (!formData.title || !formData.date) {
-            alert('Title and Date are required');
+            showToast('Title and Date are required', 'warning');
             return;
         }
 
@@ -270,11 +271,11 @@ export default function ScheduleManager({ date = null, schedule = null, onClose 
             } else {
                 const err = await res.text();
                 console.error('Error saving schedule', err);
-                alert('Failed to save schedule');
+                showToast('Failed to save schedule', 'error');
             }
         } catch (err) {
             console.error(err);
-            alert('Failed to save schedule');
+            showToast('Failed to save schedule', 'error');
         } finally {
             setSaving(false);
         }
@@ -293,11 +294,11 @@ export default function ScheduleManager({ date = null, schedule = null, onClose 
                 onSaved();
                 onClose();
             } else {
-                alert('Failed to delete schedule');
+                showToast('Failed to delete schedule', 'error');
             }
         } catch (err) {
             console.error(err);
-            alert('Failed to delete schedule');
+            showToast('Failed to delete schedule', 'error');
         }
     };
 

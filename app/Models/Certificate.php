@@ -95,18 +95,40 @@ class Certificate extends Model
             ->orderBy('created_at', 'desc')
             ->first();
 
-        // Calculate average score
-        $scores = [];
-        if ($pretest) $scores[] = $pretest->score;
-        if ($posttest) $scores[] = $posttest->score;
-        $avgScore = count($scores) > 0 ? array_sum($scores) / count($scores) : 0;
+        // Prefer authoritative final score from user_trainings if present
+        $userTraining = \App\Models\UserTraining::where('user_id', $userId)
+            ->where('module_id', $moduleId)
+            ->first();
 
-        // Count materials
-        $materialsCount = 0;
-        if ($module->video_url) $materialsCount++;
-        if ($module->document_url) $materialsCount++;
-        if ($module->presentation_url) $materialsCount++;
-        if ($materialsCount === 0) $materialsCount = 1;
+        $finalScore = null;
+        if ($userTraining && $userTraining->final_score !== null) {
+            $finalScore = $userTraining->final_score;
+        } elseif ($posttest && isset($posttest->percentage)) {
+            $finalScore = $posttest->percentage;
+        } elseif ($pretest && isset($pretest->percentage)) {
+            $finalScore = $pretest->percentage;
+        } else {
+            // Fallback to average of available scores (if any)
+            $scores = [];
+            if ($pretest && isset($pretest->percentage)) $scores[] = $pretest->percentage;
+            if ($posttest && isset($posttest->percentage)) $scores[] = $posttest->percentage;
+            $finalScore = count($scores) > 0 ? array_sum($scores) / count($scores) : 0;
+        }
+
+        $finalScore = is_numeric($finalScore) ? round($finalScore) : 0;
+
+        // Count materials (use training_materials table if present)
+        $materialsCount = \App\Models\TrainingMaterial::where('module_id', $moduleId)->count();
+        if ($materialsCount === 0) {
+            // fallback: treat at least 1 material to avoid division by zero elsewhere
+            $materialsCount = 1;
+        }
+
+        // Count completed materials for this user
+        $materialsCompleted = \App\Models\UserMaterialProgress::where('user_id', $userId)
+            ->whereIn('training_material_id', \App\Models\TrainingMaterial::where('module_id', $moduleId)->pluck('id')->toArray())
+            ->where('is_completed', true)
+            ->count();
 
         // Calculate hours
         $hours = ceil(($module->duration_minutes ?? 60) / 60);
@@ -115,25 +137,30 @@ class Certificate extends Model
         $instructor = $module->instructor_id ? User::find($module->instructor_id) : null;
         $instructorName = $instructor ? $instructor->name : 'Admin LMS';
 
-        // Create certificate
+        // Build metadata as array (model casts it)
+        $meta = [
+            'pretest_score' => $pretest ? $pretest->score : null,
+            'posttest_score' => $posttest ? $posttest->score : null,
+            'duration_minutes' => $module->duration_minutes,
+            'materials_total' => $materialsCount,
+            'materials_completed' => $materialsCompleted,
+        ];
+
+        // Create certificate (use final computed score)
         $certificate = self::create([
             'user_id' => $userId,
             'module_id' => $moduleId,
             'certificate_number' => self::generateCertificateNumber($userId, $moduleId),
             'user_name' => $user->name,
             'training_title' => $module->title,
-            'score' => round($avgScore),
-            'materials_completed' => $materialsCount,
+            'score' => $finalScore,
+            'materials_completed' => $materialsCompleted,
             'hours' => $hours,
             'issued_at' => now(),
             'completed_at' => now(),
             'instructor_name' => $instructorName,
             'status' => 'active',
-            'metadata' => json_encode([
-                'pretest_score' => $pretest ? $pretest->score : null,
-                'posttest_score' => $posttest ? $posttest->score : null,
-                'duration_minutes' => $module->duration_minutes,
-            ]),
+            'metadata' => $meta,
         ]);
 
         // Update user_trainings with certificate_id

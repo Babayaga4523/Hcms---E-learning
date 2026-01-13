@@ -3,7 +3,6 @@
 use App\Models\User;
 use Tests\TestCase;
 
-uses(TestCase::class);
 
 test('profile page is displayed', function () {
     /** @var \Tests\TestCase $this */

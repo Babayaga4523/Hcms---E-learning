@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Head, Link } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
 import { 
     BookOpen, Clock, Award, TrendingUp, Bell, Search, 
     PlayCircle, CheckCircle, Calendar, ArrowRight, 
-    MoreHorizontal, Star, Shield, Zap, ChevronRight 
+    MoreHorizontal, Star, Shield, Zap, ChevronRight, RotateCw 
 } from 'lucide-react';
 
 // --- Wondr Style System ---
@@ -126,10 +126,12 @@ const CourseCard = ({ course, type = 'grid' }) => {
             <div className="p-5 flex-1 flex flex-col">
                 <div className="mb-2 flex justify-between items-center">
                     <span className="text-xs font-bold text-[#005E54]">{course.category || 'Training'}</span>
-                    <div className="flex items-center gap-1 text-xs text-slate-400">
-                        <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />
-                        4.8
-                    </div>
+                    {course.rating ? (
+                        <div className="flex items-center gap-1 text-xs text-slate-400">
+                            <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />
+                            {Number(course.rating).toFixed(1)}
+                        </div>
+                    ) : null}
                 </div>
                 <h3 className="font-bold text-slate-900 mb-2 leading-tight group-hover:text-[#005E54] transition-colors line-clamp-2">
                     {course.title}
@@ -148,29 +150,230 @@ const CourseCard = ({ course, type = 'grid' }) => {
     );
 };
 
-const AnnouncementWidget = () => (
-    <div className="bg-gradient-to-br from-[#D6F84C] to-[#c2e43c] rounded-[24px] p-6 text-[#002824] relative overflow-hidden group cursor-pointer">
-        <div className="relative z-10">
-            <div className="flex items-center justify-between mb-2">
-                <span className="px-2 py-1 bg-[#002824]/10 rounded-lg text-xs font-bold uppercase">Pengumuman</span>
-                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+const AnnouncementWidget = ({ announcements = [], loading = false, error = null }) => {
+    const latest = announcements.length > 0 ? announcements[0] : null;
+
+    if (loading) {
+        return (
+            <div className="rounded-[24px] p-6 bg-white animate-pulse">
+                <div className="h-6 bg-slate-200 rounded w-3/4 mb-3"></div>
+                <div className="h-4 bg-slate-200 rounded w-full mb-2"></div>
+                <div className="h-4 bg-slate-200 rounded w-5/6"></div>
             </div>
-            <h4 className="font-extrabold text-lg leading-tight mb-1">Q1 Compliance Deadline</h4>
-            <p className="text-sm font-medium opacity-80">Selesaikan modul wajib sebelum akhir kuartal ini.</p>
+        );
+    }
+
+    return (
+        <div className="bg-gradient-to-br from-[#D6F84C] to-[#c2e43c] rounded-[24px] p-6 text-[#002824] relative overflow-hidden group cursor-pointer">
+            <div className="relative z-10">
+                <div className="flex items-center justify-between mb-2">
+                    <span className="px-2 py-1 bg-[#002824]/10 rounded-lg text-xs font-bold uppercase">Pengumuman</span>
+                    <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                </div>
+
+                {error ? (
+                    <>
+                        <h4 className="font-extrabold text-lg leading-tight mb-1">Gagal memuat pengumuman</h4>
+                        <p className="text-sm font-medium opacity-80">Silakan muat ulang halaman atau hubungi admin.</p>
+                    </>
+                ) : latest ? (
+                    <>
+                        <h4 className="font-extrabold text-lg leading-tight mb-1">{latest.title}</h4>
+                        <p className="text-sm font-medium opacity-80 line-clamp-2">{latest.content || latest.body}</p>
+                        {announcements.length > 1 && (
+                            <div className="mt-3 text-xs text-slate-800 font-medium">{announcements.length} pengumuman lainnya</div>
+                        )}
+                    </>
+                ) : (
+                    <>
+                        <h4 className="font-extrabold text-lg leading-tight mb-1">Tidak ada pengumuman aktif</h4>
+                        <p className="text-sm font-medium opacity-80">Saat ini tidak ada pengumuman. Periksa arsip pengumuman jika Anda mencari informasi sebelumnya.</p>
+                        <Link href="/announcements" className="inline-block mt-4 px-4 py-2 bg-white text-[#002824] rounded-lg font-bold">Lihat Pengumuman</Link>
+                    </>
+                )}
+            </div>
+            <div className="absolute -bottom-4 -right-4 w-24 h-24 bg-white/20 rounded-full blur-xl"></div>
         </div>
-        <div className="absolute -bottom-4 -right-4 w-24 h-24 bg-white/20 rounded-full blur-xl"></div>
+    );
+};
+
+const RecentActivity = ({ activities = [], loading = false, error = null, onRefresh = null }) => (
+    <div className="glass-card rounded-[24px] p-4">
+        <h3 className="font-bold text-slate-900 mb-3 flex items-center justify-between">
+            <span>Aktivitas Terbaru</span>
+            <div className="flex items-center gap-2">
+                {loading ? <span className="text-xs text-slate-400">Memuat...</span> : null}
+                <button onClick={onRefresh} className="p-1 rounded-full hover:bg-slate-100" title="Segarkan Aktivitas">
+                    <RotateCw className="w-4 h-4 text-slate-500" />
+                </button>
+            </div>
+        </h3>
+        <div className="space-y-3">
+            {loading ? (
+                Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="flex items-start gap-3 animate-pulse">
+                        <div className="w-9 h-9 rounded-full bg-slate-200" />
+                        <div className="flex-1">
+                            <div className="h-4 bg-slate-200 rounded w-3/4 mb-2" />
+                            <div className="h-3 bg-slate-200 rounded w-1/2" />
+                        </div>
+                    </div>
+                ))
+            ) : error ? (
+                <p className="text-sm text-red-500">{error}</p>
+            ) : activities.length > 0 ? (
+                activities.slice(0, 5).map((act, i) => (
+                    <div key={i} className="flex items-start gap-3">
+                        <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-sm font-bold text-[#005E54]">{act.user_initial || (act.actor ? act.actor.charAt(0) : 'U')}</div>
+                        <div>
+                            <div className="text-sm font-medium text-slate-800">{act.title || act.action}</div>
+                            <div className="text-xs text-slate-500">{act.time || new Date(act.created_at || act.date || Date.now()).toLocaleString('id-ID')}</div>
+                        </div>
+                    </div>
+                ))
+            ) : (
+                <div className="text-center text-sm text-slate-400">
+                    <p>Belum ada aktivitas terbaru</p>
+                    <Link href="/activity" className="inline-block mt-3 px-3 py-1 bg-[#D6F84C] text-[#002824] rounded font-bold">Lihat Semua Aktivitas</Link>
+                </div>
+            )}
+        </div>
+        {!loading && <Link href="/activity" className="block mt-3 text-xs text-[#005E54] font-bold hover:underline">Lihat Semua Aktivitas</Link>}
     </div>
 );
 
 // --- Main Layout ---
 
-export default function Dashboard({ auth, trainings = [], completedTrainings = [], upcomingTrainings = [], recentActivity = [] }) {
+export default function Dashboard({ auth, trainings = [], completedTrainings = [], upcomingTrainings = [], recentActivity = [], announcements = [], notifications = { unread_count: 0 } }) {
     const user = auth?.user || {};
+
+    // Search state (uses backend API when searching)
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchResults, setSearchResults] = useState(null);
+    const [isSearching, setIsSearching] = useState(false);
+    const [searchError, setSearchError] = useState(null);
+
+    // Announcements state (fetch from API /api/announcements/active)
+    const [announcementsData, setAnnouncementsData] = useState(Array.isArray(announcements) ? announcements : []);
+    const [announcementsLoading, setAnnouncementsLoading] = useState(false);
+    const [announcementsError, setAnnouncementsError] = useState(null);
+
+    // Recent activity (initialize from server prop, allow refresh)
+    const [recentActivities, setRecentActivities] = useState(Array.isArray(recentActivity) ? recentActivity : []);
+    const [recentLoading, setRecentLoading] = useState(false);
+    const [recentError, setRecentError] = useState(null);
+
+    // Upcoming trainings (from server prop, allow refresh)
+    const [upcomingData, setUpcomingData] = useState(Array.isArray(upcomingTrainings) ? upcomingTrainings : []);
+    const [upcomingLoading, setUpcomingLoading] = useState(false);
+    const [upcomingError, setUpcomingError] = useState(null);
+
+    // Dashboard statistics (use /api/dashboard/statistics)
+    const [stats, setStats] = useState(null);
+    const [statsLoading, setStatsLoading] = useState(false);
+    const [statsError, setStatsError] = useState(null);
+
+    const fetchUpcoming = async () => {
+        setUpcomingLoading(true);
+        setUpcomingError(null);
+        try {
+            const res = await fetch('/api/dashboard/upcoming', { headers: { Accept: 'application/json' }});
+            if (!res.ok) throw new Error('Network response was not ok');
+            const data = await res.json();
+            setUpcomingData(Array.isArray(data) ? data : []);
+        } catch (err) {
+            setUpcomingError('Gagal memuat jadwal mendatang');
+        } finally {
+            setUpcomingLoading(false);
+        }
+    };
+
+    const fetchStats = async () => {
+        setStatsLoading(true);
+        setStatsError(null);
+        try {
+            const res = await fetch('/api/dashboard/statistics', { headers: { Accept: 'application/json' }});
+            if (!res.ok) throw new Error('Network response was not ok');
+            const data = await res.json();
+            setStats(data);
+        } catch (err) {
+            setStatsError('Gagal memuat statistik');
+        } finally {
+            setStatsLoading(false);
+        }
+    };
+
+    const fetchAnnouncements = async () => {
+        setAnnouncementsLoading(true);
+        setAnnouncementsError(null);
+        try {
+            const res = await fetch('/api/announcements/active', { headers: { Accept: 'application/json' }});
+            if (!res.ok) throw new Error('Network response was not ok');
+            const data = await res.json();
+            setAnnouncementsData(Array.isArray(data) ? data : []);
+        } catch (err) {
+            setAnnouncementsError('Gagal memuat pengumuman');
+        } finally {
+            setAnnouncementsLoading(false);
+        }
+    };
+
+    const fetchRecent = async () => {
+        setRecentLoading(true);
+        setRecentError(null);
+        try {
+            const res = await fetch('/api/user/recent-activity', { headers: { Accept: 'application/json' }});
+            if (!res.ok) throw new Error('Network response was not ok');
+            const data = await res.json();
+            setRecentActivities(Array.isArray(data) ? data : []);
+        } catch (err) {
+            setRecentError('Gagal memuat aktivitas terbaru');
+        } finally {
+            setRecentLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        // Fetch both on mount to keep UI live (server props provide initial state)
+        fetchAnnouncements();
+        fetchRecent();
+        fetchUpcoming();
+        fetchStats();
+    }, []);
+
+    const handleSearch = async (e) => {
+        e?.preventDefault?.();
+        if (!searchQuery.trim()) {
+            setSearchResults(null);
+            return;
+        }
+
+        setIsSearching(true);
+        setSearchError(null);
+
+        try {
+            const res = await fetch(`/api/user/trainings?search=${encodeURIComponent(searchQuery)}`, {
+                headers: { Accept: 'application/json' }
+            });
+
+            if (!res.ok) throw new Error('Network response was not ok');
+
+            const data = await res.json();
+            setSearchResults(Array.isArray(data) ? data : []);
+        } catch (err) {
+            setSearchError('Gagal mengambil hasil pencarian');
+            // fallback: client-side filter (derive from `trainings` prop to avoid referencing `trainingsArray` before it's declared)
+            const fallback = (Array.isArray(trainings) ? trainings : Object.values(trainings || {})).filter(t => (t.title || '').toLowerCase().includes(searchQuery.toLowerCase()));
+            setSearchResults(fallback);
+        } finally {
+            setIsSearching(false);
+        }
+    };
 
     // Ensure trainings is always an array
     const trainingsArray = Array.isArray(trainings) ? trainings : Object.values(trainings || {});
     const completedArray = Array.isArray(completedTrainings) ? completedTrainings : Object.values(completedTrainings || {});
-    const upcomingArray = Array.isArray(upcomingTrainings) ? upcomingTrainings : Object.values(upcomingTrainings || {});
+    const upcomingArray = Array.isArray(upcomingData) ? upcomingData : Object.values(upcomingData || {});
 
     // Calculate statistics
     const totalTrainings = trainingsArray.length || 0;
@@ -178,25 +381,37 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
     const inProgressCount = trainingsArray.filter(t => t?.status === 'in_progress').length || 0;
     const certifications = trainingsArray.filter(t => t?.is_certified).length || 0;
     
-    // Get active courses (in progress)
-    const activeCourses = trainingsArray.filter(t => t?.status === 'in_progress');
-    // Include both 'enrolled' (from backend) and 'not_started' as assigned courses
-    const assignedCourses = trainingsArray.filter(t => t?.status === 'assigned' || t?.status === 'not_started' || t?.status === 'enrolled');
+    // Get active courses (in progress or can be started: enrolled/not_started)
+    const activeCourses = trainingsArray
+        .filter(t => ['in_progress', 'enrolled', 'not_started'].includes(t?.status))
+        // Sort so in-progress & higher progress items show first
+        .sort((a, b) => (b.progress || 0) - (a.progress || 0));
+
+    // Build assigned list from both trainings marked as assigned and upcomingTrainings passed from the server
+    const assignedFromTrainings = trainingsArray.filter(t => t?.status === 'assigned' || t?.status === 'not_started' || t?.status === 'enrolled');
+    // Merge and dedupe by id
+    const assignedMap = {};
+    assignedFromTrainings.forEach(t => { if (t && t.id) assignedMap[t.id] = t; });
+    (upcomingArray || []).forEach(t => { if (t && t.id) assignedMap[t.id] = { ...t, status: 'assigned' }; });
+    const assignedList = Object.values(assignedMap);
 
     // Get first active course for "Continue Learning"
-    const continueCourse = activeCourses[0] || trainingsArray[0];
-
+    const continueCourse = activeCourses[0] || trainingsArray[0] || assignedList[0] || upcomingArray[0];
     // Calculate total learning hours
     const totalHours = trainingsArray.reduce((acc, t) => acc + (t?.duration_hours || 0), 0);
 
     const [activeTab, setActiveTab] = useState('active');
 
     const getDisplayCourses = () => {
+        if (searchQuery && searchResults !== null) {
+            return searchResults;
+        }
+
         switch (activeTab) {
             case 'active':
                 return activeCourses;
             case 'assigned':
-                return assignedCourses;
+                return assignedList;
             case 'completed':
                 return completedArray;
             default:
@@ -223,17 +438,25 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
                                 <span className="text-white font-bold tracking-tight text-lg">Learning Hub</span>
                             </div>
                             <div className="flex items-center gap-4">
-                                <div className="relative hidden md:block">
+                                <form onSubmit={handleSearch} className="relative hidden md:block">
                                     <input 
                                         type="text" 
                                         placeholder="Cari kursus..." 
-                                        className="pl-10 pr-4 py-2 bg-white/10 border border-white/10 rounded-full text-white placeholder-white/50 text-sm focus:outline-none focus:bg-white/20 transition-all w-48 focus:w-64"
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        className="pl-10 pr-20 py-2 bg-white/10 border border-white/10 rounded-full text-white placeholder-white/50 text-sm focus:outline-none focus:bg-white/20 transition-all w-48 focus:w-64"
                                     />
+                                    <button type="submit" className="absolute right-1 top-1/2 -translate-y-1/2 px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs">Cari</button>
                                     <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/50" />
-                                </div>
+                                    {isSearching && <span className="absolute left-10 top-full text-xs mt-1 text-white">Mencari...</span>}
+                                </form>
                                 <Link href="/notifications" className="relative p-2 bg-white/10 rounded-full hover:bg-white/20 transition text-white">
                                     <Bell className="w-5 h-5" />
-                                    <span className="absolute top-1 right-1.5 w-2 h-2 bg-red-500 rounded-full border border-[#002824]"></span>
+                                    {notifications?.unread_count > 0 && (
+                                        <span className="absolute -top-1 -right-1.5 min-w-[18px] h-5 px-1.5 text-xs flex items-center justify-center bg-red-500 rounded-full border border-[#002824] font-bold">
+                                            {notifications.unread_count}
+                                        </span>
+                                    )}
                                 </Link>
                                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#D6F84C] to-[#005E54] p-[2px]">
                                     <div className="w-full h-full rounded-full bg-slate-800 flex items-center justify-center text-white font-bold text-sm">
@@ -352,7 +575,7 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
                                     <h3 className="text-xl font-bold text-slate-900 mb-4">Rekomendasi Untuk Anda</h3>
                                     <div className="space-y-4 animate-enter" style={{ animationDelay: '400ms' }}>
                                         {upcomingArray.slice(0, 3).map(course => (
-                                            <CourseCard key={course.id} course={{...course, progress: 0}} type="list" />
+                                            <CourseCard key={course.id} course={course} type="list" />
                                         ))}
                                     </div>
                                 </div>
@@ -364,7 +587,10 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
                         <div className="lg:col-span-4 space-y-6">
                             
                             {/* Announcement Widget */}
-                            <AnnouncementWidget />
+                            <AnnouncementWidget announcements={announcementsData} loading={announcementsLoading} error={announcementsError} />
+
+                            {/* Recent Activity */}
+                            <RecentActivity activities={recentActivities} loading={recentLoading} error={recentError} onRefresh={fetchRecent} />
 
                             {/* Calendar / Upcoming Widget */}
                             <div className="glass-card rounded-[24px] p-6">
@@ -372,7 +598,19 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
                                     <Calendar className="w-5 h-5 text-[#005E54]" /> Jadwal Mendatang
                                 </h3>
                                 <div className="space-y-4">
-                                    {upcomingArray.length > 0 ? (
+                                    {upcomingLoading ? (
+                                        Array.from({ length: 2 }).map((_, i) => (
+                                            <div key={i} className="flex gap-4 items-center animate-pulse">
+                                                <div className="bg-slate-200 rounded-xl p-2 text-center min-w-[3.5rem] h-16" />
+                                                <div className="flex-1">
+                                                    <div className="h-4 bg-slate-200 rounded w-3/4 mb-2" />
+                                                    <div className="h-3 bg-slate-200 rounded w-1/3" />
+                                                </div>
+                                            </div>
+                                        ))
+                                    ) : upcomingError ? (
+                                        <p className="text-sm text-red-500 text-center py-4">{upcomingError}</p>
+                                    ) : upcomingArray.length > 0 ? (
                                         upcomingArray.slice(0, 2).map((event, idx) => (
                                             <div key={idx} className="flex gap-4 items-center">
                                                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 text-center min-w-[3.5rem]">
@@ -393,9 +631,10 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
                                         <p className="text-sm text-slate-400 text-center py-4">Tidak ada jadwal mendatang</p>
                                     )}
                                 </div>
-                                <Link href="/training-calendar" className="block w-full mt-4 py-2.5 text-sm font-bold text-slate-600 bg-slate-50 rounded-xl hover:bg-slate-100 transition text-center">
-                                    Buka Kalender
-                                </Link>
+                                <div className="flex gap-2 mt-4">
+                                    <Link href="/training-calendar" className="flex-1 py-2.5 text-sm font-bold text-slate-600 bg-slate-50 rounded-xl hover:bg-slate-100 transition text-center">Buka Kalender</Link>
+                                    <button onClick={fetchUpcoming} className="px-3 py-2 rounded-xl bg-[#D6F84C] text-[#002824] font-bold">Segarkan</button>
+                                </div>
                             </div>
 
                             {/* Achievement Widget */}
@@ -412,24 +651,25 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
                                             </div>
                                             <div>
                                                 <span className="text-sm font-bold">Total Progress</span>
-                                                <p className="text-xs text-slate-300">{totalTrainings} Training</p>
+                                                <p className="text-xs text-slate-300">{stats ? `${stats.total_trainings} Training` : `${totalTrainings} Training`}</p>
                                             </div>
                                         </div>
                                         <span className="text-2xl font-extrabold text-[#D6F84C]">
-                                            {totalTrainings > 0 ? Math.round((completedCount / totalTrainings) * 100) : 0}%
+                                            {stats ? `${stats.completion_percentage}%` : (totalTrainings > 0 ? Math.round((completedCount / totalTrainings) * 100) : 0)}
                                         </span>
                                     </div>
                                     
                                     <div className="grid grid-cols-2 gap-3">
                                         <div className="p-3 bg-slate-50 rounded-xl text-center">
-                                            <p className="text-2xl font-extrabold text-[#005E54]">{completedCount}</p>
+                                            <p className="text-2xl font-extrabold text-[#005E54]">{stats ? stats.completed_count : completedCount}</p>
                                             <p className="text-xs text-slate-500 font-medium">Selesai</p>
                                         </div>
                                         <div className="p-3 bg-slate-50 rounded-xl text-center">
-                                            <p className="text-2xl font-extrabold text-[#005E54]">{certifications}</p>
+                                            <p className="text-2xl font-extrabold text-[#005E54]">{stats ? stats.certifications : certifications}</p>
                                             <p className="text-xs text-slate-500 font-medium">Sertifikat</p>
                                         </div>
                                     </div>
+                                    {statsError && <p className="text-xs text-red-500">{statsError}</p>}
                                 </div>
                             </div>
 

@@ -6,6 +6,7 @@ import {
     Check, X, Smartphone, Clock, Zap, Shield, Globe
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import showToast from '@/Utils/toast';
 
 // --- REUSABLE COMPONENTS ---
 
@@ -140,13 +141,13 @@ export default function NotificationPreferences() {
             });
 
             if (res.ok) {
-                alert('Preferensi notifikasi berhasil disimpan');
+                showToast('Preferensi notifikasi berhasil disimpan', 'success');
             } else {
-                alert('Gagal menyimpan preferensi notifikasi');
+                showToast('Gagal menyimpan preferensi notifikasi', 'error');
             }
         } catch (err) {
             console.error(err);
-            alert('Gagal menyimpan preferensi notifikasi');
+            showToast('Gagal menyimpan preferensi notifikasi', 'error');
         } finally {
             setSaving(false);
         }

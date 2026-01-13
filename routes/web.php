@@ -74,6 +74,9 @@ Route::middleware(['auth'])->group(function () {
     
     // Training Certificate - uses controller to fetch real data
     Route::get('/training/{id}/certificate', [\App\Http\Controllers\User\CertificateController::class, 'showPage'])->name('user.training.certificate');
+
+    // Training Results / Review page
+    Route::get('/training/{id}/results', [\App\Http\Controllers\User\TrainingController::class, 'results'])->name('user.training.results');
     
     // ========================================
     // USER MATERIAL ROUTES
@@ -143,9 +146,17 @@ Route::middleware(['auth'])->group(function () {
     // Certificate API
     Route::get('/api/certificate/{id}', [\App\Http\Controllers\User\CertificateController::class, 'show'])->name('user.api.certificate.show');
     Route::get('/api/certificate/{id}/download', [\App\Http\Controllers\User\CertificateController::class, 'download'])->name('user.api.certificate.download');
+
+    // Debug: certificate eligibility (local only)
+    Route::get('/api/debug/certificate-eligibility', [\App\Http\Controllers\User\CertificateController::class, 'debugEligibility'])->name('api.debug.certificate-eligibility');
     
     // Public API Routes for User Access
     Route::get('/api/announcements/active', [\App\Http\Controllers\Admin\AnnouncementController::class, 'getActiveAnnouncements'])->name('api.announcements.active');
+    // Recent activity API for dashboard (returns last activities for authenticated user)
+    Route::get('/api/user/recent-activity', [\App\Http\Controllers\DashboardController::class, 'getRecentActivityApi'])->name('api.user.recent-activity');
+
+    // Upcoming trainings for dashboard (refreshable)
+    Route::get('/api/dashboard/upcoming', [\App\Http\Controllers\DashboardController::class, 'getUpcomingTrainingsApi'])->name('api.dashboard.upcoming');
     Route::get('/api/user/notifications', [\App\Http\Controllers\Admin\NotificationController::class, 'getUserNotifications'])->name('api.user.notifications');
     Route::patch('/api/user/notifications/{id}/read', [\App\Http\Controllers\Admin\NotificationController::class, 'markAsRead'])->name('api.user.notifications.read');
     Route::delete('/api/user/notifications/{id}', [\App\Http\Controllers\Admin\NotificationController::class, 'deleteNotification'])->name('api.user.notifications.delete');
@@ -290,7 +301,8 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::get('/admin/training-programs/{id}/analytics', function($id) {
         $program = \App\Models\Module::findOrFail($id);
         $enrollmentCount = DB::table('user_trainings')->where('module_id', $id)->count();
-        $completionCount = DB::table('user_trainings')->where('module_id', $id)->where('is_completed', true)->count();
+        // Use status field (values: enrolled, in_progress, completed) instead of non-existent is_completed column
+        $completionCount = DB::table('user_trainings')->where('module_id', $id)->where('status', 'completed')->count();
         $avgScore = DB::table('exam_attempts')->where('module_id', $id)->avg('score');
         $passRate = DB::table('exam_attempts')->where('module_id', $id)->where('score', '>=', $program->passing_grade)->count();
         

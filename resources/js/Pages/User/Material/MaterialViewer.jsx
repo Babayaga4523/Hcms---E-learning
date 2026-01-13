@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Head, Link, router } from '@inertiajs/react';
+import showToast from '@/Utils/toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
     ArrowLeft, ChevronRight, ChevronLeft, CheckCircle2, 
@@ -314,9 +315,20 @@ const PDFViewer = ({ url, title }) => (
                     <p className="text-slate-500 mb-8 text-sm leading-relaxed">
                         Dokumen PDF tersedia untuk dibaca. Klik tombol di bawah untuk membuka atau mengunduh file.
                     </p>
-                    <button className="w-full px-6 py-4 bg-[#002824] text-[#D6F84C] rounded-2xl font-bold hover:bg-[#00403a] transition shadow-xl flex items-center justify-center gap-3">
-                        <Download size={20} /> Buka / Download PDF
-                    </button>
+                    {url ? (
+                        <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="w-full px-6 py-4 bg-[#002824] text-[#D6F84C] rounded-2xl font-bold hover:bg-[#00403a] transition shadow-xl flex items-center justify-center gap-3"
+                        >
+                            <Download size={20} /> Buka / Download PDF
+                        </a>
+                    ) : (
+                        <div className="w-full px-6 py-4 bg-slate-200 text-slate-500 rounded-2xl font-bold flex items-center justify-center gap-3">
+                            <span>Tidak ada file untuk diunduh</span>
+                        </div>
+                    )}
                 </div>
             </div>
         )}
@@ -408,6 +420,8 @@ export default function MaterialViewer({ auth, trainingId, materialId }) {
     const [actionLoading, setActionLoading] = useState(false);
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [confetti, setConfetti] = useState(false);
+    // Authoritative progress percentage returned by server (ModuleProgress)
+    const [serverProgress, setServerProgress] = useState(null);
 
     useEffect(() => {
         loadMaterialData();
@@ -422,9 +436,11 @@ export default function MaterialViewer({ auth, trainingId, materialId }) {
             setMaterial(response.data.material);
             setMaterials(response.data.materials || []);
             setIsCompleted(response.data.material.is_completed || false);
+            // Use server-side authoritative progress percentage when available
+            setServerProgress(typeof response.data.progress_percentage !== 'undefined' ? response.data.progress_percentage : (response.data.progress?.progress_percentage ?? null));
         } catch (error) {
             console.error('Failed to load material:', error);
-            alert('Gagal memuat materi.');
+            showToast('Gagal memuat materi.', 'error');
         } finally {
             setLoading(false);
         }
@@ -436,10 +452,16 @@ export default function MaterialViewer({ auth, trainingId, materialId }) {
         try {
             setActionLoading(true);
 
-            await axios.post(`/api/training/${trainingId}/material/${materialId}/complete`);
+            const res = await axios.post(`/api/training/${trainingId}/material/${materialId}/complete`);
             setIsCompleted(true);
             setConfetti(true);
-            
+
+            // Update server progress if provided
+            const newProgress = (res.data && typeof res.data.progress_percentage !== 'undefined') ? res.data.progress_percentage : (res.data?.progress?.progress_percentage ?? null);
+            if (newProgress !== null) {
+                setServerProgress(newProgress);
+            }
+
             const updated = [...materials];
             const idx = updated.findIndex(m => m.id === material.id);
             if (idx !== -1) updated[idx].is_completed = true;
@@ -448,16 +470,17 @@ export default function MaterialViewer({ auth, trainingId, materialId }) {
             // Auto-navigate after marking complete
             setTimeout(() => {
                 setConfetti(false);
-                // Move to next material if available, otherwise return to training page
+                // Move to next material only if available; do NOT auto-redirect to training detail
                 if (currentIndex < materials.length - 1) {
                     handleMaterialChange(materials[currentIndex + 1]);
                 } else {
-                    router.visit(`/training/${trainingId}`);
+                    // Stay on the completed material and let the user click "Kembali" when ready
+                    showToast('Materi selesai. Klik "Kembali" untuk kembali ke halaman training.', 'success');
                 }
             }, 2000);
         } catch (error) {
             console.error('Failed to mark as complete:', error);
-            alert('Gagal menandai materi sebagai selesai.');
+            showToast('Gagal menandai materi sebagai selesai.', 'error');
         } finally {
             setActionLoading(false);
         }
@@ -469,6 +492,22 @@ export default function MaterialViewer({ auth, trainingId, materialId }) {
 
     const currentIndex = materials.findIndex(m => m.id === material.id);
     const totalMaterials = materials.length;
+
+    // Determine if the current material is completed using authoritative materials list
+    const currentIsCompleted = Boolean(
+        (materials && materials.find(m => m.id === material.id && m.is_completed)) || isCompleted
+    );
+
+    // When returning to tab (e.g., after taking a quiz), refresh material data to reflect any changes
+    useEffect(() => {
+        const onVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                loadMaterialData();
+            }
+        };
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+    }, [trainingId, materialId]);
 
     const handleNext = () => {
         if (currentIndex < materials.length - 1) {
@@ -492,13 +531,13 @@ export default function MaterialViewer({ auth, trainingId, materialId }) {
             navigator.share({ title: material.title, text, url: shareUrl }).catch(console.error);
         } else {
             navigator.clipboard.writeText(shareUrl).then(() => {
-                alert('Link berhasil disalin ke clipboard');
+                showToast('Link berhasil disalin ke clipboard', 'success');
             });
         }
     };
 
     const completedCount = materials.filter(m => m.is_completed).length;
-    const progressPercent = totalMaterials > 0 ? Math.round((completedCount / totalMaterials) * 100) : 0;
+    const progressPercent = serverProgress !== null ? serverProgress : (totalMaterials > 0 ? Math.round((completedCount / totalMaterials) * 100) : 0);
 
     const renderContent = () => {
         if (!material.type) return null;
@@ -529,28 +568,52 @@ export default function MaterialViewer({ auth, trainingId, materialId }) {
                 );
             }
             
-            // Jika tidak ada URL video valid, tampilkan placeholder
+            // Jika tidak ada URL video valid, tampilkan placeholder dengan skeleton dan CTA bantuan
             return (
-                <div className="w-full h-full bg-gradient-to-br from-slate-900 to-slate-800 flex flex-col items-center justify-center text-white">
-                    <div className="w-24 h-24 bg-white/10 rounded-full flex items-center justify-center mb-6">
-                        <PlayCircle size={48} className="opacity-50" />
+                <div className="w-full h-full bg-gradient-to-br from-slate-900 to-slate-800 flex flex-col items-center justify-center text-white p-6">
+                    <div className="w-full max-w-2xl">
+                        <div className="animate-pulse mb-6">
+                            <div className="bg-white/5 rounded-lg h-56 mb-4"></div>
+                            <div className="h-6 bg-white/10 rounded w-3/4 mb-2"></div>
+                            <div className="h-4 bg-white/8 rounded w-1/2"></div>
+                        </div>
+                        <div className="text-center">
+                            <h3 className="text-xl font-bold mb-2">{material.title}</h3>
+                            <p className="text-white/60 text-sm mb-4">Video tidak tersedia untuk materi ini.</p>
+                            <div className="flex items-center justify-center gap-3">
+                                <button onClick={() => loadMaterialData()} className="px-4 py-2 bg-[#D6F84C] text-[#002824] rounded-lg font-bold hover:bg-[#c2e43c]">Coba Muat Ulang</button>
+                                <a
+                                    href={`mailto:support@yourdomain.com?subject=${encodeURIComponent(`Permintaan bantuan materi: ${material.title}`)}&body=${encodeURIComponent(`Training ID: ${trainingId}%0AMaterial ID: ${material.id}%0AURL: ${url || 'N/A'}%0A`)}`}
+                                    className="px-4 py-2 bg-white/10 text-white rounded-lg hover:bg-white/20"
+                                >
+                                    Minta Bantuan
+                                </a>
+                            </div>
+                        </div>
                     </div>
-                    <h3 className="text-xl font-bold mb-2">{material.title}</h3>
-                    <p className="text-white/60 text-sm">Video tidak tersedia</p>
                 </div>
             );
         }
         
-        // Jika tidak ada URL, tampilkan placeholder
+        // Jika tidak ada URL, tampilkan placeholder yang lebih informatif dengan CTA
         if (!url) {
             return (
                 <div className="w-full h-full bg-gradient-to-br from-slate-100 to-slate-200 flex flex-col items-center justify-center text-center p-8">
-                    <div className="bg-white p-10 rounded-3xl shadow-xl border border-slate-200 max-w-md">
-                        <div className="w-20 h-20 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-6 text-slate-400">
+                    <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-200 max-w-md w-full">
+                        <div className="w-20 h-20 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4 text-slate-400">
                             <FileText size={40} />
                         </div>
-                        <h3 className="text-2xl font-bold text-slate-900 mb-3">{material.title}</h3>
-                        <p className="text-slate-500">Konten tidak tersedia</p>
+                        <h3 className="text-xl font-bold text-slate-900 mb-2 line-clamp-2">{material.title}</h3>
+                        <p className="text-slate-500 mb-6">Konten tidak tersedia atau belum diunggah oleh instruktur.</p>
+                        <div className="flex gap-3 justify-center">
+                            <button onClick={() => loadMaterialData()} className="px-4 py-2 bg-[#005E54] text-white rounded-lg font-bold hover:bg-[#004a44]">Coba Muat Ulang</button>
+                            <a
+                                href={`mailto:support@yourdomain.com?subject=${encodeURIComponent(`Permintaan bantuan materi: ${material.title}`)}&body=${encodeURIComponent(`Training ID: ${trainingId}%0AMaterial ID: ${material.id}%0A`)}`}
+                                className="px-4 py-2 bg-white/10 text-slate-900 rounded-lg hover:bg-white/20"
+                            >
+                                Laporkan Masalah / Minta Bantuan
+                            </a>
+                        </div>
                     </div>
                 </div>
             );
@@ -694,7 +757,7 @@ export default function MaterialViewer({ auth, trainingId, materialId }) {
                             <ChevronLeft size={22} />
                         </button>
 
-                        {!isCompleted ? (
+                        {!currentIsCompleted ? (
                             <button 
                                 onClick={handleMarkComplete}
                                 disabled={actionLoading}
@@ -710,15 +773,13 @@ export default function MaterialViewer({ auth, trainingId, materialId }) {
                                 )}
                             </button>
                         ) : (
+                            // If material already completed and user is viewing it, show a simple "Kembali" button
                             <button 
-                                onClick={handleNext}
-                                className="px-4 sm:px-5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-bold shadow-lg transition hover:scale-105 flex items-center gap-2 text-sm"
+                                onClick={() => router.visit(`/training/${trainingId}`)}
+                                className="px-4 sm:px-5 py-2 bg-white text-[#002824] rounded-lg font-bold shadow-sm border border-slate-200 flex items-center gap-2 text-sm hover:bg-slate-50"
                             >
-                                <CheckCircle2 size={16} /> 
-                                <span className="hidden sm:inline">
-                                    {currentIndex < materials.length - 1 ? 'Lanjut' : 'Kembali'}
-                                </span>
-                                <ChevronRight size={16} />
+                                <ChevronLeft size={16} />
+                                <span className="hidden sm:inline">Kembali</span>
                             </button>
                         )}
                         

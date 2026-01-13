@@ -7,6 +7,7 @@ import {
     Send, HelpCircle, Timer, X, Menu, Settings, Check
 } from 'lucide-react';
 import axios from 'axios';
+import showToast from '@/Utils/toast';
 
 // --- Wondr Style System ---
 const WondrStyles = () => (
@@ -228,27 +229,60 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
         setShowSubmitModal(true);
     }, []);
 
-    // Submit quiz
+    // Submit quiz with retry logic
     const handleSubmit = async () => {
+        const maxRetries = 2; // total attempts = maxRetries + 1
+        const formattedAnswers = Object.entries(answers).map(([index, answer]) => ({
+            question_id: questions[parseInt(index)].id,
+            answer: answer
+        }));
+
+        setShowSubmitModal(false);
+        setLoading(true);
+
+        const submitAttempt = async (attempt = 0) => {
+            try {
+                const response = await axios.post(`/api/quiz/${examAttempt.id}/submit`, {
+                    answers: formattedAnswers
+                });
+
+                // Redirect to result page
+                router.visit(`/training/${training.id}/quiz/${quiz.type}/result/${response.data.attempt_id || examAttempt.id}`);
+                return true;
+            } catch (error) {
+                console.error(`Submit attempt ${attempt + 1} failed:`, error);
+
+                // If client error (4xx) other than 429, don't retry
+                const status = error?.response?.status;
+                const serverMsg = error?.response?.data?.message || 'Gagal mengirim jawaban.';
+
+                if (status === 401) {
+                    // Redirect to login
+                    window.location.href = '/login';
+                    return false;
+                }
+
+                if (status && status >= 400 && status < 500 && status !== 429) {
+                    showToast(serverMsg + ' Silakan periksa jawaban Anda.', 'error');
+                    return false;
+                }
+
+                if (attempt < maxRetries) {
+                    const nextAttempt = attempt + 1;
+                    const backoff = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s...
+                    showToast(`${serverMsg} Mencoba ulang (${nextAttempt}/${maxRetries + 1})...`, 'warning');
+                    await new Promise(res => setTimeout(res, backoff));
+                    return submitAttempt(nextAttempt);
+                }
+
+                // Exhausted retries
+                showToast(serverMsg + ' Gagal setelah beberapa percobaan. Silakan coba lagi nanti.', 'error');
+                return false;
+            }
+        };
+
         try {
-            setLoading(true);
-            setShowSubmitModal(false);
-            
-            // Format answers for API
-            const formattedAnswers = Object.entries(answers).map(([index, answer]) => ({
-                question_id: questions[parseInt(index)].id,
-                answer: answer
-            }));
-            
-            const response = await axios.post(`/api/quiz/${examAttempt.id}/submit`, {
-                answers: formattedAnswers
-            });
-            
-            // Redirect to result page
-            router.visit(`/training/${training.id}/quiz/${quiz.type}/result/${response.data.attempt_id || examAttempt.id}`);
-        } catch (error) {
-            console.error('Failed to submit quiz:', error);
-            alert('Gagal mengirim jawaban. Silakan coba lagi.');
+            await submitAttempt(0);
         } finally {
             setLoading(false);
         }

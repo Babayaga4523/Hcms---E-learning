@@ -125,10 +125,10 @@ export default function SystemSettings() {
             await loadSettings();
             
             // Show success message
-            alert('Settings saved successfully!');
+            showToast('Settings saved successfully!', 'success');
         } catch (error) {
             console.error('Failed to save settings:', error);
-            alert('Failed to save settings. Please try again.');
+            showToast('Failed to save settings. Please try again.', 'error');
         } finally {
             setLoading(false);
         }

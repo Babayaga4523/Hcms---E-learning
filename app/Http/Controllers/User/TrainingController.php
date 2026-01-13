@@ -87,6 +87,11 @@ class TrainingController extends Controller
                     ? $module->instructor->name 
                     : 'BNI Learning Team';
                 
+                // Prefer module progress if available (keeps progress consistent across user pages)
+                $moduleProgress = \App\Models\ModuleProgress::where('user_id', $user->id)->where('module_id', $module->id)->first();
+
+                $computedProgress = $moduleProgress ? (int)$moduleProgress->progress_percentage : ($enrollment->final_score ?? 0);
+
                 return [
                     'id' => $module->id,
                     'title' => $module->title,
@@ -100,6 +105,7 @@ class TrainingController extends Controller
                     'thumbnail' => $module->cover_image,
                     'enrolled' => $enrollment ? true : false,
                     'is_new' => $module->created_at->isAfter(now()->subDays(30)),
+                    'progress' => $computedProgress,
                 ];
             });
             
@@ -133,6 +139,18 @@ class TrainingController extends Controller
     public function index(Request $request)
     {
         try {
+            // Debug log: record that index was hit and whether user is authenticated
+            
+            Log::info('TrainingController@index called', ['status' => $request->get('status', 'all'), 'search' => $request->get('search', ''), 'hasAuth' => Auth::check()]);
+
+            // Ensure the user is authenticated; return a clear 401 for API callers if not
+            if (!Auth::check()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthenticated'
+                ], 401);
+            }
+
             $user = Auth::user();
             $status = $request->get('status', 'all');
             $search = $request->get('search', '');
@@ -165,16 +183,24 @@ class TrainingController extends Controller
             $trainings = $query->orderBy('user_trainings.enrolled_at', 'desc')
                 ->paginate(12);
             
-            // Transform to add materials_count
-            $trainings->getCollection()->transform(function($training) {
+// Transform to add materials_count and prefer ModuleProgress for progress
+            $trainings->getCollection()->transform(function($training) use ($user) {
                 // Count virtual materials from module fields
                 $count = 0;
                 if ($training->video_url) $count++;
                 if ($training->document_url) $count++;
                 if ($training->presentation_url) $count++;
                 if ($count === 0) $count = 1; // At least one content material
-                
+
                 $training->materials_count = $count;
+
+                // Prefer module progress percentage if available to keep frontend consistent
+                $moduleProgress = \App\Models\ModuleProgress::where('user_id', $user->id)
+                    ->where('module_id', $training->id)
+                    ->first();
+
+                $training->progress = $moduleProgress ? (int)$moduleProgress->progress_percentage : ($training->progress ?? 0);
+
                 return $training;
             });
             
@@ -192,11 +218,13 @@ class TrainingController extends Controller
                 'stats' => $stats
             ]);
         } catch (\Exception $e) {
-            Log::error('Failed to load trainings: ' . $e->getMessage());
+            // Log full exception with trace for debugging
+            Log::error('Failed to load trainings: ' . $e->getMessage(), ['exception' => $e]);
             
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal memuat data training',
+                'error' => $e->getMessage(),
                 'trainings' => ['data' => []],
                 'stats' => [
                     'total' => 0,
@@ -204,7 +232,7 @@ class TrainingController extends Controller
                     'completed' => 0,
                     'not_started' => 0
                 ]
-            ], 200); // Return 200 to prevent frontend errors
+            ], 500);
         }
     }
     
@@ -288,18 +316,170 @@ class TrainingController extends Controller
                 }
             }
             
+            // Get list of completed training_material IDs for this user/module
+            // Consider legacy module-level assets and training_materials when listing materials
+            $module = Module::find($id);
+            $expectedIds = [];
+            $nextId = 1;
+            if ($module) {
+                if ($module->video_url) $expectedIds[] = $nextId++;
+                if ($module->document_url) $expectedIds[] = $nextId++;
+                if ($module->presentation_url) $expectedIds[] = $nextId++;
+            }
+            $trainingMaterialIds = \App\Models\TrainingMaterial::where('module_id', $id)->pluck('id')->toArray();
+            $expectedIds = array_merge($expectedIds, $trainingMaterialIds);
+
+            $completedMaterialIds = \App\Models\UserMaterialProgress::where('user_id', $user->id)
+                ->whereIn('training_material_id', $expectedIds)
+                ->where('is_completed', true)
+                ->pluck('training_material_id')
+                ->toArray();
+
+            Log::info('Completed materials for user', ['user_id' => $user->id, 'module_id' => $id, 'expected_ids' => $expectedIds, 'completed' => $completedMaterialIds]);
+
+            // Certificate eligibility check (materials + pretest/posttest if present)
+            $materialsTotal = count($expectedIds);
+            $materialsCompleted = count($completedMaterialIds);
+
+            $pretestCount = \App\Models\Question::where('module_id', $id)->where('question_type', 'pretest')->count();
+            $posttestCount = \App\Models\Question::where('module_id', $id)->where('question_type', 'posttest')->count();
+
+            $pretestPassed = true;
+            if ($pretestCount > 0) {
+                $pretestPassed = \App\Models\ExamAttempt::where('user_id', $user->id)
+                    ->where('module_id', $id)
+                    ->where('exam_type', 'pre_test')
+                    ->where('is_passed', true)
+                    ->exists();
+            }
+
+            $posttestPassed = true;
+            if ($posttestCount > 0) {
+                $posttestPassed = \App\Models\ExamAttempt::where('user_id', $user->id)
+                    ->where('module_id', $id)
+                    ->where('exam_type', 'post_test')
+                    ->where('is_passed', true)
+                    ->exists();
+            }
+
+            $certificateEligible = ($materialsTotal === $materialsCompleted) && $pretestPassed && $posttestPassed;
+
             return Inertia::render('User/Training/TrainingDetail', [
                 'training' => $training,
                 'enrollment' => $enrollment,
                 'progress' => $progress,
                 'quizAttempts' => $quizAttempts,
-                'completedMaterials' => $progress ? [$progress->module_id] : []
+                'completedMaterials' => $completedMaterialIds,
+                'certificateEligible' => $certificateEligible,
+                'certificateRequirements' => [
+                    'materials_total' => $materialsTotal,
+                    'materials_completed' => $materialsCompleted,
+                    'pretest_required' => $pretestCount > 0,
+                    'pretest_passed' => $pretestPassed,
+                    'posttest_required' => $posttestCount > 0,
+                    'posttest_passed' => $posttestPassed,
+                ]
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to load training detail: ' . $e->getMessage());
             
             return redirect()->route('user.catalog')
                 ->with('error', 'Terjadi kesalahan saat memuat detail training. Silakan coba lagi.');
+        }
+    }
+
+    /**
+     * Results / Review page for a training - shows pretest/posttest and materials
+     */
+    public function results($id)
+    {
+        try {
+            $user = Auth::user();
+
+            $training = Module::with(['trainingMaterials'])->find($id);
+
+            if (!$training) {
+                return redirect()->route('user.catalog')
+                    ->with('error', 'Training yang Anda cari tidak ditemukan. ID training: ' . $id);
+            }
+
+            // Check enrollment
+            $enrollment = UserTraining::where('user_id', $user->id)
+                ->where('module_id', $id)
+                ->first();
+
+            if (!$enrollment) {
+                return redirect()->route('user.catalog')
+                    ->with('warning', 'Anda belum terdaftar untuk training ini: ' . $training->title);
+            }
+
+            // Progress record
+            $progress = ModuleProgress::where('user_id', $user->id)
+                ->where('module_id', $id)
+                ->first();
+
+            // Quizzes & attempts
+            $quizzes = Quiz::where('module_id', $id)->get();
+            $quizAttempts = [];
+            foreach ($quizzes as $quiz) {
+                $examType = $quiz->type === 'pretest' ? 'pre_test' : 'post_test';
+                $attempt = ExamAttempt::where('user_id', $user->id)
+                    ->where('module_id', $id)
+                    ->where('exam_type', $examType)
+                    ->orderBy('created_at', 'desc')
+                    ->first();
+
+                if ($attempt) {
+                    $quizAttempts[$quiz->type] = [
+                        'completed' => true,
+                        'score' => $attempt->score,
+                        'percentage' => $attempt->percentage,
+                        'is_passed' => $attempt->is_passed,
+                        'attempt_id' => $attempt->id,
+                        'completed_at' => $attempt->created_at
+                    ];
+                } else {
+                    $quizAttempts[$quiz->type] = [
+                        'completed' => false,
+                        'score' => 0,
+                        'percentage' => 0,
+                        'is_passed' => false,
+                        'attempt_id' => null,
+                        'completed_at' => null
+                    ];
+                }
+            }
+
+            // Materials with completion flags
+            $materials = \App\Models\TrainingMaterial::where('module_id', $id)->orderBy('order')->get();
+            $completedMaterialIds = \App\Models\UserMaterialProgress::where('user_id', $user->id)
+                ->where('is_completed', true)
+                ->whereHas('material', function($q) use ($id) {
+                    $q->where('module_id', $id);
+                })->pluck('training_material_id')->toArray();
+
+            $materials = $materials->map(function($m) use ($completedMaterialIds) {
+                return [
+                    'id' => $m->id,
+                    'title' => $m->title,
+                    'type' => $m->material_type ?? $m->type ?? 'document',
+                    'duration' => $m->duration ?? null,
+                    'is_completed' => in_array($m->id, $completedMaterialIds),
+                    'file_url' => $m->file_path ? asset('storage/' . $m->file_path) : null
+                ];
+            });
+
+            return Inertia::render('User/Training/TrainingResults', [
+                'training' => $training,
+                'enrollment' => $enrollment,
+                'progress' => $progress,
+                'quizAttempts' => $quizAttempts,
+                'materials' => $materials
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to load training results: ' . $e->getMessage());
+            return redirect()->route('user.catalog')
+                ->with('error', 'Terjadi kesalahan saat memuat halaman hasil pelatihan.');
         }
     }
     
@@ -344,12 +524,18 @@ class TrainingController extends Controller
                 ->where('module_id', $id)
                 ->first();
             
+            $completedMaterialIds = \App\Models\UserMaterialProgress::where('user_id', $user->id)
+                ->where('is_completed', true)
+                ->whereHas('material', function($q) use ($id) {
+                    $q->where('module_id', $id);
+                })->pluck('training_material_id')->toArray();
+
             return response()->json([
                 'success' => true,
                 'training' => $training,
                 'enrollment' => $enrollment,
                 'progress' => $progress,
-                'completedMaterials' => $progress ? [$progress->module_id] : []
+                'completedMaterials' => $completedMaterialIds
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to load training detail: ' . $e->getMessage());

@@ -5,6 +5,7 @@ import axios from 'axios';
 export default function CreateProgramWithQuestions({ isOpen, onClose, onSuccess }) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [isDirty, setIsDirty] = useState(false);
     
     const [programData, setProgramData] = useState({
         title: '',
@@ -13,6 +14,8 @@ export default function CreateProgramWithQuestions({ isOpen, onClose, onSuccess 
         passing_grade: 70,
         category: '',
         is_active: true,
+        pretest_duration: 30,
+        posttest_duration: 60,
     });
 
     const [questions, setQuestions] = useState([
@@ -25,12 +28,14 @@ export default function CreateProgramWithQuestions({ isOpen, onClose, onSuccess 
 
     const handleProgramChange = (field, value) => {
         setProgramData({ ...programData, [field]: value });
+        setIsDirty(true);
     };
 
     const handleQuestionChange = (index, field, value) => {
         const newQuestions = [...questions];
         newQuestions[index][field] = value;
         setQuestions(newQuestions);
+        setIsDirty(true);
     };
 
     const addQuestion = () => {
@@ -48,6 +53,7 @@ export default function CreateProgramWithQuestions({ isOpen, onClose, onSuccess 
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        if (loading) return;
         setError('');
 
         // Validasi program
@@ -111,9 +117,27 @@ export default function CreateProgramWithQuestions({ isOpen, onClose, onSuccess 
                 formData.append(`materials[${i}][description]`, m.description || '');
                 formData.append(`materials[${i}][url]`, m.url || '');
                 if (m.file) {
+                    // Validate file size (max 20MB) and type client-side before appending
+                    if (m.file.size && m.file.size > 20 * 1024 * 1024) {
+                        setError('Ukuran file materi terlalu besar (max 20MB)');
+                        setLoading(false);
+                        return;
+                    }
+                    const name = m.file.name || '';
+                    const ext = (name.split('.').pop() || '').toLowerCase();
+                    const allowed = ['pdf','mp4','doc','docx','ppt','pptx','xls','xlsx'];
+                    if (!allowed.includes(ext) && !(m.file.type && (m.file.type.includes('pdf') || m.file.type.includes('mp4') || m.file.type.includes('word') || m.file.type.includes('presentation') || m.file.type.includes('excel')))) {
+                        setError('File pada materials harus berformat salah satu dari: pdf, mp4, doc, docx, ppt, pptx');
+                        setLoading(false);
+                        throw new Error('Invalid material file type');
+                    }
                     formData.append(`materials[${i}][file]`, m.file);
                 }
             });
+
+            // Quiz durations
+            if (programData.pretest_duration) formData.append('pretest_duration', programData.pretest_duration);
+            if (programData.posttest_duration) formData.append('posttest_duration', programData.posttest_duration);
 
             const response = await axios.post('/api/admin/training-programs', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' }
@@ -132,8 +156,7 @@ export default function CreateProgramWithQuestions({ isOpen, onClose, onSuccess 
                 setQuestions([
                     { question_text: '', option_a: '', option_b: '', option_c: '', option_d: '', correct_answer: 'a', question_type: 'pretest' }
                 ]);
-                setMaterials([]);
-                onClose();
+                setMaterials([]);                setIsDirty(false);                onClose();
             }
         } catch (err) {
             setError(err.response?.data?.message || 'Error membuat program');
@@ -151,7 +174,13 @@ export default function CreateProgramWithQuestions({ isOpen, onClose, onSuccess 
                 <div className="bg-blue-600 text-white p-6 flex items-center justify-between sticky top-0 z-10">
                     <h2 className="text-2xl font-bold">Buat Program & Soal Baru</h2>
                     <button
-                        onClick={onClose}
+                        onClick={() => {
+                            if (isDirty) {
+                                const leave = confirm('Anda memiliki perubahan yang belum disimpan. Tutup tanpa menyimpan?');
+                                if (!leave) return;
+                            }
+                            onClose();
+                        }}
                         className="text-white hover:bg-blue-700 px-3 py-2 rounded"
                     >
                         ✕
@@ -239,6 +268,19 @@ export default function CreateProgramWithQuestions({ isOpen, onClose, onSuccess 
                                         min="0"
                                         max="100"
                                     />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4 mt-4">
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">Durasi Pre-Test (Menit)</label>
+                                    <input type="number" min="1" value={programData.pretest_duration} onChange={(e) => handleProgramChange('pretest_duration', Number(e.target.value))} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="30" />
+                                    <p className="text-xs text-gray-400 mt-1">Waktu hitung mundur akan dimulai otomatis saat peserta membuka soal.</p>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">Durasi Post-Test (Menit)</label>
+                                    <input type="number" min="1" value={programData.posttest_duration} onChange={(e) => handleProgramChange('posttest_duration', Number(e.target.value))} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="60" />
+                                    <p className="text-xs text-gray-400 mt-1">Jika waktu habis, jawaban akan tersubmit otomatis.</p>
                                 </div>
                             </div>
 

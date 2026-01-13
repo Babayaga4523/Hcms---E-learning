@@ -177,13 +177,13 @@ class LearnerProgressController extends Controller
     {
         // Check if material_progress table exists and has data
         try {
-            return DB::table('material_progress')
-                ->where('user_id', $userId)
-                ->where('material_id', $materialId)
+            // Use UserMaterialProgress model/table which stores per-user material completion
+            return \App\Models\UserMaterialProgress::where('user_id', $userId)
+                ->where('training_material_id', $materialId)
                 ->where('is_completed', true)
                 ->exists();
         } catch (\Exception $e) {
-            // Table doesn't exist, check for module progress instead
+            // If anything goes wrong, return false to avoid breaking the endpoint
             return false;
         }
     }

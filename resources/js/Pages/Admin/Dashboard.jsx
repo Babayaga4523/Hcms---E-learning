@@ -13,6 +13,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { Head, router } from '@inertiajs/react';
 import AdminLayout from '@/Layouts/AdminLayout';
+import showToast from '@/Utils/toast';
 
 // --- MOCK DATA ---
 const mockStats = {
@@ -24,20 +25,57 @@ const mockStats = {
 };
 
 const mockTrend = [
-    { month: 'Jan', enrolled: 65, completed: 40 },
-    { month: 'Feb', enrolled: 75, completed: 55 },
-    { month: 'Mar', enrolled: 90, completed: 85 },
-    { month: 'Apr', enrolled: 85, completed: 80 },
-    { month: 'May', enrolled: 100, completed: 92 },
-    { month: 'Jun', enrolled: 120, completed: 110 },
+    { month: 'Jan', enrolled: 45, completed: 30 },
+    { month: 'Feb', enrolled: 55, completed: 45 },
+    { month: 'Mar', enrolled: 80, completed: 60 },
+    { month: 'Apr', enrolled: 70, completed: 65 },
+    { month: 'May', enrolled: 110, completed: 85 },
+    { month: 'Jun', enrolled: 140, completed: 120 },
 ];
 
 const mockModules = [
-    { name: 'Compliance 101', value: 92 },
-    { name: 'Data Security', value: 85 },
-    { name: 'Leadership', value: 78 },
-    { name: 'Product Knowledge', value: 95 },
+    { name: 'Compliance', value: 92, max: 100 },
+    { name: 'Security', value: 88, max: 100 },
+    { name: 'Leadership', value: 75, max: 100 },
+    { name: 'Privacy', value: 65, max: 100 },
+    { name: 'Agile', value: 50, max: 100 },
 ];
+
+const mockSkills = [
+    { subject: 'Technical', A: 120, fullMark: 150 },
+    { subject: 'Soft Skills', A: 98, fullMark: 150 },
+    { subject: 'Compliance', A: 86, fullMark: 150 },
+    { subject: 'Management', A: 99, fullMark: 150 },
+    { subject: 'Creative', A: 85, fullMark: 150 },
+    { subject: 'Analytical', A: 65, fullMark: 150 },
+];
+
+const mockLearnerStatus = [
+    { name: 'Active', value: 850, color: '#6366F1' }, 
+    { name: 'Idle', value: 200, color: '#94A3B8' },   
+    { name: 'Completed', value: 450, color: '#10B981' }, 
+];
+
+// --- COMPONENTS ---
+
+// Tooltip Kustom dengan efek Glassmorphism
+const ModernTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+        return (
+            <div className="bg-slate-900/90 backdrop-blur-xl px-4 py-3 rounded-2xl border border-white/10 shadow-2xl z-50">
+                <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-2">{label}</p>
+                {payload.map((entry, index) => (
+                    <div key={index} className="flex items-center gap-3 mb-1 last:mb-0">
+                        <div className="w-2 h-2 rounded-full ring-2 ring-white/20" style={{ backgroundColor: entry.color || entry.fill }} />
+                        <span className="text-slate-200 text-xs font-medium">{entry.name}</span>
+                        <span className="text-white text-sm font-bold tabular-nums">{Number(entry.value).toLocaleString()}</span>
+                    </div>
+                ))}
+            </div>
+        );
+    }
+    return null;
+};
 
 // --- COMPONENTS ---
 
@@ -94,26 +132,53 @@ const TabPill = ({ active, label, icon: Icon, onClick }) => (
     </button>
 );
 
+// --- MODERN CHART TOOLTIP ---
+const GlassTooltip = (props) => {
+    if (!props.active || !props.payload || !props.label) return null;
+    return (
+        <div style={{
+            background: 'rgba(255,255,255,0.85)',
+            backdropFilter: 'blur(12px)',
+            borderRadius: '18px',
+            boxShadow: '0 4px 24px rgba(30,41,59,0.10)',
+            border: '1px solid rgba(214,255,89,0.18)',
+            color: '#1e293b',
+            padding: '16px 20px',
+            fontWeight: 600,
+            fontSize: '15px',
+            minWidth: '120px',
+        }}>
+            <div style={{fontSize: '13px', fontWeight: 700, marginBottom: 6}}>{props.label}</div>
+            {props.payload.map((entry, i) => (
+                <div key={i} style={{color: entry.color, marginBottom: 2}}>
+                    {entry.name}: <span style={{fontWeight: 700}}>{entry.value}</span>
+                </div>
+            ))}
+        </div>
+    );
+};
+
 // --- ANALYTICS PANEL WITH MODERN CHARTS ---
 const AnalyticsPanel = ({ modules, stats, trend }) => {
     const moduleData = (modules || []).map(m => ({
         name: m.title || 'Unknown',
         value: m.total_enrollments > 0 ? Math.round((m.completed_count / m.total_enrollments) * 100) : 0,
-        learners: m.total_enrollments,
-        completed: m.completed_count
-    })).slice(0, 8);
+        max: 100
+    })).slice(0, 5);
 
     const learnerStatus = [
-        { name: 'Completed', value: stats?.completed_trainings || 0, color: '#10b981' },
-        { name: 'In Progress', value: (stats?.total_enrollments || 0) - (stats?.completed_trainings || 0), color: '#3b82f6' },
-        { name: 'Pending', value: stats?.pending_enrollments || 0, color: '#f59e0b' },
+        { name: 'Active', value: stats?.total_users || 850, color: '#6366F1' },
+        { name: 'Idle', value: (stats?.total_users || 0) * 0.1 || 200, color: '#94A3B8' },
+        { name: 'Completed', value: stats?.completed_trainings || 450, color: '#10B981' },
     ];
 
-    const scoreDistribution = [
-        { range: '90-100', count: Math.floor((stats?.total_users || 0) * 0.25), fill: '#10b981' },
-        { range: '80-89', count: Math.floor((stats?.total_users || 0) * 0.35), fill: '#3b82f6' },
-        { range: '70-79', count: Math.floor((stats?.total_users || 0) * 0.25), fill: '#f59e0b' },
-        { range: '<70', count: Math.floor((stats?.total_users || 0) * 0.15), fill: '#ef4444' },
+    const skillsData = [
+        { subject: 'Technical', A: 120, fullMark: 150 },
+        { subject: 'Soft Skills', A: 98, fullMark: 150 },
+        { subject: 'Compliance', A: 86, fullMark: 150 },
+        { subject: 'Management', A: 99, fullMark: 150 },
+        { subject: 'Creative', A: 85, fullMark: 150 },
+        { subject: 'Analytical', A: 65, fullMark: 150 },
     ];
 
     return (
@@ -145,134 +210,175 @@ const AnalyticsPanel = ({ modules, stats, trend }) => {
                 ))}
             </div>
 
-            {/* Modern Trend Line Chart */}
-            <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-                className="bg-white rounded-[32px] p-8 border border-slate-200 shadow-sm hover:shadow-lg transition-all"
-            >
-                <div className="flex justify-between items-center mb-6">
-                    <div>
-                        <h3 className="text-lg font-bold text-slate-800">Learning Trend Analysis</h3>
-                        <p className="text-sm text-slate-500">Enrollment & Completion Rate (6 Months)</p>
+            {/* Modern Charts Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Neon Area Chart - Learning Trends */}
+                <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2 }}
+                    className="glass-bg rounded-[32px] p-8 border border-slate-100 shadow-lg hover:shadow-2xl transition-all"
+                >
+                    <div className="flex justify-between items-center mb-6">
+                        <div>
+                            <h3 className="text-lg font-bold text-slate-800">Learning Trends</h3>
+                            <p className="text-sm text-slate-500">Enrollment & Completion Over Time</p>
+                        </div>
+                        <button className="p-2 hover:bg-slate-100 rounded-xl transition">
+                            <MoreHorizontal size={20} className="text-slate-400" />
+                        </button>
                     </div>
-                    <button className="p-2 hover:bg-slate-100 rounded-xl transition">
-                        <MoreHorizontal size={20} className="text-slate-400" />
-                    </button>
-                </div>
-                <div className="h-80 w-full">
-                    {trend && trend.length > 0 ? (
-                        <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={250}>
-                            <LineChart data={trend} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
+                    <div className="h-80 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={trend} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
                                 <defs>
                                     <linearGradient id="enrollGradient" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.3}/>
-                                        <stop offset="100%" stopColor="#3b82f6" stopOpacity={0}/>
+                                        <stop offset="0%" stopColor="#6366F1" stopOpacity={0.3}/>
+                                        <stop offset="100%" stopColor="#6366F1" stopOpacity={0}/>
                                     </linearGradient>
+                                    <linearGradient id="completeGradient" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stopColor="#10B981" stopOpacity={0.3}/>
+                                        <stop offset="100%" stopColor="#10B981" stopOpacity={0}/>
+                                    </linearGradient>
+                                    <filter id="neonGlow" x="-50%" y="-50%" width="200%" height="200%">
+                                        <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                                        <feMerge>
+                                            <feMergeNode in="coloredBlur"/>
+                                            <feMergeNode in="SourceGraphic"/>
+                                        </feMerge>
+                                    </filter>
                                 </defs>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#e6eaf0" vertical={false} />
-                                <XAxis dataKey="month" stroke="#94a3b8" style={{ fontSize: '12px' }} />
-                                <YAxis stroke="#94a3b8" style={{ fontSize: '12px' }} />
-                                <Tooltip 
-                                    contentStyle={{ backgroundColor: '#0f172a', border: 'none', borderRadius: '12px', color: '#fff' }}
-                                    cursor={{ stroke: '#d6ff59', strokeWidth: 2 }}
-                                />
-                                <Legend />
-                                <Line type="monotone" dataKey="enrolled" stroke="#3b82f6" strokeWidth={3} dot={{ fill: '#3b82f6', r: 5 }} activeDot={{ r: 7 }} name="Enrolled" />
-                                <Line type="monotone" dataKey="completed" stroke="#10b981" strokeWidth={3} dot={{ fill: '#10b981', r: 5 }} activeDot={{ r: 7 }} name="Completed" />
-                            </LineChart>
+                                <CartesianGrid strokeDasharray="2 6" stroke="#e6eaf0" vertical={false} />
+                                <XAxis dataKey="month" stroke="#94a3b8" style={{ fontSize: '13px' }} />
+                                <YAxis stroke="#94a3b8" style={{ fontSize: '13px' }} />
+                                <Area type="monotone" dataKey="enrolled" stroke="#6366F1" strokeWidth={3} fill="url(#enrollGradient)" filter="url(#neonGlow)" />
+                                <Area type="monotone" dataKey="completed" stroke="#10B981" strokeWidth={3} fill="url(#completeGradient)" filter="url(#neonGlow)" />
+                                <Tooltip content={<ModernTooltip />} />
+                            </AreaChart>
                         </ResponsiveContainer>
-                    ) : (
-                        <div className="h-full flex items-center justify-center text-slate-400">No data available</div>
-                    )}
-                </div>
-            </motion.div>
+                    </div>
+                </motion.div>
 
-            {/* Module Performance & Score Distribution */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Module Performance Bar Chart */}
+                {/* Rounded Bar Chart - Module Performance */}
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.3 }}
-                    className="bg-white rounded-[32px] p-8 border border-slate-200 shadow-sm hover:shadow-lg transition-all"
+                    className="glass-bg rounded-[32px] p-8 border border-slate-100 shadow-lg hover:shadow-2xl transition-all"
                 >
-                    <h3 className="text-lg font-bold text-slate-800 mb-6">Module Performance</h3>
-                    <div className="h-72">
-                        {moduleData.length > 0 ? (
-                            <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={200}>
-                                <BarChart data={moduleData} margin={{ top: 20, right: 30, left: 0, bottom: 60 }}>
-                                    <defs>
-                                        <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#d6ff59"/>
-                                            <stop offset="100%" stopColor="#10b981"/>
-                                        </linearGradient>
-                                    </defs>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e6eaf0" />
-                                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={120} tick={{ fontSize: 11 }} />
-                                    <YAxis stroke="#94a3b8" label={{ value: 'Completion %', angle: -90, position: 'insideLeft' }} />
-                                    <Tooltip contentStyle={{ backgroundColor: '#0f172a', border: 'none', borderRadius: '12px', color: '#fff' }}/>
-                                    <Bar dataKey="value" fill="url(#barGradient)" radius={[8, 8, 0, 0]} animationDuration={1500} />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        ) : (
-                            <div className="h-full flex items-center justify-center text-slate-400">No module data</div>
-                        )}
+                    <div className="flex justify-between items-center mb-6">
+                        <div>
+                            <h3 className="text-lg font-bold text-slate-800">Module Performance</h3>
+                            <p className="text-sm text-slate-500">Completion Rates by Module</p>
+                        </div>
+                        <button className="p-2 hover:bg-slate-100 rounded-xl transition">
+                            <MoreHorizontal size={20} className="text-slate-400" />
+                        </button>
                     </div>
-                </motion.div>
-
-                {/* Score Distribution */}
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.4 }}
-                    className="bg-white rounded-[32px] p-8 border border-slate-200 shadow-sm hover:shadow-lg transition-all"
-                >
-                    <h3 className="text-lg font-bold text-slate-800 mb-6">Score Distribution</h3>
-                    <div className="h-72">
-                        <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={200}>
-                            <BarChart data={scoreDistribution} margin={{ top: 20, right: 30, left: 0, bottom: 20 }} layout="vertical">
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e6eaf0" />
-                                <XAxis type="number" stroke="#94a3b8" />
-                                <YAxis dataKey="range" type="category" stroke="#94a3b8" />
-                                <Tooltip contentStyle={{ backgroundColor: '#0f172a', border: 'none', borderRadius: '12px', color: '#fff' }}/>
-                                <Bar dataKey="count" radius={[0, 8, 8, 0]}>
-                                    {scoreDistribution.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={entry.fill} />
-                                    ))}
-                                </Bar>
+                    <div className="h-80 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={moduleData} margin={{ top: 20, right: 30, left: 0, bottom: 60 }}>
+                                <defs>
+                                    <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stopColor="#6366F1"/>
+                                        <stop offset="100%" stopColor="#10B981"/>
+                                    </linearGradient>
+                                    <filter id="barGlow" x="-50%" y="-50%" width="200%" height="200%">
+                                        <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+                                        <feMerge>
+                                            <feMergeNode in="coloredBlur"/>
+                                            <feMergeNode in="SourceGraphic"/>
+                                        </feMerge>
+                                    </filter>
+                                </defs>
+                                <CartesianGrid strokeDasharray="2 6" stroke="#e6eaf0" vertical={false} />
+                                <XAxis dataKey="name" angle={-45} textAnchor="end" height={120} tick={{ fontSize: 11 }} stroke="#94a3b8" />
+                                <YAxis stroke="#94a3b8" label={{ value: 'Completion %', angle: -90, position: 'insideLeft' }} />
+                                <Bar dataKey="value" fill="url(#barGradient)" radius={[8, 8, 0, 0]} filter="url(#barGlow)" />
+                                <Tooltip content={<ModernTooltip />} />
                             </BarChart>
                         </ResponsiveContainer>
                     </div>
                 </motion.div>
-            </div>
 
-            {/* Learner Status & Completion Pie */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Learner Status Pie */}
+                {/* Radar Chart - Skills Assessment */}
+                <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.4 }}
+                    className="glass-bg rounded-[32px] p-8 border border-slate-100 shadow-lg hover:shadow-2xl transition-all"
+                >
+                    <div className="flex justify-between items-center mb-6">
+                        <div>
+                            <h3 className="text-lg font-bold text-slate-800">Skills Assessment</h3>
+                            <p className="text-sm text-slate-500">Competency Levels Across Categories</p>
+                        </div>
+                        <button className="p-2 hover:bg-slate-100 rounded-xl transition">
+                            <MoreHorizontal size={20} className="text-slate-400" />
+                        </button>
+                    </div>
+                    <div className="h-80 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <RadarChart data={skillsData} margin={{ top: 20, right: 30, left: 30, bottom: 20 }}>
+                                <defs>
+                                    <linearGradient id="radarGradient" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stopColor="#6366F1" stopOpacity={0.3}/>
+                                        <stop offset="100%" stopColor="#10B981" stopOpacity={0.3}/>
+                                    </linearGradient>
+                                    <filter id="radarGlow" x="-50%" y="-50%" width="200%" height="200%">
+                                        <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+                                        <feMerge>
+                                            <feMergeNode in="coloredBlur"/>
+                                            <feMergeNode in="SourceGraphic"/>
+                                        </feMerge>
+                                    </filter>
+                                </defs>
+                                <PolarGrid stroke="#e6eaf0" />
+                                <PolarAngleAxis dataKey="subject" tick={{ fontSize: 12, fill: '#64748b' }} />
+                                <PolarRadiusAxis angle={90} domain={[0, 150]} tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                                <Radar name="Score" dataKey="A" stroke="#6366F1" strokeWidth={3} fill="url(#radarGradient)" fillOpacity={0.3} filter="url(#radarGlow)" />
+                                <Tooltip content={<ModernTooltip />} />
+                            </RadarChart>
+                        </ResponsiveContainer>
+                    </div>
+                </motion.div>
+
+                {/* Donut Chart - Learner Status */}
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.5 }}
-                    className="bg-white rounded-[32px] p-8 border border-slate-200 shadow-sm hover:shadow-lg transition-all"
+                    className="glass-bg rounded-[32px] p-8 border border-slate-100 shadow-lg hover:shadow-2xl transition-all"
                 >
-                    <h3 className="text-lg font-bold text-slate-800 mb-6">Learner Status</h3>
-                    <div className="h-72 flex items-center justify-center">
-                        {learnerStatus.some(s => s.value > 0) ? (
-                            <ResponsiveContainer width="100%" height="100%" minWidth={200} minHeight={200}>
-                                <PieChart>
-                                    <Pie data={learnerStatus} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={5}>
-                                        {learnerStatus.map((entry, index) => (
-                                            <Cell key={`cell-${index}`} fill={entry.color} />
-                                        ))}
-                                    </Pie>
-                                    <Tooltip contentStyle={{ backgroundColor: '#0f172a', border: 'none', borderRadius: '12px', color: '#fff' }}/>
-                                </PieChart>
-                            </ResponsiveContainer>
-                        ) : (
-                            <div className="text-slate-400">No data</div>
-                        )}
+                    <div className="flex justify-between items-center mb-6">
+                        <div>
+                            <h3 className="text-lg font-bold text-slate-800">Learner Status</h3>
+                            <p className="text-sm text-slate-500">Current Enrollment Distribution</p>
+                        </div>
+                        <button className="p-2 hover:bg-slate-100 rounded-xl transition">
+                            <MoreHorizontal size={20} className="text-slate-400" />
+                        </button>
+                    </div>
+                    <div className="h-80 w-full flex items-center justify-center">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <defs>
+                                    <filter id="donutGlow" x="-50%" y="-50%" width="200%" height="200%">
+                                        <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                                        <feMerge>
+                                            <feMergeNode in="coloredBlur"/>
+                                            <feMergeNode in="SourceGraphic"/>
+                                        </feMerge>
+                                    </filter>
+                                </defs>
+                                <Pie data={learnerStatus} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={120} paddingAngle={5} filter="url(#donutGlow)">
+                                    {learnerStatus.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={entry.color} />
+                                    ))}
+                                </Pie>
+                                <Tooltip content={<ModernTooltip />} />
+                            </PieChart>
+                        </ResponsiveContainer>
                     </div>
                     <div className="space-y-2 mt-6 border-t border-slate-200 pt-4">
                         {learnerStatus.map((item) => (
@@ -286,42 +392,13 @@ const AnalyticsPanel = ({ modules, stats, trend }) => {
                         ))}
                     </div>
                 </motion.div>
-
-                {/* Module Details Table */}
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.6 }}
-                    className="bg-white rounded-[32px] p-8 border border-slate-200 shadow-sm hover:shadow-lg transition-all"
-                >
-                    <h3 className="text-lg font-bold text-slate-800 mb-6">Top Modules</h3>
-                    <div className="space-y-3 max-h-72 overflow-y-auto">
-                        {moduleData.slice(0, 6).map((mod, i) => (
-                            <div key={i} className="p-4 bg-gradient-to-r from-slate-50 to-slate-100/50 rounded-xl hover:shadow-md transition-all">
-                                <div className="flex justify-between items-center mb-2">
-                                    <span className="font-bold text-slate-800 text-sm">{mod.name}</span>
-                                    <span className="text-xs font-bold text-indigo-600 bg-indigo-100 px-2.5 py-1 rounded-full">{mod.value}%</span>
-                                </div>
-                                <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
-                                    <motion.div
-                                        initial={{ width: 0 }}
-                                        animate={{ width: `${mod.value}%` }}
-                                        transition={{ delay: i * 0.1, duration: 1 }}
-                                        className="h-full bg-gradient-to-r from-indigo-600 to-purple-600"
-                                    ></motion.div>
-                                </div>
-                                <p className="text-xs text-slate-500 mt-2">{mod.completed.toLocaleString()} / {mod.learners.toLocaleString()} completed</p>
-                            </div>
-                        ))}
-                    </div>
-                </motion.div>
             </div>
         </div>
     );
 };
 
 // --- REPORTS PANEL WITH MODERN CHARTS & FUNCTIONAL BUTTONS ---
-const ReportsPanel = ({ stats, pending_actions, onDownloadReport, onExportReport }) => {
+const ReportsPanel = ({ stats, pending_actions, onDownloadReport, onExportReport, reports = [], reportsByType: reportsByTypeProp = [], reportsByStatus: reportsByStatusProp = [], loading = false, onRefreshReports = null }) => {
     const [exportFormat, setExportFormat] = useState(null);
 
     const handleExport = (format) => {
@@ -333,26 +410,24 @@ const ReportsPanel = ({ stats, pending_actions, onDownloadReport, onExportReport
         onDownloadReport(reportId, title);
     };
 
-    const recentReports = [
-        { id: 1, title: 'Q4 Compliance Report', type: 'Compliance', date: '2025-12-20', status: 'Completed', size: '2.4 MB' },
-        { id: 2, title: 'Monthly Audit - Dec', type: 'Audit', date: '2025-12-18', status: 'Completed', size: '1.8 MB' },
-        { id: 3, title: 'Learner Performance Summary', type: 'Performance', date: '2025-12-15', status: 'Review', size: '3.2 MB' },
-        { id: 4, title: 'Training Effectiveness', type: 'Training', date: '2025-12-10', status: 'Completed', size: '2.1 MB' },
-        { id: 5, title: 'Risk Assessment', type: 'Compliance', date: '2025-12-08', status: 'Pending', size: '1.5 MB' },
-    ];
+    // Use data provided by parent (fetched from backend). Fall back to sensible defaults if empty.
+    const recentReports = (reports && reports.length) ? reports : [];
 
-    const reportsByType = [
+    const mappedReportsByType = (reportsByTypeProp && reportsByTypeProp.length) ? reportsByTypeProp : [
         { name: 'Compliance', value: 34, color: '#ef4444' },
         { name: 'Audit', value: 28, color: '#f59e0b' },
         { name: 'Performance', value: 45, color: '#3b82f6' },
         { name: 'Training', value: 22, color: '#10b981' },
     ];
 
-    const reportsByStatus = [
+    const mappedReportsByStatus = (reportsByStatusProp && reportsByStatusProp.length) ? reportsByStatusProp : [
         { name: 'Generated', value: 89 },
         { name: 'Pending', value: (pending_actions?.certifications_pending || 0) + (pending_actions?.enrollments_pending || 0) },
         { name: 'Review', value: 6 },
     ];
+
+    // Optional: If parent provided a refresh handler, show a refresh affordance in the Export section
+
 
     const getStatusColor = (status) => {
         const colors = {
@@ -415,8 +490,13 @@ const ReportsPanel = ({ stats, pending_actions, onDownloadReport, onExportReport
                         <h3 className="text-lg font-bold text-slate-800">Export Reports</h3>
                         <p className="text-sm text-slate-500">Generate and download reports in your preferred format</p>
                     </div>
-                    <div className="p-4 bg-indigo-100 rounded-xl">
-                        <Download size={24} className="text-indigo-600" />
+                    <div className="flex items-center gap-3">
+                        <button onClick={() => onRefreshReports && onRefreshReports()} className="p-2 bg-white rounded-lg hover:bg-slate-100 transition shadow-sm">
+                            {loading ? <Loader size={18} className="animate-spin text-indigo-600" /> : <RefreshCw size={18} className="text-indigo-600" />}
+                        </button>
+                        <div className="p-4 bg-indigo-100 rounded-xl">
+                            <Download size={24} className="text-indigo-600" />
+                        </div>
                     </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -452,8 +532,8 @@ const ReportsPanel = ({ stats, pending_actions, onDownloadReport, onExportReport
                     <div className="h-72 flex items-center justify-center">
                         <ResponsiveContainer width="100%" height="100%" minWidth={200} minHeight={200}>
                             <PieChart>
-                                <Pie data={reportsByType} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} paddingAngle={3}>
-                                    {reportsByType.map((entry, index) => (
+                                <Pie data={mappedReportsByType} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} paddingAngle={3}>
+                                    {mappedReportsByType.map((entry, index) => (
                                         <Cell key={`cell-${index}`} fill={entry.color} />
                                     ))}
                                 </Pie>
@@ -462,7 +542,7 @@ const ReportsPanel = ({ stats, pending_actions, onDownloadReport, onExportReport
                         </ResponsiveContainer>
                     </div>
                     <div className="space-y-2 mt-4 border-t border-slate-200 pt-4">
-                        {reportsByType.map((item) => (
+                        {mappedReportsByType.map((item) => (
                             <div key={item.name} className="flex justify-between items-center">
                                 <span className="flex items-center gap-2">
                                     <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }}></div>
@@ -471,7 +551,7 @@ const ReportsPanel = ({ stats, pending_actions, onDownloadReport, onExportReport
                                 <span className="font-bold text-slate-900">{item.value}</span>
                             </div>
                         ))}
-                    </div>
+                    </div> 
                 </motion.div>
 
                 {/* Reports by Status Bar */}
@@ -484,7 +564,7 @@ const ReportsPanel = ({ stats, pending_actions, onDownloadReport, onExportReport
                     <h3 className="text-lg font-bold text-slate-800 mb-6">Report Status Distribution</h3>
                     <div className="h-72">
                         <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={200}>
-                            <BarChart data={reportsByStatus} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
+                            <BarChart data={mappedReportsByStatus} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
                                 <defs>
                                     <linearGradient id="statusGradient" x1="0" y1="0" x2="0" y2="1">
                                         <stop offset="0%" stopColor="#06b6d4"/>
@@ -517,7 +597,7 @@ const ReportsPanel = ({ stats, pending_actions, onDownloadReport, onExportReport
                     <motion.button
                         whileHover={{ scale: 1.05 }}
                         whileTap={{ scale: 0.95 }}
-                        onClick={() => alert('Generate new report functionality')}
+                        onClick={() => showToast('Generate new report functionality', 'info')}
                         className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 hover:shadow-lg transition-all"
                     >
                         <Plus size={18} /> Generate Report
@@ -536,35 +616,45 @@ const ReportsPanel = ({ stats, pending_actions, onDownloadReport, onExportReport
                             </tr>
                         </thead>
                         <tbody>
-                            {recentReports.map((report) => (
-                                <motion.tr
-                                    key={report.id}
-                                    initial={{ opacity: 0, x: -20 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    transition={{ delay: report.id * 0.1 }}
-                                    className="border-b border-slate-100 hover:bg-slate-50 transition group"
-                                >
-                                    <td className="py-4 px-4 font-medium text-slate-800 group-hover:text-indigo-600">{report.title}</td>
-                                    <td className="py-4 px-4">
-                                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getTypeColor(report.type)}`}>{report.type}</span>
-                                    </td>
-                                    <td className="py-4 px-4 text-slate-600 text-xs">{report.date}</td>
-                                    <td className="py-4 px-4 text-center">
-                                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusColor(report.status)}`}>{report.status}</span>
-                                    </td>
-                                    <td className="text-right py-4 px-4 text-slate-600 font-medium">{report.size}</td>
-                                    <td className="text-center py-4 px-4">
-                                        <motion.button
-                                            whileHover={{ scale: 1.1 }}
-                                            whileTap={{ scale: 0.9 }}
-                                            onClick={() => handleDownload(report.id, report.title)}
-                                            className="text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 px-3 py-1.5 rounded-lg font-bold text-xs transition-all"
-                                        >
-                                            <Download size={16} className="inline mr-1" /> Download
-                                        </motion.button>
-                                    </td>
-                                </motion.tr>
-                            ))}
+                            {loading ? (
+                                <tr>
+                                    <td colSpan={6} className="py-8 text-center text-slate-500">Memuat laporan…</td>
+                                </tr>
+                            ) : recentReports.length > 0 ? (
+                                recentReports.map((report) => (
+                                    <motion.tr
+                                        key={report.id}
+                                        initial={{ opacity: 0, x: -20 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        transition={{ delay: (report.id || 0) * 0.05 }}
+                                        className="border-b border-slate-100 hover:bg-slate-50 transition group"
+                                    >
+                                        <td className="py-4 px-4 font-medium text-slate-800 group-hover:text-indigo-600">{report.title}</td>
+                                        <td className="py-4 px-4">
+                                            <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getTypeColor(report.type)}`}>{report.type}</span>
+                                        </td>
+                                        <td className="py-4 px-4 text-slate-600 text-xs">{report.date}</td>
+                                        <td className="py-4 px-4 text-center">
+                                            <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusColor(report.status)}`}>{report.status}</span>
+                                        </td>
+                                        <td className="text-right py-4 px-4 text-slate-600 font-medium">{report.size}</td>
+                                        <td className="text-center py-4 px-4">
+                                            <motion.button
+                                                whileHover={{ scale: 1.1 }}
+                                                whileTap={{ scale: 0.9 }}
+                                                onClick={() => handleDownload(report.id, report.title)}
+                                                className="text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 px-3 py-1.5 rounded-lg font-bold text-xs transition-all"
+                                            >
+                                                <Download size={16} className="inline mr-1" /> Download
+                                            </motion.button>
+                                        </td>
+                                    </motion.tr>
+                                ))
+                            ) : (
+                                <tr>
+                                    <td colSpan={6} className="py-8 text-center text-slate-400">Tidak ada laporan</td>
+                                </tr>
+                            )}
                         </tbody>
                     </table>
                 </div>
@@ -803,6 +893,38 @@ export default function AdminDashboard({ auth, statistics, compliance_trend, pen
     const [showCreateCourseModal, setShowCreateCourseModal] = useState(false);
     const [showNotifications, setShowNotifications] = useState(false);
 
+    // Reports data fetched from backend when Reports tab is opened
+    const [reports, setReports] = useState([]);
+    const [reportsLoading, setReportsLoading] = useState(false);
+    const [reportsSummary, setReportsSummary] = useState({ byType: [], byStatus: [] });
+
+    const fetchReports = async (signal) => {
+        setReportsLoading(true);
+        try {
+            const res = await fetch('/api/admin/reports', { method: 'GET', signal, headers: { 'Accept': 'application/json' } });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const payload = await res.json();
+
+            // Expecting payload structure: { reports: [...], byType: [...], byStatus: [...] }
+            setReports(payload.reports || []);
+            setReportsSummary({ byType: payload.byType || [], byStatus: payload.byStatus || [] });
+        } catch (err) {
+            if (err.name !== 'AbortError') {
+                console.error('fetchReports error', err);
+                showToast('Gagal memuat laporan dari server.', 'error');
+            }
+        } finally {
+            setReportsLoading(false);
+        }
+    };
+
+    // Fetch reports when user switches to Reports tab
+    useEffect(() => {
+        let controller = new AbortController();
+        if (activeTab === 'reports') fetchReports(controller.signal);
+        return () => controller.abort();
+    }, [activeTab]);
+
     const user = auth?.user || { name: 'Admin User' };
     const stats = statistics || mockStats;
     const trend = compliance_trend || mockTrend;
@@ -913,7 +1035,7 @@ export default function AdminDashboard({ auth, statistics, compliance_trend, pen
         })
         .catch(error => {
             console.error('Export error:', error);
-            alert('Gagal mengekspor laporan. Silakan coba lagi.');
+            showToast('Gagal mengekspor laporan. Silakan coba lagi.', 'error');
             setLoading(false);
         });
     };

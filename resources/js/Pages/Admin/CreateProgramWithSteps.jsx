@@ -104,7 +104,10 @@ export default function CreateProgramWithSteps({ auth }) {
         instructor_id: '',
         certificate_template: '',
         xp: 100,
-        coverImage: null
+        coverImage: null,
+        // In minutes. Empty = no time limit
+        pretest_duration_minutes: '',
+        posttest_duration_minutes: ''
     });
 
     const [materials, setMaterials] = useState([
@@ -188,6 +191,15 @@ export default function CreateProgramWithSteps({ auth }) {
                     return false;
                 }
             }
+
+            // Validate duration if provided
+            if (programData.pretest_duration_minutes) {
+                const val = parseInt(programData.pretest_duration_minutes, 10);
+                if (isNaN(val) || val < 1) {
+                    setError('Durasi Pre-Test harus berupa angka minimal 1 menit');
+                    return false;
+                }
+            }
         }
 
         if (currentStep === 4) {
@@ -205,6 +217,15 @@ export default function CreateProgramWithSteps({ auth }) {
                 }
                 if (!q.option_a.trim() || !q.option_b.trim() || !q.option_c.trim() || !q.option_d.trim()) {
                     setError(`Post-Test Soal ${i + 1}: Semua opsi harus diisi`);
+                    return false;
+                }
+            }
+
+            // Validate duration if provided
+            if (programData.posttest_duration_minutes) {
+                const val = parseInt(programData.posttest_duration_minutes, 10);
+                if (isNaN(val) || val < 1) {
+                    setError('Durasi Post-Test harus berupa angka minimal 1 menit');
                     return false;
                 }
             }
@@ -329,6 +350,22 @@ export default function CreateProgramWithSteps({ auth }) {
             }
             formData.append('xp', programData.xp);
 
+            // Add pre/post test durations jika ada (send both legacy keys and _minutes for compatibility)
+            if (programData.pretest_duration_minutes) {
+                const val = parseInt(programData.pretest_duration_minutes, 10);
+                if (!isNaN(val)) {
+                    formData.append('pretest_duration_minutes', val);
+                    formData.append('pretest_duration', val);
+                }
+            }
+            if (programData.posttest_duration_minutes) {
+                const val = parseInt(programData.posttest_duration_minutes, 10);
+                if (!isNaN(val)) {
+                    formData.append('posttest_duration_minutes', val);
+                    formData.append('posttest_duration', val);
+                }
+            }
+
             // Add cover image jika ada (base64 string bisa langsung append)
             if (programData.coverImage && programData.coverImage.startsWith('data:')) {
                 // Convert base64 to blob
@@ -435,9 +472,11 @@ export default function CreateProgramWithSteps({ auth }) {
             });
 
             if (response.data.success) {
-                const programId = response.data.program?.id;
+                // Backend returns module in `data` and also `program` (backwards compat). Use whichever is present.
+                const programId = response.data.program?.id || response.data.data?.id || null;
                 setCreatedProgramId(programId);
                 setSuccess('✅ Program & Materi berhasil dibuat! Pilih aksi di bawah untuk melanjutkan.');
+                console.info('Created program id:', programId);
             }
         } catch (err) {
             console.error('Submit error:', err);
@@ -462,11 +501,11 @@ export default function CreateProgramWithSteps({ auth }) {
 
     const handlePreTestImageUpload = (index, file) => {
         if (!file.type.startsWith('image/')) {
-            alert('Harap upload file gambar');
+            showToast('Harap upload file gambar', 'warning');
             return;
         }
         if (file.size > 5 * 1024 * 1024) {
-            alert('Ukuran file maksimal 5MB');
+            showToast('Ukuran file maksimal 5MB', 'warning');
             return;
         }
         const reader = new FileReader();
@@ -481,11 +520,11 @@ export default function CreateProgramWithSteps({ auth }) {
 
     const handlePostTestImageUpload = (index, file) => {
         if (!file.type.startsWith('image/')) {
-            alert('Harap upload file gambar');
+            showToast('Harap upload file gambar', 'warning');
             return;
         }
         if (file.size > 5 * 1024 * 1024) {
-            alert('Ukuran file maksimal 5MB');
+            showToast('Ukuran file maksimal 5MB', 'warning');
             return;
         }
         const reader = new FileReader();
@@ -821,7 +860,24 @@ export default function CreateProgramWithSteps({ auth }) {
             </div>
 
             <div>
-                <h3 className="font-bold text-slate-900 mb-4">Pre-Test Questions</h3>
+                <div className="flex items-center justify-between mb-4 gap-4">
+                    <h3 className="font-bold text-slate-900 mb-0">Pre-Test Questions</h3>
+                    <div className="flex items-center gap-3">
+                        <label className="text-xs font-semibold text-slate-500">Waktu Pre-Test</label>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="number"
+                                min="1"
+                                max="1440"
+                                placeholder="Menit"
+                                value={programData.pretest_duration_minutes}
+                                onChange={(e) => setProgramData({...programData, pretest_duration_minutes: e.target.value})}
+                                className="w-20 px-3 py-2 rounded-lg border border-slate-200 text-sm outline-none"
+                            />
+                            <span className="text-xs text-slate-400">menit (kosong = tanpa batas)</span>
+                        </div>
+                    </div>
+                </div>
                 <div className="space-y-4">
                     {preTestQuestions.map((question, index) => (
                         <div key={index} className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
@@ -946,7 +1002,24 @@ export default function CreateProgramWithSteps({ auth }) {
     const renderStep4 = () => (
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-8">
             <div>
-                <h3 className="font-bold text-slate-900 mb-4">Post-Test Questions</h3>
+                <div className="flex items-center justify-between mb-4 gap-4">
+                    <h3 className="font-bold text-slate-900 mb-0">Post-Test Questions</h3>
+                    <div className="flex items-center gap-3">
+                        <label className="text-xs font-semibold text-slate-500">Waktu Post-Test</label>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="number"
+                                min="1"
+                                max="1440"
+                                placeholder="Menit"
+                                value={programData.posttest_duration_minutes}
+                                onChange={(e) => setProgramData({...programData, posttest_duration_minutes: e.target.value})}
+                                className="w-20 px-3 py-2 rounded-lg border border-slate-200 text-sm outline-none"
+                            />
+                            <span className="text-xs text-slate-400">menit (kosong = tanpa batas)</span>
+                        </div>
+                    </div>
+                </div>
                 <div className="space-y-4">
                     {postTestQuestions.map((question, index) => (
                         <div key={index} className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">

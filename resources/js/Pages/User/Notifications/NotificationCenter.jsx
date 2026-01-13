@@ -6,7 +6,7 @@ import {
     Bell, Search, Filter, CheckCircle, Trash2, X, 
     Info, AlertCircle, CheckCircle2, XCircle, Clock,
     Settings, Archive, Mail, MailOpen, Sparkles,
-    ChevronDown, MoreHorizontal, Check
+    ChevronDown, MoreHorizontal, Check, Loader2
 } from 'lucide-react';
 
 // --- Wondr Style System ---
@@ -137,6 +137,7 @@ export default function NotificationCenter({ auth }) {
     // State
     const [notifications, setNotifications] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [searchLoading, setSearchLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('all'); // all, unread
     const [selectedIds, setSelectedIds] = useState([]);
@@ -150,38 +151,59 @@ export default function NotificationCenter({ auth }) {
     });
 
     useEffect(() => {
+        // Initial load
         loadNotifications();
     }, []);
 
-    const loadNotifications = async () => {
+    // Debounced search + status filter
+    useEffect(() => {
+        const handler = setTimeout(() => {
+            loadNotifications({ search: searchTerm.trim(), status: filterStatus === 'unread' ? 'unread' : '' });
+        }, 500);
+
+        return () => clearTimeout(handler);
+    }, [searchTerm, filterStatus]);
+
+    const loadNotifications = async ({ search = '', status = '' } = {}) => {
+        // If searching, use searchLoading; otherwise use loading for initial load
+        if (search) setSearchLoading(true);
+        else setLoading(true);
+
         try {
-            const response = await fetch('/api/user/notifications', {
+            const params = new URLSearchParams();
+            if (search) params.append('search', search);
+            if (status) params.append('status', status);
+
+            const url = `/api/user/notifications${params.toString() ? `?${params.toString()}` : ''}`;
+
+            const response = await fetch(url, {
                 headers: {
                     'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content,
+                    'Accept': 'application/json'
                 }
             });
 
             if (response.ok) {
                 const data = await response.json();
                 setNotifications(data);
+            } else {
+                console.error('Failed to load notifications, status:', response.status);
             }
         } catch (error) {
             console.error('Failed to load notifications:', error);
         } finally {
+            setSearchLoading(false);
             setLoading(false);
         }
     };
 
-    // Filtering Logic
+    // Filtering Logic (server performs text search; client filters by status only)
     const filteredNotifications = useMemo(() => {
+        if (!notifications || notifications.length === 0) return [];
         return notifications.filter(n => {
-            const matchesSearch = n.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                                  n.message.toLowerCase().includes(searchTerm.toLowerCase());
-            const matchesStatus = filterStatus === 'all' || 
-                                  (filterStatus === 'unread' && !n.read_at);
-            return matchesSearch && matchesStatus;
+            return filterStatus === 'all' || (filterStatus === 'unread' && !n.read_at);
         });
-    }, [notifications, searchTerm, filterStatus]);
+    }, [notifications, filterStatus]);
 
     const unreadCount = notifications.filter(n => !n.read_at).length;
 
@@ -316,8 +338,20 @@ export default function NotificationCenter({ auth }) {
                                 placeholder="Cari notifikasi..." 
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
-                                className="w-full pl-12 pr-4 py-3 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl text-white placeholder-white/50 focus:bg-white/20 focus:outline-none focus:border-[#D6F84C]/50 transition-all font-medium"
+                                className="w-full pl-12 pr-12 py-3 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl text-white placeholder-white/50 focus:bg-white/20 focus:outline-none focus:border-[#D6F84C]/50 transition-all font-medium"
                             />
+                            {/* Right-side: loading spinner or clear button */}
+                            {searchLoading ? (
+                                <div className="absolute right-4 top-1/2 -translate-y-1/2 text-white/80">
+                                    <Loader2 size={16} className="animate-spin" />
+                                </div>
+                            ) : (
+                                searchTerm && (
+                                    <button onClick={() => setSearchTerm('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/80 hover:text-white">
+                                        <X size={16} />
+                                    </button>
+                                )
+                            )}
                         </div>
                     </div>
                 </div>

@@ -33,7 +33,7 @@ class Question extends Model
     ];
 
     protected $casts = [
-        'options' => AsCollection::class,
+        'options' => 'array', // Changed from AsCollection to array for better compatibility
         'answers' => 'json',
     ];
 

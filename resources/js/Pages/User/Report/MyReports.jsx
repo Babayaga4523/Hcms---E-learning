@@ -10,6 +10,7 @@ import {
     Sparkles, Loader2, X, RefreshCw
 } from 'lucide-react';
 import axios from 'axios';
+import showToast from '@/Utils/toast';
 
 // --- Wondr Style System ---
 const WondrStyles = () => (
@@ -355,6 +356,42 @@ export default function MyReports({ auth, stats = {}, trainings = [], quizzes = 
         }
     };
 
+    // Export PDF state & handler
+    const [isExporting, setIsExporting] = useState(false);
+
+    const handleExportPDF = async () => {
+        setIsExporting(true);
+        try {
+            const response = await axios.get('/api/learner/reports/export-pdf', { responseType: 'blob' });
+
+            // Parse filename from content-disposition
+            const disposition = response.headers['content-disposition'] || '';
+            const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/);
+            const filename = match ? decodeURIComponent(match[1]) : 'report.pdf';
+
+            const blob = new Blob([response.data], { type: response.headers['content-type'] || 'application/pdf' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+
+            showToast('success', 'Unduhan dimulai');
+        } catch (error) {
+            console.error('Export PDF error:', error);
+            if (error.response && error.response.status === 401) {
+                router.visit('/login');
+                return;
+            }
+            showToast('error', error.response?.data?.message || 'Gagal mengunduh laporan');
+        } finally {
+            setIsExporting(false);
+        }
+    };
+
     const tabs = [
         { key: 'overview', label: 'Overview', icon: BarChart3 },
         { key: 'trainings', label: 'Training', icon: BookOpen },
@@ -591,12 +628,14 @@ export default function MyReports({ auth, stats = {}, trainings = [], quizzes = 
                             <p className="text-sm text-slate-300 mb-4 leading-relaxed">
                                 Dapatkan rekap lengkap seluruh pelatihan dan nilai Anda dalam format PDF resmi.
                             </p>
-                            <a
-                                href="/api/learner/reports/export-pdf"
-                                className="w-full py-3 bg-[#D6F84C] text-[#002824] rounded-xl font-bold hover:bg-[#c2e43c] transition shadow-lg flex items-center justify-center gap-2"
+                            <button
+                                onClick={handleExportPDF}
+                                disabled={isExporting}
+                                className={`w-full py-3 ${isExporting ? 'bg-slate-200 text-slate-500' : 'bg-[#D6F84C] text-[#002824] hover:bg-[#c2e43c]'} rounded-xl font-bold transition shadow-lg flex items-center justify-center gap-2`}
                             >
-                                <Download size={18} /> Download PDF
-                            </a>
+                                {isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={18} />}
+                                {isExporting ? 'Mengunduh...' : 'Download PDF'}
+                            </button>
                         </div>
 
                     </div>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Head, usePage, router } from '@inertiajs/react';
 import AdminLayout from '@/Layouts/AdminLayout';
+import showToast from '@/Utils/toast';
 import { 
     ComposedChart, Line, Area, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
     Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, PieChart, Pie, Cell 
@@ -229,7 +230,7 @@ export default function AdvancedAnalytics() {
         document.body.removeChild(link);
         
         // Show success message
-        alert('✅ Report berhasil diunduh! File tersimpan di folder Downloads Anda.');
+        showToast('✅ Report berhasil diunduh! File tersimpan di folder Downloads Anda.', 'success');
     };
 
     const loadData = async () => {
@@ -390,7 +391,7 @@ export default function AdvancedAnalytics() {
                                 </p>
                             </div>
                             <button 
-                                onClick={() => alert('Fitur AI Detail Action akan segera hadir! Saat ini dalam tahap pengembangan.')}
+                                onClick={() => showToast('Fitur AI Detail Action akan segera hadir! Saat ini dalam tahap pengembangan.', 'info')}
                                 className="flex-shrink-0 px-6 py-3 border-2 border-slate-100 rounded-full text-sm font-bold text-slate-700 hover:border-[#D6FF59] hover:bg-[#F7FEE7] transition"
                             >
                                 Generate Detail Action

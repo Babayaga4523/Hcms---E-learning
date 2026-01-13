@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Head, usePage } from '@inertiajs/react';
 import AdminLayout from '@/Layouts/AdminLayout';
+import showToast from '@/Utils/toast';
 import { 
     Megaphone, Plus, Edit3, Trash2, Eye, EyeOff, X, Search, 
     Calendar, MoreHorizontal, Bell, Smartphone, Layout, Target,
@@ -113,7 +114,7 @@ export default function AnnouncementManager() {
 
     const handleSaveAnnouncement = async () => {
         if (!formData.title || !formData.content) {
-            alert('Title dan content harus diisi');
+            showToast('Title dan content harus diisi', 'warning');
             return;
         }
 
@@ -138,11 +139,11 @@ export default function AnnouncementManager() {
                 resetForm();
                 loadAnnouncements();
             } else {
-                alert('Gagal menyimpan announcement');
+                showToast('Gagal menyimpan announcement', 'error');
             }
         } catch (err) {
             console.error(err);
-            alert('Gagal menyimpan announcement');
+            showToast('Gagal menyimpan announcement', 'error');
         } finally {
             setSaving(false);
         }

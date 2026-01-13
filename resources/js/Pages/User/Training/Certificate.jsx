@@ -2,6 +2,8 @@ import React, { useRef, useState, useEffect } from 'react';
 import { Head, Link } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
 import { motion, AnimatePresence } from 'framer-motion';
+import showToast from '@/Utils/toast';
+import axios from 'axios';
 import { 
     Award, Download, Share2, Printer, ArrowLeft,
     Calendar, User, BookOpen, CheckCircle2, Star,
@@ -165,7 +167,7 @@ const CertificateStyles = () => (
 
 
 // Main Component - All data comes from backend via Inertia props
-export default function Certificate({ auth, trainingId, training, certificate }) {
+export default function Certificate({ auth, trainingId, training, certificate, eligible = false, requirements = {} }) {
     const user = auth?.user || {};
     const certificateRef = useRef(null);
     const [showAIModal, setShowAIModal] = useState(false);
@@ -179,15 +181,95 @@ export default function Certificate({ auth, trainingId, training, certificate })
         window.print();
     };
 
+    const [isDownloading, setIsDownloading] = useState(false);
+
     const handleDownload = async () => {
-        // For now, use print as PDF workaround
-        // In production, this would call a PDF generation API
-        alert('Gunakan fitur Print (Ctrl+P) dan pilih "Save as PDF" untuk mengunduh sertifikat.');
-        window.print();
+        // Prefer server-generated PDF download via API
+        const certId = certificate?.id || trainingId;
+        if (!certId) {
+            showToast('Sertifikat belum tersedia untuk didownload.', 'warning');
+            return;
+        }
+
+        try {
+            setIsDownloading(true);
+
+            // Pre-check eligibility via API; server returns eligible + requirements (may respond with 404/403 but include body)
+            let meta = null;
+            try {
+                const metaRes = await axios.get(`/api/certificate/${certId}`, { withCredentials: true });
+                meta = metaRes.data;
+            } catch (metaErr) {
+                if (metaErr?.response?.data) meta = metaErr.response.data;
+            }
+
+            if (meta && meta.eligible === false) {
+                const req = meta.requirements || {};
+                const parts = [];
+                if ((req.materials_total || 0) > (req.materials_completed || 0)) parts.push(`Selesaikan semua materi (${req.materials_completed || 0}/${req.materials_total || 0})`);
+                if (req.pretest_required && !req.pretest_passed) parts.push('Lulus Pre-Test');
+                if (req.posttest_required && !req.posttest_passed) parts.push('Lulus Post-Test');
+
+                const message = parts.length ? `Sertifikat terkunci: ${parts.join('; ')}` : (meta.message || 'Sertifikat belum tersedia.');
+                showToast(message, 'warning');
+                setIsDownloading(false);
+                return;
+            }
+
+            // Proceed to download
+            const res = await axios.get(`/api/certificate/${certId}/download`, { responseType: 'blob', withCredentials: true });
+
+            // Attempt to extract filename from Content-Disposition header
+            const cd = res.headers && (res.headers['content-disposition'] || res.headers['Content-Disposition']);
+            let filename = `certificate-${certNumber}.pdf`;
+            if (cd) {
+                const match = cd.match(/filename\*=UTF-8''(.+)|filename="?([^";]+)"?/);
+                if (match) {
+                    filename = decodeURIComponent((match[1] || match[2] || filename));
+                }
+            }
+
+            const blob = new Blob([res.data], { type: 'application/pdf' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+
+            showToast('Mulai mengunduh sertifikat. Terima kasih!', 'success');
+        } catch (error) {
+            console.error('Download certificate failed:', error);
+            if (error?.response?.status === 401) {
+                // Force login so they can retry
+                window.location.href = '/login';
+                return;
+            }
+
+            if (error?.response?.status === 403 || error?.response?.status === 404) {
+                const data = error?.response?.data || {};
+                const req = data.requirements || {};
+                const parts = [];
+                if ((req.materials_total || 0) > (req.materials_completed || 0)) parts.push(`Selesaikan semua materi (${req.materials_completed || 0}/${req.materials_total || 0})`);
+                if (req.pretest_required && !req.pretest_passed) parts.push('Lulus Pre-Test');
+                if (req.posttest_required && !req.posttest_passed) parts.push('Lulus Post-Test');
+
+                const message = parts.length ? `Sertifikat terkunci: ${parts.join('; ')}` : (data.message || 'Akses ditolak.');
+                showToast(message, 'warning');
+                return;
+            }
+
+            const serverMsg = error?.response?.data?.message || 'Gagal mengunduh sertifikat. Silakan coba lagi.';
+            showToast(serverMsg, 'error');
+        } finally {
+            setIsDownloading(false);
+        }
     };
 
     const handleShare = async () => {
-        const shareText = `Saya telah menyelesaikan training "${training?.title || 'Training'}" dengan nilai ${certificate?.score || 85}!`;
+        const shareText = `Saya telah menyelesaikan training "${training?.title || 'Training'}"!`;
         
         if (navigator.share) {
             try {
@@ -204,9 +286,9 @@ export default function Certificate({ auth, trainingId, training, certificate })
             // Fallback: copy link
             try {
                 await navigator.clipboard.writeText(window.location.href);
-                alert('Link sertifikat berhasil disalin!');
+                showToast('Link sertifikat berhasil disalin!', 'success');
             } catch (e) {
-                alert('Gagal menyalin link');
+                showToast('Gagal menyalin link', 'error');
             }
         }
     };
@@ -215,20 +297,26 @@ export default function Certificate({ auth, trainingId, training, certificate })
     const certNumber = certificate?.certificate_number || 
         `BNIF-${new Date().getFullYear()}-${String(trainingId || 0).padStart(3, '0')}-${String(user?.id || 0).padStart(4, '0')}`;
     
-    // Get display values with fallbacks (all data from backend)
-    const displayName = certificate?.user_name || user?.name || 'Peserta Training';
-    const displayScore = certificate?.score || 85;
-    const displayMaterials = certificate?.materials_completed || training?.materials_count || 3;
-    const displayHours = certificate?.hours || Math.round((training?.duration_minutes || 120) / 60);
-    const displayDate = certificate?.issued_at || certificate?.completed_at || new Date().toISOString();
-    const displayTrainingTitle = training?.title || certificate?.training_title || 'Training Program';
-    const displayInstructor = certificate?.instructor_name || training?.instructor_name || training?.instructor?.name || 'Dr. Budi Santoso';
-    const displayInstructorTitle = training?.instructor?.title || 'Head of Digital Learning';
+    // Use backend-provided data directly (avoid hardcoded defaults)
+    const displayName = certificate?.user_name || user?.name || '';
+    // Note: final score and duration are intentionally not shown on the certificate per policy
+    const displayMaterials = certificate?.materials_completed ?? training?.materials_count ?? null;
+    const displayDate = certificate?.issued_at || certificate?.completed_at || null;
+    const displayTrainingTitle = training?.title || certificate?.training_title || '';
+    const displayInstructor = certificate?.instructor_name || training?.instructor_name || training?.instructor?.name || '';
+    const displayInstructorTitle = training?.instructor?.title || '';
+
+    // Render helper
+    const formatDate = (iso) => {
+        if (!iso) return '-';
+        try { return new Date(iso).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }); } catch (e) { return iso; }
+    };
+
 
     // --- GEMINI API FUNCTION ---
     const generateAICaption = async () => {
         if (!apiKey) {
-            alert('API Key Gemini belum dikonfigurasi. Hubungi administrator.');
+            showToast('API Key Gemini belum dikonfigurasi. Hubungi administrator.', 'warning');
             return;
         }
 
@@ -236,7 +324,7 @@ export default function Certificate({ auth, trainingId, training, certificate })
         setShowAIModal(true);
         setAiContent('');
 
-        const prompt = `Buatkan caption LinkedIn profesional, inspiratif, dan antusias dalam Bahasa Indonesia untuk ${displayName} yang baru saja menyelesaikan pelatihan "${displayTrainingTitle}" dengan nilai ${displayScore}/100. Pelatihnya adalah ${displayInstructor}. Tambahkan emoji yang relevan dan hashtag seperti #BNIFinance #WondrLearning #ProfessionalDevelopment. Jangan terlalu panjang, cukup 2-3 paragraf.`;
+        const prompt = `Buatkan caption LinkedIn profesional, inspiratif, dan antusias dalam Bahasa Indonesia untuk ${displayName} yang baru saja menyelesaikan pelatihan "${displayTrainingTitle}". Pelatihnya adalah ${displayInstructor}. Tambahkan emoji yang relevan dan hashtag seperti #BNIFinance #WondrLearning #ProfessionalDevelopment. Jangan terlalu panjang, cukup 2-3 paragraf.`;
 
         try {
             const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`, {
@@ -266,7 +354,7 @@ export default function Certificate({ auth, trainingId, training, certificate })
 
     const copyAIContent = () => {
         navigator.clipboard.writeText(aiContent);
-        alert("Caption berhasil disalin ke clipboard!");
+        showToast("Caption berhasil disalin ke clipboard!", 'success');
     };
 
     return (
@@ -291,8 +379,8 @@ export default function Certificate({ auth, trainingId, training, certificate })
                     <div className="flex gap-3 bg-white p-2 rounded-2xl shadow-sm border border-slate-200">
                         {/* AI Smart Caption Button */}
                         <button 
-                            onClick={generateAICaption}
-                            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white hover:opacity-90 rounded-xl transition font-bold text-sm shadow-md"
+                            onClick={() => { if (!eligible) return showToast('Sertifikat belum tersedia. Lengkapi persyaratan terlebih dahulu.', 'warning'); generateAICaption(); }}
+                            className={`flex items-center gap-2 px-4 py-2 ${eligible ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white hover:opacity-90' : 'bg-slate-100 text-slate-400 cursor-not-allowed'} rounded-xl transition font-bold text-sm shadow-md`}
                         >
                             <Sparkles size={16} /> Buat Caption AI
                         </button>
@@ -300,19 +388,46 @@ export default function Certificate({ auth, trainingId, training, certificate })
                         <div className="w-[1px] h-8 bg-slate-200 mx-1"></div>
 
                         <button 
-                            onClick={handleShare}
-                            className="flex items-center gap-2 px-4 py-2 text-slate-600 hover:bg-slate-50 rounded-xl transition font-medium text-sm"
+                            onClick={() => { if (!eligible) return showToast('Sertifikat belum tersedia. Lengkapi persyaratan terlebih dahulu.', 'warning'); handleShare(); }}
+                            className={`flex items-center gap-2 px-4 py-2 ${eligible ? 'text-slate-600 hover:bg-slate-50' : 'text-slate-400 cursor-not-allowed'} rounded-xl transition font-medium text-sm`}
                         >
                             <Share2 size={16} /> Share
                         </button>
                         <button 
-                            onClick={handleDownload}
-                            className="flex items-center gap-2 px-4 py-2 bg-[#005E54] hover:bg-[#004b43] text-white rounded-xl transition font-bold text-sm shadow-lg shadow-[#005E54]/20"
+                            onClick={() => { if (!eligible) return showToast('Sertifikat belum tersedia. Lengkapi persyaratan terlebih dahulu.', 'warning'); handleDownload(); }}
+                            disabled={isDownloading || !eligible}
+                            className={`flex items-center gap-2 px-4 py-2 ${isDownloading ? 'bg-slate-200 text-slate-500' : (eligible ? 'bg-[#005E54] hover:bg-[#004b43] text-white' : 'bg-slate-100 text-slate-400 cursor-not-allowed')} rounded-xl transition font-bold text-sm shadow-lg ${isDownloading ? '' : 'shadow-[#005E54]/20'}`}
                         >
-                            <Download size={16} /> Download PDF
+                            {isDownloading ? (
+                                <Loader2 size={16} className="animate-spin" />
+                            ) : (
+                                <Download size={16} />
+                            )}
+                            {isDownloading ? 'Mengunduh...' : 'Download PDF'}
                         </button>
                     </div>
                 </div>
+
+                {/* --- Show eligibility message if not eligible --- */}
+                {!eligible && (
+                    <div className="w-full max-w-[1200px] mb-6 px-4">
+                        <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-md text-sm text-slate-800">
+                            <div className="font-bold mb-1">Sertifikat belum tersedia</div>
+                            <div className="text-xs mb-2">Selesaikan persyaratan berikut untuk membuka sertifikat:</div>
+                            <ul className="text-xs list-disc pl-5 space-y-1">
+                                {requirements?.materials_total > (requirements?.materials_completed || 0) && (
+                                    <li>{`Selesaikan semua materi (${requirements?.materials_completed || 0}/${requirements?.materials_total})`}</li>
+                                )}
+                                {requirements?.pretest_required && !requirements?.pretest_passed && (
+                                    <li>Lewati dan lulus <strong>Pre-Test</strong></li>
+                                )}
+                                {requirements?.posttest_required && !requirements?.posttest_passed && (
+                                    <li>Lewati dan lulus <strong>Post-Test</strong></li>
+                                )}
+                            </ul>
+                        </div>
+                    </div>
+                )}
 
                 {/* --- Certificate Preview Wrapper --- */}
                 <div className="certificate-wrapper w-full flex justify-center px-4">
@@ -347,7 +462,7 @@ export default function Certificate({ auth, trainingId, training, certificate })
                                     </div>
                                 </div>
                                 <div className="text-right">
-                                    <h3 className="font-extrabold text-[#D6F84C] bg-[#005E54] px-3 py-1 text-sm tracking-widest uppercase rounded print-color">
+                                    <h3 className="font-extrabold text-[#D6F84C] bg-[#005E54] px-3 py-1 text-sm tracking-widest uppercase rounded print-color"> Certificate
                                         Wondr Learning
                                     </h3>
                                 </div>
@@ -380,14 +495,12 @@ export default function Certificate({ auth, trainingId, training, certificate })
                                     {displayTrainingTitle}
                                 </h3>
                                 <div className="flex flex-wrap justify-center gap-3 md:gap-6 text-xs md:text-sm text-slate-600 font-medium print-color">
+
                                     <span className="px-3 py-1 bg-slate-100 rounded-full border border-slate-200 print-color">
-                                        Nilai Akhir: <strong className="text-[#005E54] print-color">{displayScore}/100</strong>
+                                        Tanggal: <strong>{formatDate(displayDate)}</strong>
                                     </span>
                                     <span className="px-3 py-1 bg-slate-100 rounded-full border border-slate-200 print-color">
-                                        Durasi: <strong>{training?.duration_minutes || displayHours * 60} Menit</strong>
-                                    </span>
-                                    <span className="px-3 py-1 bg-slate-100 rounded-full border border-slate-200 print-color">
-                                        Tanggal: <strong>{new Date(displayDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
+                                        Materi: <strong>{(certificate?.materials_completed ?? displayMaterials) + ' / ' + (training?.materials_count ?? displayMaterials)}</strong>
                                     </span>
                                 </div>
                             </div>

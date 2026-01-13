@@ -46,6 +46,10 @@ class AdminCreateProgramWithQuestionsTest extends TestCase
         ];
 
         $response = $this->actingAs($admin)->postJson('/api/admin/training-programs', $payload);
+        // Debug on failure: print response
+        if ($response->status() !== 201) {
+            fwrite(STDOUT, "Debug response: " . $response->getContent() . "\n");
+        }
         $response->assertStatus(201);
 
         $this->assertDatabaseHas('modules', ['title' => 'Test Program']);
@@ -54,6 +58,10 @@ class AdminCreateProgramWithQuestionsTest extends TestCase
         $this->assertDatabaseCount('questions', 2);
         $this->assertDatabaseHas('questions', ['question_text' => 'Q1', 'question_type' => 'pretest']);
         $this->assertDatabaseHas('questions', ['question_text' => 'Q2', 'question_type' => 'posttest']);
+
+        // Ensure legacy option fields were saved and options normalized
+        $this->assertDatabaseHas('questions', ['question_text' => 'Q1', 'option_a' => 'A', 'option_b' => 'B']);
+        $this->assertDatabaseHas('questions', ['question_text' => 'Q2', 'option_a' => 'A', 'option_b' => 'B']);
     }
 
     public function test_admin_can_create_program_with_nested_program_payload()
