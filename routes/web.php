@@ -468,6 +468,12 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::get('/admin/reports/{id}/download', [AdminReportController::class, 'downloadReport'])->name('admin.reports.download')->withoutMiddleware('throttle');
     Route::get('/api/admin/reports/export', [AdminReportController::class, 'export'])->name('admin.reports.export')->withoutMiddleware('throttle');
     Route::get('/api/admin/reports/user/{id}', [AdminReportController::class, 'getUserCompliance'])->name('admin.reports.user');
+
+    // Lightweight API for frontend dashboard: list of recent reports + aggregates
+    Route::get('/api/admin/reports', [AdminReportController::class, 'getReportsApi'])->name('admin.reports.api');
+
+    // Analytics payload for dashboard charts (combined metrics)
+    Route::get('/api/admin/analytics', [\App\Http\Controllers\Admin\AdminAnalyticsController::class, 'index'])->name('admin.analytics.api');
     
     // Dashboard Metrics Routes (HIGH PRIORITY)
     Route::get('/api/admin/metrics/dashboard-stats', [DashboardMetricsController::class, 'getDashboardStats'])->name('admin.metrics.dashboard-stats');

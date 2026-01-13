@@ -159,20 +159,20 @@ const GlassTooltip = (props) => {
 };
 
 // --- ANALYTICS PANEL WITH MODERN CHARTS ---
-const AnalyticsPanel = ({ modules, stats, trend }) => {
+const AnalyticsPanel = ({ modules, stats, trend, skills: skillsProp = [], learnerStatus: learnerStatusProp = [], loading = false, onRefresh = null }) => {
     const moduleData = (modules || []).map(m => ({
         name: m.title || 'Unknown',
         value: m.total_enrollments > 0 ? Math.round((m.completed_count / m.total_enrollments) * 100) : 0,
         max: 100
     })).slice(0, 5);
 
-    const learnerStatus = [
+    const learnerStatus = (learnerStatusProp && learnerStatusProp.length) ? learnerStatusProp : [
         { name: 'Active', value: stats?.total_users || 850, color: '#6366F1' },
         { name: 'Idle', value: (stats?.total_users || 0) * 0.1 || 200, color: '#94A3B8' },
         { name: 'Completed', value: stats?.completed_trainings || 450, color: '#10B981' },
     ];
 
-    const skillsData = [
+    const defaultSkills = [
         { subject: 'Technical', A: 120, fullMark: 150 },
         { subject: 'Soft Skills', A: 98, fullMark: 150 },
         { subject: 'Compliance', A: 86, fullMark: 150 },
@@ -181,8 +181,16 @@ const AnalyticsPanel = ({ modules, stats, trend }) => {
         { subject: 'Analytical', A: 65, fullMark: 150 },
     ];
 
+    const skillsData = (skillsProp && skillsProp.length) ? skillsProp : defaultSkills; 
+
     return (
         <div className="space-y-8">
+            <div className="flex justify-end">
+                <button onClick={() => onRefresh && onRefresh()} className="p-2 bg-white rounded-lg hover:bg-slate-100 transition shadow-sm">
+                    {loading ? <Loader size={16} className="animate-spin text-slate-600" /> : <RefreshCw size={16} className="text-slate-600" />}
+                </button>
+            </div>
+
             {/* Top KPI Row with Animated Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {[
@@ -229,33 +237,37 @@ const AnalyticsPanel = ({ modules, stats, trend }) => {
                         </button>
                     </div>
                     <div className="h-80 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={trend} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
-                                <defs>
-                                    <linearGradient id="enrollGradient" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="0%" stopColor="#6366F1" stopOpacity={0.3}/>
-                                        <stop offset="100%" stopColor="#6366F1" stopOpacity={0}/>
-                                    </linearGradient>
-                                    <linearGradient id="completeGradient" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="0%" stopColor="#10B981" stopOpacity={0.3}/>
-                                        <stop offset="100%" stopColor="#10B981" stopOpacity={0}/>
-                                    </linearGradient>
-                                    <filter id="neonGlow" x="-50%" y="-50%" width="200%" height="200%">
-                                        <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-                                        <feMerge>
-                                            <feMergeNode in="coloredBlur"/>
-                                            <feMergeNode in="SourceGraphic"/>
-                                        </feMerge>
-                                    </filter>
-                                </defs>
-                                <CartesianGrid strokeDasharray="2 6" stroke="#e6eaf0" vertical={false} />
-                                <XAxis dataKey="month" stroke="#94a3b8" style={{ fontSize: '13px' }} />
-                                <YAxis stroke="#94a3b8" style={{ fontSize: '13px' }} />
-                                <Area type="monotone" dataKey="enrolled" stroke="#6366F1" strokeWidth={3} fill="url(#enrollGradient)" filter="url(#neonGlow)" />
-                                <Area type="monotone" dataKey="completed" stroke="#10B981" strokeWidth={3} fill="url(#completeGradient)" filter="url(#neonGlow)" />
-                                <Tooltip content={<ModernTooltip />} />
-                            </AreaChart>
-                        </ResponsiveContainer>
+                        {loading ? (
+                            <div className="h-full flex items-center justify-center text-slate-400">Memuat data analytics…</div>
+                        ) : (
+                            <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={200}>
+                                <AreaChart data={trend} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
+                                    <defs>
+                                        <linearGradient id="enrollGradient" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stopColor="#6366F1" stopOpacity={0.3}/>
+                                            <stop offset="100%" stopColor="#6366F1" stopOpacity={0}/>
+                                        </linearGradient>
+                                        <linearGradient id="completeGradient" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stopColor="#10B981" stopOpacity={0.3}/>
+                                            <stop offset="100%" stopColor="#10B981" stopOpacity={0}/>
+                                        </linearGradient>
+                                        <filter id="neonGlow" x="-50%" y="-50%" width="200%" height="200%">
+                                            <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                                            <feMerge>
+                                                <feMergeNode in="coloredBlur"/>
+                                                <feMergeNode in="SourceGraphic"/>
+                                            </feMerge>
+                                        </filter>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="2 6" stroke="#e6eaf0" vertical={false} />
+                                    <XAxis dataKey="month" stroke="#94a3b8" style={{ fontSize: '13px' }} />
+                                    <YAxis stroke="#94a3b8" style={{ fontSize: '13px' }} />
+                                    <Area type="monotone" dataKey="enrolled" stroke="#6366F1" strokeWidth={3} fill="url(#enrollGradient)" filter="url(#neonGlow)" />
+                                    <Area type="monotone" dataKey="completed" stroke="#10B981" strokeWidth={3} fill="url(#completeGradient)" filter="url(#neonGlow)" />
+                                    <Tooltip content={<ModernTooltip />} />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        )}
                     </div>
                 </motion.div>
 
@@ -276,28 +288,32 @@ const AnalyticsPanel = ({ modules, stats, trend }) => {
                         </button>
                     </div>
                     <div className="h-80 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={moduleData} margin={{ top: 20, right: 30, left: 0, bottom: 60 }}>
-                                <defs>
-                                    <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="0%" stopColor="#6366F1"/>
-                                        <stop offset="100%" stopColor="#10B981"/>
-                                    </linearGradient>
-                                    <filter id="barGlow" x="-50%" y="-50%" width="200%" height="200%">
-                                        <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
-                                        <feMerge>
-                                            <feMergeNode in="coloredBlur"/>
-                                            <feMergeNode in="SourceGraphic"/>
-                                        </feMerge>
-                                    </filter>
-                                </defs>
-                                <CartesianGrid strokeDasharray="2 6" stroke="#e6eaf0" vertical={false} />
-                                <XAxis dataKey="name" angle={-45} textAnchor="end" height={120} tick={{ fontSize: 11 }} stroke="#94a3b8" />
-                                <YAxis stroke="#94a3b8" label={{ value: 'Completion %', angle: -90, position: 'insideLeft' }} />
-                                <Bar dataKey="value" fill="url(#barGradient)" radius={[8, 8, 0, 0]} filter="url(#barGlow)" />
-                                <Tooltip content={<ModernTooltip />} />
-                            </BarChart>
-                        </ResponsiveContainer>
+                        {loading ? (
+                            <div className="h-full flex items-center justify-center text-slate-400">Memuat data modules…</div>
+                        ) : (
+                            <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={200}>
+                                <BarChart data={moduleData} margin={{ top: 20, right: 30, left: 0, bottom: 60 }}>
+                                    <defs>
+                                        <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stopColor="#6366F1"/>
+                                            <stop offset="100%" stopColor="#10B981"/>
+                                        </linearGradient>
+                                        <filter id="barGlow" x="-50%" y="-50%" width="200%" height="200%">
+                                            <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+                                            <feMerge>
+                                                <feMergeNode in="coloredBlur"/>
+                                                <feMergeNode in="SourceGraphic"/>
+                                            </feMerge>
+                                        </filter>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="2 6" stroke="#e6eaf0" vertical={false} />
+                                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={120} tick={{ fontSize: 11 }} stroke="#94a3b8" />
+                                    <YAxis stroke="#94a3b8" label={{ value: 'Completion %', angle: -90, position: 'insideLeft' }} />
+                                    <Bar dataKey="value" fill="url(#barGradient)" radius={[8, 8, 0, 0]} filter="url(#barGlow)" />
+                                    <Tooltip content={<ModernTooltip />} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        )}
                     </div>
                 </motion.div>
 
@@ -318,28 +334,32 @@ const AnalyticsPanel = ({ modules, stats, trend }) => {
                         </button>
                     </div>
                     <div className="h-80 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <RadarChart data={skillsData} margin={{ top: 20, right: 30, left: 30, bottom: 20 }}>
-                                <defs>
-                                    <linearGradient id="radarGradient" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="0%" stopColor="#6366F1" stopOpacity={0.3}/>
-                                        <stop offset="100%" stopColor="#10B981" stopOpacity={0.3}/>
-                                    </linearGradient>
-                                    <filter id="radarGlow" x="-50%" y="-50%" width="200%" height="200%">
-                                        <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
-                                        <feMerge>
-                                            <feMergeNode in="coloredBlur"/>
-                                            <feMergeNode in="SourceGraphic"/>
-                                        </feMerge>
-                                    </filter>
-                                </defs>
-                                <PolarGrid stroke="#e6eaf0" />
-                                <PolarAngleAxis dataKey="subject" tick={{ fontSize: 12, fill: '#64748b' }} />
-                                <PolarRadiusAxis angle={90} domain={[0, 150]} tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                                <Radar name="Score" dataKey="A" stroke="#6366F1" strokeWidth={3} fill="url(#radarGradient)" fillOpacity={0.3} filter="url(#radarGlow)" />
-                                <Tooltip content={<ModernTooltip />} />
-                            </RadarChart>
-                        </ResponsiveContainer>
+                        {loading ? (
+                            <div className="h-full flex items-center justify-center text-slate-400">Memuat data skills…</div>
+                        ) : (
+                            <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={200}>
+                                <RadarChart data={skillsData} margin={{ top: 20, right: 30, left: 30, bottom: 20 }}>
+                                    <defs>
+                                        <linearGradient id="radarGradient" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stopColor="#6366F1" stopOpacity={0.3}/>
+                                            <stop offset="100%" stopColor="#10B981" stopOpacity={0.3}/>
+                                        </linearGradient>
+                                        <filter id="radarGlow" x="-50%" y="-50%" width="200%" height="200%">
+                                            <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+                                            <feMerge>
+                                                <feMergeNode in="coloredBlur"/>
+                                                <feMergeNode in="SourceGraphic"/>
+                                            </feMerge>
+                                        </filter>
+                                    </defs>
+                                    <PolarGrid stroke="#e6eaf0" />
+                                    <PolarAngleAxis dataKey="subject" tick={{ fontSize: 12, fill: '#64748b' }} />
+                                    <PolarRadiusAxis angle={90} domain={[0, 150]} tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                                    <Radar name="Score" dataKey="A" stroke="#6366F1" strokeWidth={3} fill="url(#radarGradient)" fillOpacity={0.3} filter="url(#radarGlow)" />
+                                    <Tooltip content={<ModernTooltip />} />
+                                </RadarChart>
+                            </ResponsiveContainer>
+                        )}
                     </div>
                 </motion.div>
 
@@ -360,25 +380,29 @@ const AnalyticsPanel = ({ modules, stats, trend }) => {
                         </button>
                     </div>
                     <div className="h-80 w-full flex items-center justify-center">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                                <defs>
-                                    <filter id="donutGlow" x="-50%" y="-50%" width="200%" height="200%">
-                                        <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-                                        <feMerge>
-                                            <feMergeNode in="coloredBlur"/>
-                                            <feMergeNode in="SourceGraphic"/>
-                                        </feMerge>
-                                    </filter>
-                                </defs>
-                                <Pie data={learnerStatus} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={120} paddingAngle={5} filter="url(#donutGlow)">
-                                    {learnerStatus.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={entry.color} />
-                                    ))}
-                                </Pie>
-                                <Tooltip content={<ModernTooltip />} />
-                            </PieChart>
-                        </ResponsiveContainer>
+                        {loading ? (
+                            <div className="text-slate-400">Memuat status peserta…</div>
+                        ) : (
+                            <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={200}>
+                                <PieChart>
+                                    <defs>
+                                        <filter id="donutGlow" x="-50%" y="-50%" width="200%" height="200%">
+                                            <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                                            <feMerge>
+                                                <feMergeNode in="coloredBlur"/>
+                                                <feMergeNode in="SourceGraphic"/>
+                                            </feMerge>
+                                        </filter>
+                                    </defs>
+                                    <Pie data={learnerStatus} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={120} paddingAngle={5} filter="url(#donutGlow)">
+                                        {learnerStatus.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={entry.color} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip content={<ModernTooltip />} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        )}
                     </div>
                     <div className="space-y-2 mt-6 border-t border-slate-200 pt-4">
                         {learnerStatus.map((item) => (
@@ -925,6 +949,41 @@ export default function AdminDashboard({ auth, statistics, compliance_trend, pen
         return () => controller.abort();
     }, [activeTab]);
 
+    // DEEP ANALYTICS: fetch live analytics data when Analytics tab is opened
+    const [analyticsData, setAnalyticsData] = useState({ stats: statistics || mockStats, modules: modules_stats || [], trend: compliance_trend || mockTrend, skills: mockSkills, learnerStatus: mockLearnerStatus });
+    const [analyticsLoading, setAnalyticsLoading] = useState(false);
+
+    const fetchAnalytics = async (signal) => {
+        setAnalyticsLoading(true);
+        try {
+            const res = await fetch('/api/admin/analytics', { method: 'GET', signal, headers: { 'Accept': 'application/json' } });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const payload = await res.json();
+
+            setAnalyticsData((prev) => ({
+                stats: payload.stats || prev.stats,
+                modules: payload.modules || prev.modules,
+                trend: payload.trend || prev.trend,
+                skills: payload.skills || prev.skills,
+                learnerStatus: payload.learnerStatus || prev.learnerStatus,
+            }));
+        } catch (err) {
+            if (err.name !== 'AbortError') {
+                console.error('fetchAnalytics error', err);
+                showToast('Gagal memuat data analytics dari server.', 'error');
+            }
+        } finally {
+            setAnalyticsLoading(false);
+        }
+    };
+
+    // Fetch analytics when user switches to Analytics tab
+    useEffect(() => {
+        let controller = new AbortController();
+        if (activeTab === 'analytics') fetchAnalytics(controller.signal);
+        return () => controller.abort();
+    }, [activeTab]);
+
     const user = auth?.user || { name: 'Admin User' };
     const stats = statistics || mockStats;
     const trend = compliance_trend || mockTrend;
@@ -1305,7 +1364,15 @@ export default function AdminDashboard({ auth, statistics, compliance_trend, pen
                             transition={{ duration: 0.3 }}
                             className="space-y-6"
                         >
-                            <AnalyticsPanel modules={modules} stats={stats} trend={trend} />
+                            <AnalyticsPanel
+                        modules={analyticsData.modules}
+                        stats={analyticsData.stats}
+                        trend={analyticsData.trend}
+                        skills={analyticsData.skills}
+                        learnerStatus={analyticsData.learnerStatus}
+                        loading={analyticsLoading}
+                        onRefresh={() => fetchAnalytics()}
+                    />
                         </motion.div>
                     )}
 

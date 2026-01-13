@@ -388,6 +388,41 @@ class AdminReportController extends Controller
     }
 
     /**
+     * Simple API endpoint that returns recent report list + aggregations for the dashboard
+     * This is used by frontend JS when requesting /api/admin/reports
+     */
+    public function getReportsApi(Request $request)
+    {
+        // NOTE: Replace with real DB queries if you have a 'reports' table
+        $reports = [
+            ['id' => 1, 'title' => 'Q4 Compliance Report', 'type' => 'Compliance', 'date' => '2025-12-20', 'status' => 'Completed', 'size' => '2.4 MB'],
+            ['id' => 2, 'title' => 'Monthly Audit - Dec', 'type' => 'Audit', 'date' => '2025-12-18', 'status' => 'Completed', 'size' => '1.8 MB'],
+            ['id' => 3, 'title' => 'Learner Performance Summary', 'type' => 'Performance', 'date' => '2025-12-15', 'status' => 'Review', 'size' => '3.2 MB'],
+            ['id' => 4, 'title' => 'Training Effectiveness', 'type' => 'Training', 'date' => '2025-12-10', 'status' => 'Completed', 'size' => '2.1 MB'],
+            ['id' => 5, 'title' => 'Risk Assessment', 'type' => 'Compliance', 'date' => '2025-12-08', 'status' => 'Pending', 'size' => '1.5 MB'],
+        ];
+
+        $byType = [
+            ['name' => 'Compliance', 'value' => 34, 'color' => '#ef4444'],
+            ['name' => 'Audit', 'value' => 28, 'color' => '#f59e0b'],
+            ['name' => 'Performance', 'value' => 45, 'color' => '#3b82f6'],
+            ['name' => 'Training', 'value' => 22, 'color' => '#10b981'],
+        ];
+
+        $byStatus = [
+            ['name' => 'Generated', 'value' => 89],
+            ['name' => 'Pending', 'value' => 12],
+            ['name' => 'Review', 'value' => 6],
+        ];
+
+        return response()->json([
+            'reports' => $reports,
+            'byType' => $byType,
+            'byStatus' => $byStatus,
+        ]);
+    }
+
+    /**
      * Export report in specified format (PDF, Excel, CSV)
      */
     public function exportReport(Request $request)
