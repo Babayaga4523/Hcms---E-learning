@@ -1,4 +1,11 @@
 export default function showToast(message, type = 'info', duration = 3500) {
+  // Backwards compatibility: allow calling showToast('success', 'Message')
+  const validTypes = ['success', 'error', 'warning', 'info'];
+  if (typeof message === 'string' && validTypes.includes(message) && typeof type === 'string' && !validTypes.includes(type)) {
+    // Swapped args detected: message is actually type, and type is message
+    [message, type] = [type, message];
+  }
+
   const existing = document.getElementById('wondr-toast-container');
   let container = existing;
   if (!existing) {

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Http\Controllers\Controller;
 use App\Models\Module;
 use App\Models\User;
 use App\Models\UserTraining;
@@ -54,7 +55,8 @@ class AdminAnalyticsController extends Controller
             $modules = Module::select('id', 'title')
                 ->withCount(['users as total_enrollments'])
                 ->withCount(['users as completed_count' => function ($query) {
-                    $query->wherePivot('status', 'completed');
+                    // Explicitly reference the pivot table column to avoid SQL issues
+                    $query->where('user_trainings.status', 'completed');
                 }])
                 ->where('is_active', true)
                 ->orderBy('total_enrollments', 'desc')

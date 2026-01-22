@@ -216,7 +216,7 @@ const ProgramCard = ({ program, onAction, isSelected, onSelect }) => {
 
 // --- Main Application Component ---
 
-export default function TrainingProgram({ programs = [], stats = {}, auth }) {
+export default function TrainingProgram({ programs = [], stats = {}, categories = [], auth }) {
     // Gunakan sessionStorage sebagai persistent cache (survives tab switches)
     const [programsData, setProgramsData] = useState(() => {
         try {
@@ -280,7 +280,7 @@ export default function TrainingProgram({ programs = [], stats = {}, auth }) {
         max_retake_attempts: 3
     });
 
-    const categories = ['Compliance', 'Technical', 'Leadership', 'Product', 'Soft Skills'];
+    const availableCategories = categories && categories.length > 0 ? categories : ['Core Business & Product', 'Credit & Risk Management', 'Collection & Recovery', 'Compliance & Regulatory', 'Sales & Marketing', 'Service Excellence', 'Leadership & Soft Skills', 'IT & Digital Security', 'Onboarding'];
 
     // Filter Logic - gunakan real data dengan filter
     const filteredPrograms = realPrograms.filter(p => {
@@ -624,7 +624,7 @@ export default function TrainingProgram({ programs = [], stats = {}, auth }) {
                                 className="px-4 py-3 bg-white border border-slate-200 rounded-[18px] text-sm font-bold text-slate-700 focus:ring-2 focus:ring-[#005E54]/20 transition-all"
                             >
                                 <option value="all">Semua Kategori</option>
-                                {categories.map(cat => (
+                                {availableCategories.map(cat => (
                                     <option key={cat} value={cat}>{cat}</option>
                                 ))}
                             </select>
@@ -814,7 +814,7 @@ export default function TrainingProgram({ programs = [], stats = {}, auth }) {
                                             </div>
                                         </div>
                                         <div className="space-y-4">
-                                            {categories.map((cat, idx) => {
+                                            {availableCategories.map((cat, idx) => {
                                                 const catCount = realPrograms.filter(p => p.category === cat).length;
                                                 const percentage = realPrograms.length > 0 ? Math.round((catCount / realPrograms.length) * 100) : 0;
                                                 return (
@@ -1149,7 +1149,7 @@ export default function TrainingProgram({ programs = [], stats = {}, auth }) {
                                         onChange={e => setFormData({...formData, category: e.target.value})}
                                     >
                                         <option value="">Pilih Kategori</option>
-                                        {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                                        {availableCategories.map(c => <option key={c} value={c}>{c}</option>)}
                                     </select>
                                     <ChevronDown className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5 pointer-events-none" />
                                 </div>

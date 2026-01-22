@@ -34,8 +34,7 @@ class AdminTrainingProgramController extends Controller
         }
 
         try {
-            $query = Module::select('id', 'title', 'description', 'is_active', 'passing_grade', 'created_at')
-                ->withCount('questions as total_questions');
+            $query = Module::select('id', 'title', 'description', 'is_active', 'passing_grade', 'duration_minutes', 'category', 'cover_image', 'expiry_date', 'created_at');
 
             // Search
             if ($request->has('search') && $request->search) {
@@ -62,16 +61,18 @@ class AdminTrainingProgramController extends Controller
             $sortOrder = $request->get('sortOrder', 'desc');
             $query->orderBy($sortBy, $sortOrder);
 
-            $programs = $query->paginate(15)->map(function($module) {
-                // Get completion statistics
-                $enrollmentCount = DB::table('user_trainings')->where('module_id', $module->id)->count();
-                $completionCount = DB::table('user_trainings')
-                    ->where('module_id', $module->id)
-                    ->where('status', 'completed')
-                    ->count();
-                $completionRate = $enrollmentCount > 0 ? round(($completionCount / $enrollmentCount) * 100, 2) : 0;
+            $programs = $query->paginate(15)->through(function($module) {
+                // Calculate counts manually
+                $totalQuestions = $module->questions()->count();
+                $enrollmentCount = $module->userTrainings()->count();
+                $completionCount = $module->userTrainings()->where('status', 'completed')->count();
+                
+                // Calculate completion rate
+                $completionRate = $enrollmentCount > 0 
+                    ? round(($completionCount / $enrollmentCount) * 100, 2) 
+                    : 0;
 
-                return [
+                $programData = [
                     'id' => $module->id,
                     'title' => $module->title,
                     'description' => $module->description,
@@ -80,7 +81,7 @@ class AdminTrainingProgramController extends Controller
                     'passing_grade' => $module->passing_grade,
                     'category' => $module->category ?? null,
                     'cover_image' => $module->cover_image ?? null,
-                    'total_questions' => $module->total_questions,
+                    'total_questions' => $totalQuestions,
                     'enrollment_count' => $enrollmentCount,
                     'completion_count' => $completionCount,
                     'completion_rate' => $completionRate,
@@ -88,6 +89,10 @@ class AdminTrainingProgramController extends Controller
                     'created_at' => $module->created_at,
                     'status' => $module->is_active ? 'Aktif' : 'Nonaktif',
                 ];
+
+                Log::info('Processing program for frontend:', ['id' => $module->id, 'title' => $module->title, 'is_active' => $module->is_active]);
+
+                return $programData;
             });
 
             // Get statistics
@@ -124,7 +129,13 @@ class AdminTrainingProgramController extends Controller
             }
 
             return Inertia::render('Admin/TrainingProgram', [
-                'programs' => $programs,
+                'programs' => $programs->items(),
+                'pagination' => [
+                    'current_page' => $programs->currentPage(),
+                    'last_page' => $programs->lastPage(),
+                    'per_page' => $programs->perPage(),
+                    'total' => $programs->total(),
+                ],
                 'stats' => $stats,
                 'categories' => $categories,
                 'filters' => [
@@ -184,13 +195,50 @@ class AdminTrainingProgramController extends Controller
             }
         }
 
+        // Debug: Inspect incoming request for tests
+        try {
+            Log::info("TOP-REQUEST-ALL: " . json_encode($request->all()));
+            $fileKeys = array_keys($request->files->all());
+            Log::info("FILES KEYS: " . json_encode($fileKeys));
+        } catch (\Exception $e) {
+            Log::info('Could not dump request for debugging: ' . $e->getMessage());
+        }
+
         // 1. Validation (Security & Data Integrity)
+        // Check if this is a draft submission
+        $isDraft = $request->has('is_draft') && $request->boolean('is_draft');
+
+        // Prevent dual format questions to avoid confusion and duplication
+        $hasUnifiedQuestions = $request->has('questions') && is_array($request->questions) && count($request->questions) > 0;
+        $hasSeparateQuestions = ($request->has('pre_test_questions') && is_array($request->pre_test_questions)) ||
+                               ($request->has('post_test_questions') && is_array($request->post_test_questions));
+
+        if ($hasUnifiedQuestions && $hasSeparateQuestions) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Gunakan format questions ATAU pre_test_questions/post_test_questions, jangan keduanya secara bersamaan'
+            ], 422);
+        }
+
+        // Define allowed categories for BNI Finance
+        $allowedCategories = [
+            'Core Business & Product',
+            'Credit & Risk Management',
+            'Collection & Recovery',
+            'Compliance & Regulatory',
+            'Sales & Marketing',
+            'Service Excellence',
+            'Leadership & Soft Skills',
+            'IT & Digital Security',
+            'Onboarding'
+        ];
+
         $request->validate([
-            'title' => 'required|string|max:255',
-            'description' => 'required|string',
-            'duration_minutes' => 'required|integer|min:1',
-            'passing_grade' => 'required|integer|min:0|max:100',
-            'category' => 'nullable|string|max:255',
+            'title' => $isDraft ? 'nullable|string|max:255' : 'required|string|max:255',
+            'description' => $isDraft ? 'nullable|string' : 'required|string',
+            'duration_minutes' => $isDraft ? 'nullable|integer|min:1' : 'required|integer|min:1',
+            'passing_grade' => 'nullable|integer|min:0',
+            'category' => $isDraft ? 'nullable|string' : ['required', 'string', \Illuminate\Validation\Rule::in($allowedCategories)],
             'is_active' => 'boolean',
             'allow_retake' => 'boolean',
             'max_retake_attempts' => 'nullable|integer|min:1',
@@ -198,13 +246,15 @@ class AdminTrainingProgramController extends Controller
             'prerequisite_module_id' => 'nullable|exists:modules,id',
             'instructor_id' => 'nullable|exists:users,id',
             'certificate_template' => 'nullable|string',
-            // Validasi Array Materials
-            'materials.*.file' => 'sometimes|nullable|file|mimes:pdf,mp4,doc,docx,ppt,pptx,xls,xlsx|max:20480', // Max 20MB, optional for testing
+            'xp' => 'nullable|integer|min:0',
+            'cover_image' => 'sometimes|nullable|image|mimes:jpg,jpeg,png,webp|max:5120', // Cover image max 5MB
+            // Validasi Array Materials - More specific MIME types
+            'materials.*.file' => 'sometimes|nullable|file|mimes:pdf,mp4,doc,docx,ppt,pptx,xls,xlsx,jpg,jpeg,png|max:20480', // Max 20MB
             'materials.*.title' => 'required|string',
             'materials.*.description' => 'nullable|string',
             'materials.*.duration' => 'nullable|integer|min:0',
             'materials.*.order' => 'nullable|integer|min:0',
-            // Validasi Array Questions (Unified format)
+            // Validasi Array Questions (Unified format) - DEPRECATED but kept for backward compatibility
             'questions.*.question_text' => 'nullable|string',
             'questions.*.question_type' => 'nullable|in:pretest,posttest',
             'questions.*.option_a' => 'nullable|string',
@@ -213,14 +263,14 @@ class AdminTrainingProgramController extends Controller
             'questions.*.option_d' => 'nullable|string',
             'questions.*.correct_answer' => 'nullable|in:a,b,c,d',
             'questions.*.explanation' => 'nullable|string',
-            'questions.*.image_url' => 'nullable|image|max:5120',
+            'questions.*.image_url' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120', // More specific image types
             // New: quiz time limits in minutes
             'pretest_duration' => 'nullable|integer|min:1',
             'posttest_duration' => 'nullable|integer|min:1',
             // Also accept frontend field names with _minutes suffix for compatibility
             'pretest_duration_minutes' => 'nullable|integer|min:1',
             'posttest_duration_minutes' => 'nullable|integer|min:1',
-            // Alternative format: separate pre/post test questions
+            // Alternative format: separate pre/post test questions - RECOMMENDED FORMAT
             'pre_test_questions.*.question_text' => 'nullable|string',
             'pre_test_questions.*.option_a' => 'nullable|string',
             'pre_test_questions.*.option_b' => 'nullable|string',
@@ -228,7 +278,7 @@ class AdminTrainingProgramController extends Controller
             'pre_test_questions.*.option_d' => 'nullable|string',
             'pre_test_questions.*.correct_answer' => 'nullable|in:a,b,c,d',
             'pre_test_questions.*.explanation' => 'nullable|string',
-            'pre_test_questions.*.image_url' => 'nullable|image|max:5120',
+            'pre_test_questions.*.image_url' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120', // More specific image types
             'post_test_questions.*.question_text' => 'nullable|string',
             'post_test_questions.*.option_a' => 'nullable|string',
             'post_test_questions.*.option_b' => 'nullable|string',
@@ -236,12 +286,13 @@ class AdminTrainingProgramController extends Controller
             'post_test_questions.*.option_d' => 'nullable|string',
             'post_test_questions.*.correct_answer' => 'nullable|in:a,b,c,d',
             'post_test_questions.*.explanation' => 'nullable|string',
-            'post_test_questions.*.image_url' => 'nullable|image|max:5120',
+            'post_test_questions.*.image_url' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120', // More specific image types
         ]);
 
         // 2. Gunakan Database Transaction
         // Jika satu part gagal, semua dibatalkan (Rollback)
         DB::beginTransaction();
+        $uploadedFiles = []; // Track uploaded files for cleanup on rollback
 
         try {
             // A. Simpan Module / Program Utama
@@ -249,7 +300,7 @@ class AdminTrainingProgramController extends Controller
                 'title' => $request->title,
                 'description' => $request->description,
                 'duration_minutes' => $request->duration_minutes,
-                'passing_grade' => $request->passing_grade,
+                'passing_grade' => $request->passing_grade ?? 0,
                 'category' => $request->category ?? null,
                 'is_active' => filter_var($request->is_active ?? false, FILTER_VALIDATE_BOOLEAN),
                 'allow_retake' => filter_var($request->allow_retake ?? false, FILTER_VALIDATE_BOOLEAN),
@@ -258,21 +309,46 @@ class AdminTrainingProgramController extends Controller
                 'prerequisite_module_id' => $request->prerequisite_module_id ?? null,
                 'instructor_id' => $request->instructor_id ?? null,
                 'certificate_template' => $request->certificate_template ?? null,
+                'xp' => $request->xp ?? 0,
                 // Kita update flag ini nanti setelah menghitung soal
                 'has_pretest' => false,
                 'has_posttest' => false,
             ]);
 
-            // B. Handle Materials (File Upload)
+            // B. Handle Cover Image (optional)
+            if ($request->hasFile('cover_image') && $request->file('cover_image')->isValid()) {
+                try {
+                    $cover = $request->file('cover_image');
+                    $coverFilename = time() . '_cover_' . uniqid() . '.' . $cover->getClientOriginalExtension();
+                    // store under public disk in training-programs/covers
+                    $coverPath = $cover->storeAs('public/training-programs/covers', $coverFilename);
+                    $uploadedFiles[] = 'public/training-programs/covers/' . $coverFilename; // track for rollback
+
+                    $publicPath = 'training-programs/covers/' . $coverFilename;
+                    /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+                    $disk = Storage::disk('public');
+                    if ($disk->exists($publicPath)) {
+                        $module->update(['cover_image' => $disk->url($publicPath)]);
+                    } else {
+                        Log::warning('Cover image saved but not found on public disk', ['path' => $publicPath]);
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Cover image upload failed: ' . $e->getMessage());
+                }
+            }
+
+            // B. Handle Materials (File Upload and URL links)
             if ($request->has('materials')) {
                 foreach ($request->materials as $matData) {
-                    if (isset($matData['file']) && $matData['file']->isValid()) {
+                    // Prefer file upload when provided
+                    if (isset($matData['file']) && $matData['file'] instanceof \Illuminate\Http\UploadedFile && $matData['file']->isValid()) {
 
                         // Buat nama file unik (Future-proof & Security)
                         $filename = time() . '_' . preg_replace('/\s+/', '_', $matData['file']->getClientOriginalName());
 
                         // Simpan ke storage/app/public/materials
                         $path = $matData['file']->storeAs('public/materials', $filename);
+                        $uploadedFiles[] = 'materials/' . $filename; // Track for cleanup
 
                         // Simpan ke Database
                         $materialData = [
@@ -292,6 +368,58 @@ class AdminTrainingProgramController extends Controller
                         if (strtolower($matData['file']->getClientOriginalExtension()) === 'pdf') {
                             $materialData['pdf_path'] = 'materials/' . $filename;
                         }
+
+                        TrainingMaterial::create($materialData);
+                    }
+                    // Handle base64 encoded files
+                    elseif (isset($matData['file']) && is_string($matData['file']) && str_starts_with($matData['file'], 'data:')) {
+                        try {
+                            $data = explode(',', $matData['file']);
+                            $fileData = base64_decode($data[1]);
+                            $mime = explode(';', $data[0])[0];
+                            $extension = explode('/', $mime)[1];
+                            $filename = time() . '_' . uniqid() . '.' . $extension;
+                            $path = 'materials/' . $filename;
+                            Storage::disk('public')->put($path, $fileData);
+                            $uploadedFiles[] = $path;
+
+                            $materialData = [
+                                'module_id' => $module->id,
+                                'title' => $matData['title'],
+                                'description' => $matData['description'] ?? null,
+                                'file_path' => $path,
+                                'file_name' => $filename,
+                                'file_type' => $extension,
+                                'file_size' => strlen($fileData),
+                                'duration_minutes' => $matData['duration'] ?? 0,
+                                'order' => $matData['order'] ?? 0,
+                                'uploaded_by' => $user->id,
+                            ];
+
+                            if (strtolower($extension) === 'pdf') {
+                                $materialData['pdf_path'] = $path;
+                            }
+
+                            TrainingMaterial::create($materialData);
+                        } catch (\Exception $e) {
+                            Log::error('Base64 material upload failed', ['error' => $e->getMessage()]);
+                        }
+                    }
+                    // If no file but a URL is provided, save as external material link
+                    elseif (!empty($matData['url']) && filter_var($matData['url'], FILTER_VALIDATE_URL)) {
+                        $materialData = [
+                            'module_id' => $module->id,
+                            'title' => $matData['title'] ?? 'Untitled',
+                            'description' => $matData['description'] ?? null,
+                            'file_path' => null,
+                            'file_name' => basename(parse_url($matData['url'], PHP_URL_PATH)) ?: null,
+                            'file_type' => 'url',
+                            'file_size' => 0,
+                            'duration_minutes' => $matData['duration'] ?? 0,
+                            'order' => $matData['order'] ?? 0,
+                            'external_url' => $matData['url'],
+                            'uploaded_by' => $user->id,
+                        ];
 
                         TrainingMaterial::create($materialData);
                     }
@@ -315,21 +443,46 @@ class AdminTrainingProgramController extends Controller
             }
 
             // Handle separate pre/post test questions format (from frontend)
-            if ($request->has('pre_test_questions') && is_array($request->pre_test_questions)) {
-                foreach ($request->pre_test_questions as $qData) {
-                    if (!empty($qData['question_text'])) {
-                        $qData['question_type'] = 'pretest';
-                        $allQuestions[] = $qData;
+            // Support file uploads within nested question arrays. Laravel may put files in $request->files rather than in the normal input array.
+            $preInput = $request->input('pre_test_questions') ?? [];
+            $preFiles = $request->file('pre_test_questions') ?? [];
+
+            try {
+                Log::info("PRE_INPUT DUMP: " . print_r($preInput, true));
+                Log::info("PRE_FILES DUMP: " . print_r($preFiles, true));
+            } catch (\Exception $e) {
+                Log::info('Could not dump pre question files: ' . $e->getMessage());
+            }
+
+            $maxPre = max(count($preInput ?? []), count($preFiles ?? []));
+            for ($i = 0; $i < $maxPre; $i++) {
+                $qData = $preInput[$i] ?? [];
+                if (isset($preFiles[$i])) {
+                    // preFiles[$i] may be an array like ['image_url' => UploadedFile]
+                    if (is_array($preFiles[$i]) && isset($preFiles[$i]['image_url'])) {
+                        $qData['image_url'] = $preFiles[$i]['image_url'];
+                    } elseif ($preFiles[$i] instanceof \Illuminate\Http\UploadedFile) {
+                        $qData['image_url'] = $preFiles[$i];
                     }
+                }
+                if (!empty($qData['question_text'])) {
+                    $qData['question_type'] = 'pretest';
+                    $allQuestions[] = $qData;
                 }
             }
 
-            if ($request->has('post_test_questions') && is_array($request->post_test_questions)) {
-                foreach ($request->post_test_questions as $qData) {
-                    if (!empty($qData['question_text'])) {
-                        $qData['question_type'] = 'posttest';
-                        $allQuestions[] = $qData;
-                    }
+            $postInput = $request->input('post_test_questions') ?? [];
+            $postFiles = $request->file('post_test_questions') ?? [];
+
+            $maxPost = max(count($postInput ?? []), count($postFiles ?? []));
+            for ($i = 0; $i < $maxPost; $i++) {
+                $qData = $postInput[$i] ?? [];
+                if (isset($postFiles[$i]) && $postFiles[$i] instanceof \Illuminate\Http\UploadedFile) {
+                    $qData['image_url'] = $postFiles[$i];
+                }
+                if (!empty($qData['question_text'])) {
+                    $qData['question_type'] = 'posttest';
+                    $allQuestions[] = $qData;
                 }
             }
 
@@ -339,7 +492,7 @@ class AdminTrainingProgramController extends Controller
                 // Debug: dump first question payload when running tests
                 try {
                     if (app()->runningInConsole()) {
-                        fwrite(STDOUT, "AllQuestions payload: " . json_encode(array_slice($allQuestions,0,3)) . "\n");
+                        Log::info("AllQuestions payload: " . print_r(array_slice($allQuestions,0,3), true));
                     }
                 } catch (\Exception $e) {
                     Log::info('Could not write debug output: ' . $e->getMessage());
@@ -407,26 +560,106 @@ class AdminTrainingProgramController extends Controller
 
                     Log::info('Quiz created/found', ['quiz_id' => $quiz->id, 'type' => $qType]);
 
-                    // Handle Image Upload untuk Question
+                    // Handle Image Upload untuk Question - IMPROVED: Support both direct upload and temp file move
                     $imageUrl = null;
-                    if (isset($qData['image_url']) && $qData['image_url']->isValid()) {
-                        try {
-                            $imageFilename = time() . '_question_' . uniqid() . '.' . $qData['image_url']->getClientOriginalExtension();
-                            $path = $qData['image_url']->storeAs('public/questions', $imageFilename);
 
-                            // Verify file was actually stored
-                            if (Storage::exists('public/questions/' . $imageFilename)) {
-                                $imageUrl = 'storage/questions/' . $imageFilename; // Path relatif untuk akses public
-                                Log::info('Question image uploaded successfully', ['filename' => $imageFilename, 'path' => $path]);
-                            } else {
-                                Log::error('Question image upload failed - file not found after storage', ['filename' => $imageFilename]);
+                    // Check for uploaded file in the request using Laravel's file handling
+                    if (isset($qData['image_url'])) {
+                        Log::info('Image upload data received', [
+                            'image_url_type' => gettype($qData['image_url']),
+                            'image_url_value' => is_object($qData['image_url']) ? get_class($qData['image_url']) : $qData['image_url'],
+                            'is_uploaded_file' => $qData['image_url'] instanceof \Illuminate\Http\UploadedFile,
+                            'question_index' => $index
+                        ]);
+
+                        if ($qData['image_url'] instanceof \Illuminate\Http\UploadedFile && $qData['image_url']->isValid()) {
+                            // Direct upload (legacy support)
+                            try {
+                                Log::info("LEGACY-UPLOAD-RECEIVED: " . get_class($qData['image_url']) . " name=" . (method_exists($qData['image_url'], 'getClientOriginalName') ? $qData['image_url']->getClientOriginalName() : 'unknown'));
+                                $extension = method_exists($qData['image_url'], 'getClientOriginalExtension') ? $qData['image_url']->getClientOriginalExtension() : pathinfo($qData['image_url']->getFilename(), PATHINFO_EXTENSION);
+                                $imageFilename = 'quiz_' . $module->id . '_' . time() . '_' . uniqid() . '.' . $extension;
+                                // Use storeAs if available, otherwise move the temp file manually
+                                if (method_exists($qData['image_url'], 'storeAs')) {
+                                    $path = $qData['image_url']->storeAs('public/questions', $imageFilename);
+                                    Log::info("STORED USING storeAs, path=" . $path);
+                                } else {
+                                    // Fallback: move the underlying file into storage
+                                    $tmpPath = $qData['image_url']->getPathname();
+                                    $target = storage_path('app/public/questions/' . $imageFilename);
+                                    if (!is_dir(dirname($target))) {
+                                        mkdir(dirname($target), 0755, true);
+                                    }
+                                    $copied = copy($tmpPath, $target);
+                                    Log::info("FALLBACK copy tmpPath=" . $tmpPath . " to " . $target . " result=" . ($copied ? '1' : '0'));
+                                    $path = 'public/questions/' . $imageFilename;
+                                }
+                                $uploadedFiles[] = 'public/questions/' . $imageFilename;
+                                $publicPath = 'questions/' . $imageFilename;
+                                /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+                                $disk = Storage::disk('public');
+                                $imageUrl = $disk->url($publicPath);
+                                Log::info("IMAGE_URL_GENERATED: " . $imageUrl);
+                                if (!$disk->exists($publicPath)) {
+                                    Log::warning('Uploaded question image not found on public disk (but URL generated)', ['path' => $publicPath]);
+                                }
+                                Log::info('Question image uploaded directly (legacy)', ['filename' => $imageFilename, 'path' => $path]);
+                            } catch (\Exception $e) {
+                                Log::error('Direct question image upload failed', ['error' => $e->getMessage(), 'filename' => $imageFilename ?? 'unknown']);
                             }
-                        } catch (\Exception $e) {
-                            Log::error('Question image upload failed', [
-                                'error' => $e->getMessage(),
-                                'question_text' => substr($qData['question_text'], 0, 50) . '...'
+                        } elseif (is_string($qData['image_url']) && str_starts_with($qData['image_url'], 'private/temp_questions/')) {
+                            // Move from temp storage to permanent
+                            try {
+                                $tempPath = $qData['image_url'];
+                                $filename = basename($tempPath);
+                                $permanentPath = 'public/questions/' . $filename;
+
+                                if (Storage::exists($tempPath)) {
+                                    // Move file from temp to permanent location
+                                    Storage::move($tempPath, $permanentPath);
+                                    $uploadedFiles[] = $permanentPath;
+                                    $publicPath = 'questions/' . $filename;
+                                    /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+                                    $disk = Storage::disk('public');
+                                    if ($disk->exists($publicPath)) {
+                                        $imageUrl = $disk->url($publicPath);
+                                    } else {
+                                        // fallback to Storage URL generation even if file not found, keeping URL generation consistent
+                                        $imageUrl = $disk->url($publicPath);
+                                        Log::warning('Moved file not found on public disk; generating URL anyway', ['public_path' => $publicPath]);
+                                    }
+                                    Log::info('Question image moved from temp to permanent', ['filename' => $filename]);
+                                } else {
+                                    Log::warning('Temp image file not found', ['temp_path' => $tempPath]);
+                                }
+                            } catch (\Exception $e) {
+                                Log::error('Temp to permanent image move failed', ['error' => $e->getMessage()]);
+                            }
+                        } elseif (is_string($qData['image_url']) && str_starts_with($qData['image_url'], 'data:image/')) {
+                            // Handle base64 image
+                            try {
+                                $data = explode(',', $qData['image_url']);
+                                $imageData = base64_decode($data[1]);
+                                $mime = explode(';', $data[0])[0];
+                                $extension = explode('/', $mime)[1];
+                                $imageFilename = 'quiz_' . $module->id . '_' . time() . '_' . uniqid() . '.' . $extension;
+                                $path = 'questions/' . $imageFilename;
+                                /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+                                $disk = Storage::disk('public');
+                                $disk->put($path, $imageData);
+                                $uploadedFiles[] = 'public/' . $path;
+                                $imageUrl = $disk->url($path);
+                                Log::info('Question image uploaded from base64', ['filename' => $imageFilename]);
+                            } catch (\Exception $e) {
+                                Log::error('Base64 image upload failed', ['error' => $e->getMessage()]);
+                            }
+                        } else {
+                            Log::warning('Image data received but not in expected format', [
+                                'type' => gettype($qData['image_url']),
+                                'value' => is_object($qData['image_url']) ? get_class($qData['image_url']) : substr($qData['image_url'], 0, 100)
                             ]);
                         }
+                    } else {
+                        Log::info('No image_url field in question data', ['question_index' => $index, 'qType' => $qType]);
                     }
 
                     // Build normalized options array and also keep legacy fields for compatibility
@@ -514,6 +747,13 @@ class AdminTrainingProgramController extends Controller
         } catch (\Exception $e) {
             // Jika ada error, batalkan semua perubahan database
             DB::rollBack();
+
+            // Cleanup uploaded files on rollback
+            foreach ($uploadedFiles as $filePath) {
+                if (Storage::disk('public')->exists($filePath)) {
+                    Storage::disk('public')->delete($filePath);
+                }
+            }
 
             // Log error untuk developer (Observability)
             Log::error('Gagal membuat Training Program: ' . $e->getMessage());
@@ -648,12 +888,25 @@ class AdminTrainingProgramController extends Controller
         try {
             $module = Module::findOrFail($id);
 
+            // Define allowed categories for BNI Finance
+            $allowedCategories = [
+                'Core Business & Product',
+                'Credit & Risk Management',
+                'Collection & Recovery',
+                'Compliance & Regulatory',
+                'Sales & Marketing',
+                'Service Excellence',
+                'Leadership & Soft Skills',
+                'IT & Digital Security',
+                'Onboarding'
+            ];
+
             $validated = $request->validate([
                 'title' => 'required|string|max:255',
                 'description' => 'required|string',
                 'duration_minutes' => 'required|integer|min:1',
-                'passing_grade' => 'required|integer|min:0|max:100',
-                'category' => 'nullable|string|max:255',
+                'passing_grade' => 'required|integer|min:0',
+                'category' => ['required', 'string', \Illuminate\Validation\Rule::in($allowedCategories)],
                 'is_active' => 'boolean',
                 'allow_retake' => 'boolean',
                 'max_retake_attempts' => 'nullable|integer|min:1',
@@ -661,6 +914,8 @@ class AdminTrainingProgramController extends Controller
                 'prerequisite_module_id' => 'nullable|exists:modules,id',
                 'instructor_id' => 'nullable|exists:users,id',
                 'certificate_template' => 'nullable|string',
+                'xp' => 'nullable|integer|min:0',
+                'cover_image' => 'sometimes|nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
                 'pretest_duration' => 'nullable|integer|min:1',
                 'posttest_duration' => 'nullable|integer|min:1',
             ]);
@@ -668,6 +923,32 @@ class AdminTrainingProgramController extends Controller
             $module->update([
                 ...$validated,
             ]);
+
+            // Handle optional cover image update (replace old one)
+            if ($request->hasFile('cover_image') && $request->file('cover_image')->isValid()) {
+                try {
+                    // Attempt to delete the old cover file if it exists on public disk
+                    if (!empty($module->cover_image) && is_string($module->cover_image)) {
+                        // cover_image stored as a URL like /storage/training-programs/covers/filename.jpg
+                        $old = $module->cover_image;
+                        $oldFilename = basename($old);
+                        $oldRelative = 'training-programs/covers/' . $oldFilename;
+                        if (Storage::disk('public')->exists($oldRelative)) {
+                            Storage::disk('public')->delete($oldRelative);
+                        }
+                    }
+
+                    $cover = $request->file('cover_image');
+                    $coverFilename = time() . '_cover_' . uniqid() . '.' . $cover->getClientOriginalExtension();
+                    $coverPath = $cover->storeAs('public/training-programs/covers', $coverFilename);
+                    $publicPath = 'training-programs/covers/' . $coverFilename;
+                    /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+                    $disk = Storage::disk('public');
+                    $module->update(['cover_image' => $disk->url($publicPath)]);
+                } catch (\Exception $e) {
+                    Log::warning('Cover update failed: ' . $e->getMessage());
+                }
+            }
 
             // If admin provided new durations, update corresponding quizzes
             // Update quizzes if admin provided duration in either accepted field name
@@ -708,64 +989,28 @@ class AdminTrainingProgramController extends Controller
 
         try {
             $module = Module::find($id);
-            
+
             if (!$module) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Program pelatihan tidak ditemukan',
                 ], 404);
             }
-            
-            // Disable foreign key constraints (works with MySQL, PostgreSQL, SQLite)
-            Schema::disableForeignKeyConstraints();
-            
+
             DB::beginTransaction();
             try {
-                // Delete related records first
-                DB::table('module_assignments')->where('module_id', $id)->delete();
-                DB::table('user_trainings')->where('module_id', $id)->delete();
-                DB::table('training_discussions')->where('module_id', $id)->delete();
-                DB::table('program_approvals')->where('module_id', $id)->delete();
-                DB::table('compliance_evidences')->where('module_id', $id)->delete();
-                DB::table('program_notifications')->where('module_id', $id)->delete();
-                DB::table('program_enrollment_metrics')->where('module_id', $id)->delete();
-                DB::table('exam_attempts')->where('module_id', $id)->delete();
-                
-                // Delete user exam answers
-                DB::table('user_exam_answers')->whereIn('exam_attempt_id', 
-                    DB::table('exam_attempts')->where('module_id', $id)->pluck('id')
-                )->delete();
-                
-                // Delete materials and their files
-                $materials = DB::table('training_materials')->where('module_id', $id)->get();
-                foreach ($materials as $material) {
-                    if ($material->file_path && Storage::disk('public')->exists($material->file_path)) {
-                        Storage::disk('public')->delete($material->file_path);
-                    }
-                }
-                DB::table('training_materials')->where('module_id', $id)->delete();
-                
-                // Delete questions
-                DB::table('questions')->where('module_id', $id)->delete();
-                
-                // Delete module directly using query builder to bypass Eloquent constraints
-                DB::table('modules')->where('id', $id)->delete();
-                
+                $this->performDestroy($id);
                 DB::commit();
             } catch (\Exception $e) {
                 DB::rollBack();
                 throw $e;
             }
 
-            // Re-enable foreign key constraints
-            Schema::enableForeignKeyConstraints();
-
             return response()->json([
                 'success' => true,
                 'message' => 'Program pelatihan berhasil dihapus',
             ]);
         } catch (\Exception $e) {
-            Schema::enableForeignKeyConstraints();
             Log::error('Delete Training Program Error: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
@@ -786,7 +1031,7 @@ class AdminTrainingProgramController extends Controller
         }
 
         try {
-            $original = Module::with('questions')->findOrFail($id);
+            $original = Module::with('questions', 'quizzes')->findOrFail($id);
 
             // Create duplicate
             $duplicate = $original->replicate();
@@ -794,10 +1039,28 @@ class AdminTrainingProgramController extends Controller
             $duplicate->is_active = false;
             $duplicate->save();
 
+            // Copy quizzes
+            foreach ($original->quizzes as $quiz) {
+                $duplicateQuiz = $quiz->replicate();
+                $duplicateQuiz->module_id = $duplicate->id;
+                $duplicateQuiz->save();
+            }
+
             // Copy questions
             foreach ($original->questions as $question) {
                 $duplicateQuestion = $question->replicate();
                 $duplicateQuestion->module_id = $duplicate->id;
+                // Update quiz_id if it references original quiz
+                if ($question->quiz_id) {
+                    // Find corresponding duplicate quiz
+                    $originalQuiz = $original->quizzes->where('id', $question->quiz_id)->first();
+                    if ($originalQuiz) {
+                        $duplicateQuiz = $duplicate->quizzes->where('type', $originalQuiz->type)->first();
+                        if ($duplicateQuiz) {
+                            $duplicateQuestion->quiz_id = $duplicateQuiz->id;
+                        }
+                    }
+                }
                 $duplicateQuestion->save();
             }
 
@@ -850,7 +1113,7 @@ class AdminTrainingProgramController extends Controller
     }
 
     /**
-     * Batch delete programs
+     * Bulk delete programs (for admin efficiency)
      */
     public function bulkDelete(Request $request)
     {
@@ -860,24 +1123,72 @@ class AdminTrainingProgramController extends Controller
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
-        try {
-            $validated = $request->validate([
-                'module_ids' => 'required|array',
-                'module_ids.*' => 'exists:modules,id',
-            ]);
+        $validated = $request->validate([
+            'program_ids' => 'required|array',
+            'program_ids.*' => 'exists:modules,id',
+        ]);
 
-            Module::whereIn('id', $validated['module_ids'])->delete();
+        $deletedCount = 0;
+        $errors = [];
+
+        DB::beginTransaction();
+        try {
+            foreach ($validated['program_ids'] as $programId) {
+                try {
+                    // Reuse existing destroy logic
+                    $this->performDestroy($programId);
+                    $deletedCount++;
+                } catch (\Exception $e) {
+                    $errors[] = "Failed to delete program {$programId}: " . $e->getMessage();
+                }
+            }
+
+            DB::commit();
 
             return response()->json([
                 'success' => true,
-                'message' => 'Program berhasil dihapus',
+                'message' => "Successfully deleted {$deletedCount} programs",
+                'errors' => $errors,
             ]);
         } catch (\Exception $e) {
-            Log::error('Batch Delete Error: ' . $e->getMessage());
+            DB::rollBack();
             return response()->json([
                 'success' => false,
-                'message' => 'Error menghapus program',
+                'message' => 'Bulk delete failed: ' . $e->getMessage(),
+                'errors' => $errors,
             ], 500);
+        }
+    }
+
+    /**
+     * Smoke API: Check if a public disk image exists and return its public URL (admin only)
+     */
+    public function checkImageExists(Request $request)
+    {
+        $user = Auth::user();
+        if ($user->role !== 'admin') {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        $request->validate([
+            'path' => 'required|string'
+        ]);
+
+        $path = $request->input('path');
+        // normalize input - accept '/storage/questions/..' or 'public/questions/..' or 'questions/..'
+        $relative = preg_replace('#^/storage/#', '', $path);
+        $relative = preg_replace('#^public/#', '', ltrim($relative, '/'));
+
+        try {
+            /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+            $disk = Storage::disk('public');
+            $exists = $disk->exists($relative);
+            $url = $exists ? $disk->url($relative) : null;
+
+            return response()->json(['exists' => $exists, 'path' => $relative, 'url' => $url]);
+        } catch (\Exception $e) {
+            Log::error('checkImageExists error: ' . $e->getMessage());
+            return response()->json(['error' => 'Internal error', 'message' => $e->getMessage()], 500);
         }
     }
 
@@ -904,29 +1215,48 @@ class AdminTrainingProgramController extends Controller
             ]);
 
             $file = $request->file('file');
-            $filename = time() . '_' . $file->getClientOriginalName();
+            $extension = strtolower($file->getClientOriginalExtension());
+            $filename = time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '_', $file->getClientOriginalName());
+            
+            // Store original file
             $filepath = $file->storeAs('training-materials', $filename, 'public');
             
-            // Convert to PDF if Office file
+            // Convert to PDF if Excel/Office file
             $pdfPath = null;
-            $extension = $file->getClientOriginalExtension();
-            $converter = new PdfConverterService();
+            $excelExtensions = ['xlsx', 'xls', 'xlsm', 'csv'];
             
-            if ($converter->needsConversion($extension)) {
-                $fullInputPath = storage_path('app/public/' . $filepath);
-                $outputDir = storage_path('app/public/training-materials/pdf');
+            if (in_array($extension, $excelExtensions)) {
+                // Use new ExcelToPdfService for conversion
+                $pdfFileName = time() . '_' . preg_replace('/\.[^.]+$/', '', basename($filename)) . '.pdf';
+                $pdfStoragePath = 'training-materials/pdf/' . $pdfFileName;
                 
-                Log::info("Converting uploaded file to PDF", ['input' => $fullInputPath]);
-                $pdfFullPath = $converter->convertToPdf($fullInputPath, $outputDir);
+                $fullExcelPath = storage_path('app/public/' . $filepath);
+                $fullPdfPath = storage_path('app/public/' . $pdfStoragePath);
                 
-                if ($pdfFullPath) {
-                    $pdfPath = 'training-materials/pdf/' . basename($pdfFullPath);
-                    Log::info("PDF conversion successful", ['pdf_path' => $pdfPath]);
+                Log::info("Converting Excel to PDF", ['input' => $fullExcelPath, 'output' => $fullPdfPath]);
+                
+                // Create PDF directory if not exists
+                $pdfDir = dirname($fullPdfPath);
+                if (!is_dir($pdfDir)) {
+                    mkdir($pdfDir, 0755, true);
+                }
+                
+                // Convert using service
+                if (\App\Services\ExcelToPdfService::convert($fullExcelPath, $fullPdfPath)) {
+                    $pdfPath = $pdfStoragePath;
+                    Log::info("Excel to PDF conversion successful", ['pdf_path' => $pdfPath]);
+                } else {
+                    Log::warning("Excel to PDF conversion failed, will serve original file");
                 }
             }
 
             // Map material_type to file_type
             $fileType = $request->material_type ?? 'document';
+            
+            // If PDF was created, display as pdf type
+            if ($pdfPath) {
+                $fileType = 'pdf';
+            }
             
             $material = TrainingMaterial::create([
                 'module_id' => $id,
@@ -959,10 +1289,10 @@ class AdminTrainingProgramController extends Controller
                 ],
             ]);
         } catch (\Exception $e) {
-            Log::error('Material Upload Error: ' . $e->getMessage());
+            Log::error('Material Upload Error: ' . $e->getMessage() . ' Trace: ' . $e->getTraceAsString());
             return response()->json([
                 'success' => false,
-                'message' => 'Error mengunggah materi',
+                'message' => 'Error mengunggah materi: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -1038,8 +1368,14 @@ class AdminTrainingProgramController extends Controller
                 $image = $request->file('image_url');
                 $imageFilename = time() . '_question_' . uniqid() . '.' . $image->getClientOriginalExtension();
                 $path = $image->storeAs('public/questions', $imageFilename);
-                if (Storage::exists('public/questions/' . $imageFilename)) {
-                    $imageUrl = 'storage/questions/' . $imageFilename;
+                $publicPath = 'questions/' . $imageFilename;
+                /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+                $disk = Storage::disk('public');
+                if ($disk->exists($publicPath)) {
+                    $imageUrl = $disk->url($publicPath);
+                } else {
+                    Log::warning('Uploaded question image not found on public disk', ['path' => $publicPath]);
+                    $imageUrl = null;
                 }
             }
 
@@ -1118,8 +1454,14 @@ class AdminTrainingProgramController extends Controller
                 $image = $request->file('image_url');
                 $imageFilename = time() . '_question_' . uniqid() . '.' . $image->getClientOriginalExtension();
                 $path = $image->storeAs('public/questions', $imageFilename);
-                if (Storage::exists('public/questions/' . $imageFilename)) {
-                    $imageUrl = 'storage/questions/' . $imageFilename;
+                $publicPath = 'questions/' . $imageFilename;
+                /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+                $disk = Storage::disk('public');
+                if ($disk->exists($publicPath)) {
+                    $imageUrl = $disk->url($publicPath);
+                } else {
+                    Log::warning('Uploaded question image not found on public disk', ['path' => $publicPath]);
+                    $imageUrl = null;
                 }
             }
 
@@ -1198,25 +1540,81 @@ class AdminTrainingProgramController extends Controller
                 'due_date' => 'nullable|date',
             ]);
 
-            $assignedCount = 0;
+            // OPTIMASI: Collect all assignments for bulk insert
+            $moduleAssignments = [];
+            $userTrainings = [];
 
-            // Assign to specific users (hanya tambah yang belum ada)
+            // Collect assignments from specific users
             if (!empty($validated['user_ids'])) {
                 foreach ($validated['user_ids'] as $userId) {
-                    if ($this->assignUserToModule($id, $userId, $validated['due_date'] ?? null)) {
-                        $assignedCount++;
+                    if (!$this->isUserAlreadyAssigned($id, $userId)) {
+                        $moduleAssignments[] = [
+                            'module_id' => $id,
+                            'user_id' => $userId,
+                            'assigned_date' => now(),
+                            'due_date' => $validated['due_date'] ?? null,
+                            'status' => 'pending',
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ];
+
+                        if (!$this->hasUserTraining($id, $userId)) {
+                            $userTrainings[] = [
+                                'user_id' => $userId,
+                                'module_id' => $id,
+                                'status' => 'enrolled',
+                                'final_score' => null,
+                                'is_certified' => false,
+                                'enrolled_at' => now(),
+                                'completed_at' => null,
+                                'created_at' => now(),
+                                'updated_at' => now(),
+                            ];
+                        }
                     }
                 }
             }
 
-            // Assign to departments (hanya tambah yang belum ada)
+            // Collect assignments from departments
             if (!empty($validated['departments'])) {
                 $users = User::whereIn('department', $validated['departments'])->pluck('id');
                 foreach ($users as $userId) {
-                    if ($this->assignUserToModule($id, $userId, $validated['due_date'] ?? null)) {
-                        $assignedCount++;
+                    if (!$this->isUserAlreadyAssigned($id, $userId)) {
+                        $moduleAssignments[] = [
+                            'module_id' => $id,
+                            'user_id' => $userId,
+                            'assigned_date' => now(),
+                            'due_date' => $validated['due_date'] ?? null,
+                            'status' => 'pending',
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ];
+
+                        if (!$this->hasUserTraining($id, $userId)) {
+                            $userTrainings[] = [
+                                'user_id' => $userId,
+                                'module_id' => $id,
+                                'status' => 'enrolled',
+                                'final_score' => null,
+                                'is_certified' => false,
+                                'enrolled_at' => now(),
+                                'completed_at' => null,
+                                'created_at' => now(),
+                                'updated_at' => now(),
+                            ];
+                        }
                     }
                 }
+            }
+
+            // BULK INSERT: Insert all assignments at once
+            $assignedCount = 0;
+            if (!empty($moduleAssignments)) {
+                ModuleAssignment::insert($moduleAssignments);
+                $assignedCount += count($moduleAssignments);
+            }
+            if (!empty($userTrainings)) {
+                UserTraining::insert($userTrainings);
             }
 
             return response()->json([
@@ -1230,6 +1628,26 @@ class AdminTrainingProgramController extends Controller
                 'message' => 'Error menetapkan training',
             ], 500);
         }
+    }
+
+    /**
+     * Helper: Check if user is already assigned to module
+     */
+    private function isUserAlreadyAssigned($moduleId, $userId)
+    {
+        return ModuleAssignment::where('module_id', $moduleId)
+            ->where('user_id', $userId)
+            ->exists();
+    }
+
+    /**
+     * Helper: Check if user already has training record
+     */
+    private function hasUserTraining($moduleId, $userId)
+    {
+        return UserTraining::where('module_id', $moduleId)
+            ->where('user_id', $userId)
+            ->exists();
     }
 
     /**
@@ -1366,73 +1784,84 @@ class AdminTrainingProgramController extends Controller
             $range = $request->query('range', 30);
             $startDate = now()->subDays($range);
 
-            // Top performing programs
-            $topPrograms = Module::where('is_active', true)
-                ->select('id', 'title')
+            // OPTIMASI: Single Query dengan Aggregates untuk Top Programs
+            $topPrograms = DB::table('modules')
+                ->leftJoin('user_trainings', 'modules.id', '=', 'user_trainings.module_id')
+                ->leftJoin('exam_attempts', function($join) {
+                    $join->on('modules.id', '=', 'exam_attempts.module_id')
+                         ->where('exam_attempts.is_passed', true);
+                })
+                ->select(
+                    'modules.title as program_name',
+                    DB::raw('COUNT(DISTINCT user_trainings.id) as enrollments'),
+                    DB::raw('COUNT(DISTINCT CASE WHEN user_trainings.status = "completed" THEN user_trainings.id END) as completions'),
+                    DB::raw('AVG(exam_attempts.percentage) as avg_score')
+                )
+                ->where('modules.is_active', true)
+                ->groupBy('modules.id', 'modules.title')
+                ->orderByRaw('(COUNT(DISTINCT CASE WHEN user_trainings.status = "completed" THEN user_trainings.id END) / NULLIF(COUNT(DISTINCT user_trainings.id), 0)) DESC')
+                ->limit(10)
                 ->get()
-                ->map(function($module) {
-                    $enrollmentCount = DB::table('user_trainings')
-                        ->where('module_id', $module->id)
-                        ->count();
-                    $completionCount = DB::table('user_trainings')
-                        ->where('module_id', $module->id)
-                        ->where('is_completed', true)
-                        ->count();
-                    $avgScore = DB::table('exam_attempts')
-                        ->whereHas('userTraining', function($q) use ($module) {
-                            $q->where('module_id', $module->id);
-                        })
-                        ->where('is_passed', true)
-                        ->avg('percentage') ?? 0;
+                ->map(function($row) {
+                    $row->completion_rate = $row->enrollments > 0
+                        ? round(($row->completions / $row->enrollments) * 100, 1)
+                        : 0;
+                    $row->avg_score = round($row->avg_score ?? 0, 1);
+                    return $row;
+                });
 
+            // OPTIMASI: Enrollment trends dengan single query aggregation
+            $enrollmentTrends = DB::table('user_trainings')
+                ->select(
+                    DB::raw('DATE(enrolled_at) as date'),
+                    DB::raw('COUNT(*) as enrollments')
+                )
+                ->where('enrolled_at', '>=', $startDate)
+                ->groupBy(DB::raw('DATE(enrolled_at)'))
+                ->orderBy('date')
+                ->get()
+                ->map(function($row) {
                     return [
-                        'program_name' => $module->title,
-                        'enrollments' => $enrollmentCount,
-                        'completions' => $completionCount,
-                        'completion_rate' => $enrollmentCount > 0 ? round(($completionCount / $enrollmentCount) * 100, 1) : 0,
-                        'avg_score' => round($avgScore, 1),
+                        'date' => \Carbon\Carbon::parse($row->date)->format('M d'),
+                        'enrollments' => $row->enrollments,
                     ];
                 })
-                ->sortByDesc('completion_rate')
-                ->take(10)
-                ->values();
+                ->toArray();
 
-            // Enrollment trends (last 30 days)
-            $enrollmentTrends = [];
+            // Fill missing dates with 0 enrollments
+            $allDates = [];
             for ($i = $range - 1; $i >= 0; $i--) {
                 $date = now()->subDays($i);
-                $count = DB::table('user_trainings')
-                    ->whereDate('enrolled_at', $date->format('Y-m-d'))
-                    ->count();
-                
-                $enrollmentTrends[] = [
-                    'date' => $date->format('M d'),
-                    'enrollments' => $count,
-                ];
+                $dateKey = $date->format('M d');
+                $allDates[$dateKey] = ['date' => $dateKey, 'enrollments' => 0];
             }
 
-            // Completion rate by category
-            $categoryStats = Module::select('category')
-                ->where('is_active', true)
-                ->whereNotNull('category')
-                ->distinct()
-                ->get()
-                ->map(function($module) {
-                    $completions = DB::table('user_trainings')
-                        ->join('modules', 'user_trainings.module_id', '=', 'modules.id')
-                        ->where('modules.category', $module->category)
-                        ->where('user_trainings.status', 'completed')
-                        ->count();
-                    
-                    $total = DB::table('user_trainings')
-                        ->join('modules', 'user_trainings.module_id', '=', 'modules.id')
-                        ->where('modules.category', $module->category)
-                        ->count();
+            // Merge with actual data
+            foreach ($enrollmentTrends as $trend) {
+                if (isset($allDates[$trend['date']])) {
+                    $allDates[$trend['date']]['enrollments'] = $trend['enrollments'];
+                }
+            }
 
+            $enrollmentTrends = array_values($allDates);
+
+            // OPTIMASI: Completion rate by category dengan single query
+            $categoryStats = DB::table('modules')
+                ->leftJoin('user_trainings', 'modules.id', '=', 'user_trainings.module_id')
+                ->select(
+                    'modules.category',
+                    DB::raw('COUNT(DISTINCT user_trainings.id) as total_enrollments'),
+                    DB::raw('COUNT(DISTINCT CASE WHEN user_trainings.status = "completed" THEN user_trainings.id END) as completions')
+                )
+                ->where('modules.is_active', true)
+                ->whereNotNull('modules.category')
+                ->groupBy('modules.category')
+                ->get()
+                ->map(function($row) {
                     return [
-                        'category' => $module->category,
-                        'completion_rate' => $total > 0 ? round(($completions / $total) * 100, 1) : 0,
-                        'total_enrollments' => $total,
+                        'category' => $row->category,
+                        'completion_rate' => $row->total_enrollments > 0 ? round(($row->completions / $row->total_enrollments) * 100, 1) : 0,
+                        'total_enrollments' => $row->total_enrollments,
                     ];
                 })
                 ->sortByDesc('completion_rate')
@@ -1482,31 +1911,24 @@ class AdminTrainingProgramController extends Controller
                 ]
             ];
 
-            // Department-wise performance
-            $departmentPerformance = User::where('role', 'user')
-                ->select('department')
-                ->whereNotNull('department')
-                ->distinct()
+            // OPTIMASI: Department-wise performance dengan single query aggregation
+            $departmentPerformance = DB::table('users')
+                ->leftJoin('user_trainings', 'users.id', '=', 'user_trainings.user_id')
+                ->select(
+                    'users.department',
+                    DB::raw('COUNT(DISTINCT user_trainings.id) as total_enrollments'),
+                    DB::raw('COUNT(DISTINCT CASE WHEN user_trainings.status = "completed" THEN user_trainings.id END) as completions')
+                )
+                ->where('users.role', 'user')
+                ->whereNotNull('users.department')
+                ->groupBy('users.department')
                 ->get()
-                ->map(function($user) {
-                    $deptUsers = User::where('department', $user->department)
-                        ->where('role', 'user')
-                        ->pluck('id');
-                    
-                    $completions = DB::table('user_trainings')
-                        ->whereIn('user_id', $deptUsers)
-                        ->where('status', 'completed')
-                        ->count();
-                    
-                    $total = DB::table('user_trainings')
-                        ->whereIn('user_id', $deptUsers)
-                        ->count();
-
+                ->map(function($row) {
                     return [
-                        'department' => $user->department,
-                        'completion_rate' => $total > 0 ? round(($completions / $total) * 100, 1) : 0,
-                        'total_enrollments' => $total,
-                        'total_completed' => $completions,
+                        'department' => $row->department,
+                        'completion_rate' => $row->total_enrollments > 0 ? round(($row->completions / $row->total_enrollments) * 100, 1) : 0,
+                        'total_enrollments' => $row->total_enrollments,
+                        'total_completed' => $row->completions,
                     ];
                 })
                 ->sortByDesc('completion_rate')
@@ -1545,83 +1967,84 @@ class AdminTrainingProgramController extends Controller
     public function getCompliance(Request $request)
     {
         try {
-            // Mandatory training status
-            $mandatoryTrainings = Module::where('category', 'Compliance')
-                ->where('is_active', true)
-                ->select('id', 'title')
+            // OPTIMASI: Mandatory training status dengan single query aggregation
+            $mandatoryTrainings = DB::table('modules')
+                ->leftJoin('user_trainings', 'modules.id', '=', 'user_trainings.module_id')
+                ->select(
+                    'modules.title as training_name',
+                    DB::raw('COUNT(DISTINCT user_trainings.id) as enrollments'),
+                    DB::raw('COUNT(DISTINCT CASE WHEN user_trainings.status = "completed" THEN user_trainings.id END) as completions')
+                )
+                ->where('modules.category', 'Compliance')
+                ->where('modules.is_active', true)
+                ->groupBy('modules.id', 'modules.title')
                 ->get()
-                ->map(function($module) {
-                    $enrollmentCount = DB::table('user_trainings')
-                        ->where('module_id', $module->id)
-                        ->count();
-                    $completionCount = DB::table('user_trainings')
-                        ->where('module_id', $module->id)
-                        ->where('is_completed', true)
-                        ->count();
-                    
-                    $notCompleted = User::where('role', 'user')
-                        ->whereNotIn('id', function($q) use ($module) {
-                            $q->select('user_id')
-                                ->from('user_trainings')
-                                ->where('module_id', $module->id)
-                                ->where('is_completed', true);
-                        })
-                        ->count();
-
+                ->map(function($row) {
+                    $totalUsers = User::where('role', 'user')->count();
                     return [
-                        'training_name' => $module->title,
-                        'total_users' => User::where('role', 'user')->count(),
-                        'completed_users' => $completionCount,
-                        'not_completed_users' => $notCompleted,
-                        'compliance_rate' => User::where('role', 'user')->count() > 0 
-                            ? round(($completionCount / User::where('role', 'user')->count()) * 100, 1)
-                            : 0,
+                        'training_name' => $row->training_name,
+                        'total_users' => $totalUsers,
+                        'completed_users' => $row->completions,
+                        'not_completed_users' => $totalUsers - $row->completions,
+                        'compliance_rate' => $totalUsers > 0 ? round(($row->completions / $totalUsers) * 100, 1) : 0,
                     ];
                 })
                 ->sortByDesc('compliance_rate')
                 ->values();
 
-            // Non-compliant users (haven't completed mandatory trainings)
-            $nonCompliantUsers = User::where('role', 'user')
-                ->select('id', 'name', 'email', 'department')
+            // OPTIMASI: Non-compliant users dengan single query aggregation
+            $nonCompliantUsers = DB::table('users')
+                ->leftJoin('user_trainings', 'users.id', '=', 'user_trainings.user_id')
+                ->leftJoin('modules', 'user_trainings.module_id', '=', 'modules.id')
+                ->select(
+                    'users.id as user_id',
+                    'users.name as user_name',
+                    'users.email',
+                    'users.department',
+                    DB::raw('COUNT(DISTINCT CASE WHEN modules.category = "Compliance" AND user_trainings.status != "completed" THEN modules.id END) as incomplete_mandatory')
+                )
+                ->where('users.role', 'user')
+                ->where('modules.category', 'Compliance')
+                ->where('modules.is_active', true)
+                ->groupBy('users.id', 'users.name', 'users.email', 'users.department')
+                ->having('incomplete_mandatory', '>', 0)
+                ->orderByDesc('incomplete_mandatory')
+                ->limit(20)
                 ->get()
-                ->map(function($user) {
-                    $incompleteMandatory = DB::table('user_trainings')
-                        ->join('modules', 'user_trainings.module_id', '=', 'modules.id')
-                        ->where('user_trainings.user_id', $user->id)
-                        ->where('modules.category', 'Compliance')
-                        ->where('user_trainings.status', '!=', 'completed')
-                        ->count();
+                ->map(function($row) {
+                    $row->risk_score = $row->incomplete_mandatory > 0 ? round((min($row->incomplete_mandatory, 5) / 5) * 100, 1) : 0;
+                    return $row;
+                });
 
-                    $riskScore = $incompleteMandatory > 0 ? round((min($incompleteMandatory, 5) / 5) * 100, 1) : 0;
-
-                    return [
-                        'user_id' => $user->id,
-                        'user_name' => $user->name,
-                        'email' => $user->email,
-                        'department' => $user->department,
-                        'incomplete_mandatory' => $incompleteMandatory,
-                        'risk_score' => $riskScore,
-                    ];
-                })
-                ->where('incomplete_mandatory', '>', 0)
-                ->sortByDesc('risk_score')
-                ->take(20)
-                ->values();
-
-            // Compliance summary
+            // OPTIMASI: Compliance summary dengan efficient query
             $allUsers = User::where('role', 'user')->count();
-            $fullyCompliant = User::where('role', 'user')
-                ->get()
-                ->filter(function($user) {
-                    return DB::table('user_trainings')
-                        ->join('modules', 'user_trainings.module_id', '=', 'modules.id')
-                        ->where('user_trainings.user_id', $user->id)
-                        ->where('modules.category', 'Compliance')
-                        ->where('user_trainings.is_completed', false)
-                        ->count() === 0;
+
+            // Count users who have NO incomplete compliance trainings
+            $fullyCompliant = DB::table('users')
+                ->leftJoin('user_trainings', 'users.id', '=', 'user_trainings.user_id')
+                ->leftJoin('modules', 'user_trainings.module_id', '=', 'modules.id')
+                ->where('users.role', 'user')
+                ->where('modules.category', 'Compliance')
+                ->where('modules.is_active', true)
+                ->where(function($q) {
+                    $q->whereNull('user_trainings.status')
+                      ->orWhere('user_trainings.status', '!=', 'completed');
                 })
+                ->distinct('users.id')
                 ->count();
+
+            // Actually, let's invert this - count users who DON'T have incomplete compliance trainings
+            $usersWithIncomplete = DB::table('users')
+                ->join('user_trainings', 'users.id', '=', 'user_trainings.user_id')
+                ->join('modules', 'user_trainings.module_id', '=', 'modules.id')
+                ->where('users.role', 'user')
+                ->where('modules.category', 'Compliance')
+                ->where('modules.is_active', true)
+                ->where('user_trainings.status', '!=', 'completed')
+                ->distinct('users.id')
+                ->count();
+
+            $fullyCompliant = $allUsers - $usersWithIncomplete;
 
             return response()->json([
                 'mandatory_trainings' => $mandatoryTrainings,
@@ -1637,6 +2060,219 @@ class AdminTrainingProgramController extends Controller
             Log::error('Get Compliance Error: ' . $e->getMessage());
             return response()->json(['error' => 'Error loading compliance data'], 500);
         }
+    }
+
+    /**
+     * Validate questions data before processing
+     */
+    public function validateQuestions(Request $request)
+    {
+        $user = Auth::user();
+
+        if ($user->role !== 'admin') {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        $request->validate([
+            'pre_test_questions' => 'nullable|array',
+            'pre_test_questions.*.question_text' => 'nullable|string',
+            'pre_test_questions.*.option_a' => 'nullable|string',
+            'pre_test_questions.*.option_b' => 'nullable|string',
+            'pre_test_questions.*.option_c' => 'nullable|string',
+            'pre_test_questions.*.option_d' => 'nullable|string',
+            'pre_test_questions.*.correct_answer' => 'nullable|in:a,b,c,d',
+            'post_test_questions' => 'nullable|array',
+            'post_test_questions.*.question_text' => 'nullable|string',
+            'post_test_questions.*.option_a' => 'nullable|string',
+            'post_test_questions.*.option_b' => 'nullable|string',
+            'post_test_questions.*.option_c' => 'nullable|string',
+            'post_test_questions.*.option_d' => 'nullable|string',
+            'post_test_questions.*.correct_answer' => 'nullable|in:a,b,c,d',
+        ]);
+
+        $errors = [];
+        $warnings = [];
+
+        // Validate pre-test questions
+        if ($request->has('pre_test_questions')) {
+            foreach ($request->pre_test_questions as $index => $q) {
+                $questionErrors = $this->validateSingleQuestion($q, 'Pre-test', $index + 1);
+                $errors = array_merge($errors, $questionErrors);
+            }
+        }
+
+        // Validate post-test questions
+        if ($request->has('post_test_questions')) {
+            foreach ($request->post_test_questions as $index => $q) {
+                $questionErrors = $this->validateSingleQuestion($q, 'Post-test', $index + 1);
+                $errors = array_merge($errors, $questionErrors);
+            }
+        }
+
+        // Check for minimum questions
+        $preTestCount = count($request->pre_test_questions ?? []);
+        $postTestCount = count($request->post_test_questions ?? []);
+
+        if ($preTestCount > 0 && $preTestCount < 3) {
+            $warnings[] = 'Pre-test direkomendasikan minimal 3 soal untuk validitas yang baik';
+        }
+
+        if ($postTestCount > 0 && $postTestCount < 5) {
+            $warnings[] = 'Post-test direkomendasikan minimal 5 soal untuk evaluasi yang komprehensif';
+        }
+
+        return response()->json([
+            'valid' => empty($errors),
+            'errors' => $errors,
+            'warnings' => $warnings,
+            'summary' => [
+                'pre_test_count' => $preTestCount,
+                'post_test_count' => $postTestCount,
+                'total_questions' => $preTestCount + $postTestCount,
+            ]
+        ]);
+    }
+
+    /**
+     * Validate single question data
+     */
+    private function validateSingleQuestion($question, $testType, $index)
+    {
+        $errors = [];
+
+        // Check if question has content
+        $hasContent = !empty(trim($question['question_text'] ?? ''));
+
+        if (!$hasContent) {
+            // Skip validation for empty questions
+            return $errors;
+        }
+
+        // Validate question text
+        if (empty(trim($question['question_text'] ?? ''))) {
+            $errors[] = "{$testType} #{$index}: Pertanyaan tidak boleh kosong";
+        }
+
+        // Validate options
+        $options = ['option_a', 'option_b', 'option_c', 'option_d'];
+        $filledOptions = 0;
+
+        foreach ($options as $option) {
+            if (!empty(trim($question[$option] ?? ''))) {
+                $filledOptions++;
+            }
+        }
+
+        if ($filledOptions < 2) {
+            $errors[] = "{$testType} #{$index}: Minimal 2 opsi jawaban yang diisi";
+        }
+
+        // Validate correct answer
+        $correctAnswer = $question['correct_answer'] ?? '';
+        if (empty($correctAnswer)) {
+            $errors[] = "{$testType} #{$index}: Jawaban benar harus dipilih";
+        } elseif (!in_array($correctAnswer, ['a', 'b', 'c', 'd'])) {
+            $errors[] = "{$testType} #{$index}: Jawaban benar tidak valid";
+        } elseif (!empty($question['option_' . $correctAnswer] ?? '')) {
+            // Check if the correct answer option has content
+            $correctOptionKey = 'option_' . $correctAnswer;
+            if (empty(trim($question[$correctOptionKey] ?? ''))) {
+                $errors[] = "{$testType} #{$index}: Opsi jawaban yang dipilih sebagai benar tidak boleh kosong";
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * Clean up temporary uploaded images (call after successful form submission)
+     */
+    public function cleanupTempImages(Request $request)
+    {
+        $user = Auth::user();
+
+        if ($user->role !== 'admin') {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        $request->validate([
+            'used_temp_paths' => 'nullable|array',
+            'used_temp_paths.*' => 'string',
+        ]);
+
+        try {
+            $tempDir = 'private/temp_questions';
+            $usedPaths = $request->used_temp_paths ?? [];
+
+            // Get all temp files
+            $allTempFiles = Storage::files($tempDir);
+
+            $cleanedCount = 0;
+            foreach ($allTempFiles as $tempFile) {
+                // If file is not in the used list, delete it
+                if (!in_array($tempFile, $usedPaths)) {
+                    Storage::delete($tempFile);
+                    $cleanedCount++;
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => "Cleaned up {$cleanedCount} temporary files"
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Temp image cleanup error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Cleanup gagal: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Extract destroy logic for reuse in bulk operations
+     */
+    private function performDestroy($id)
+    {
+        $module = Module::findOrFail($id);
+
+        // Delete related records in correct order (child first)
+        DB::table('user_exam_answers')->whereIn('exam_attempt_id',
+            DB::table('exam_attempts')->where('module_id', $id)->pluck('id')
+        )->delete();
+        DB::table('exam_attempts')->where('module_id', $id)->delete();
+        DB::table('user_trainings')->where('module_id', $id)->delete();
+        DB::table('training_discussions')->where('module_id', $id)->delete();
+        DB::table('program_approvals')->where('module_id', $id)->delete();
+        DB::table('compliance_evidences')->where('module_id', $id)->delete();
+        DB::table('program_notifications')->where('module_id', $id)->delete();
+        DB::table('program_enrollment_metrics')->where('module_id', $id)->delete();
+        DB::table('module_assignments')->where('module_id', $id)->delete();
+
+        // Delete materials and their files
+        $materials = DB::table('training_materials')->where('module_id', $id)->get();
+        foreach ($materials as $material) {
+            if ($material->file_path && Storage::disk('public')->exists($material->file_path)) {
+                Storage::disk('public')->delete($material->file_path);
+            }
+        }
+        DB::table('training_materials')->where('module_id', $id)->delete();
+
+        // Delete questions and their images
+        $questions = DB::table('questions')->where('module_id', $id)->get();
+        foreach ($questions as $question) {
+            if ($question->image_url && Storage::exists($question->image_url)) {
+                Storage::delete($question->image_url);
+            }
+        }
+        DB::table('questions')->where('module_id', $id)->delete();
+
+        // Delete quizzes
+        DB::table('quizzes')->where('module_id', $id)->delete();
+
+        // Finally delete module
+        $module->delete();
     }
 
     /**

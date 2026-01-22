@@ -296,75 +296,279 @@ const VideoPlayer = ({ url, onComplete }) => {
     );
 };
 
-const PDFViewer = ({ url, title }) => (
-    <div className="w-full h-full bg-gradient-to-br from-slate-100 to-slate-200 flex flex-col relative">
-        {/* If URL exists, show iframe */}
-        {url ? (
-            <iframe
-                src={url}
-                className="w-full h-full border-0"
-                title={title || 'PDF Viewer'}
-            />
-        ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-                <div className="bg-white p-10 rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full">
-                    <div className="w-20 h-20 bg-red-50 rounded-2xl flex items-center justify-center mx-auto mb-6 text-red-500">
-                        <FileText size={40} />
+const PDFViewer = ({ url, title }) => {
+    const [isLoading, setIsLoading] = useState(true);
+    const [hasError, setHasError] = useState(false);
+    
+    // PENTING: Gunakan direct URL tanpa fetch, biar browser handle PDF inline
+    return (
+        <div className="w-full h-full bg-gradient-to-br from-slate-100 to-slate-200 flex flex-col relative">
+            {/* Loading state */}
+            {isLoading && !hasError && (
+                <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-10">
+                    <div className="text-center">
+                        <div className="w-14 h-14 border-4 border-[#005E54] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        <p className="text-slate-600 font-medium">Memuat PDF...</p>
                     </div>
-                    <h3 className="text-2xl font-bold text-slate-900 mb-3 line-clamp-2">{title}</h3>
-                    <p className="text-slate-500 mb-8 text-sm leading-relaxed">
-                        Dokumen PDF tersedia untuk dibaca. Klik tombol di bawah untuk membuka atau mengunduh file.
-                    </p>
-                    {url ? (
-                        <a
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="w-full px-6 py-4 bg-[#002824] text-[#D6F84C] rounded-2xl font-bold hover:bg-[#00403a] transition shadow-xl flex items-center justify-center gap-3"
-                        >
-                            <Download size={20} /> Buka / Download PDF
-                        </a>
-                    ) : (
-                        <div className="w-full px-6 py-4 bg-slate-200 text-slate-500 rounded-2xl font-bold flex items-center justify-center gap-3">
-                            <span>Tidak ada file untuk diunduh</span>
+                </div>
+            )}
+            
+            {/* PDF DIRECT INLINE - NO DOWNLOAD */}
+            {url && !hasError ? (
+                <iframe
+                    src={url + '#toolbar=1&navpanes=0&scrollbar=1'}
+                    className="w-full h-full border-0"
+                    title={title || 'PDF Viewer'}
+                    onLoad={() => setIsLoading(false)}
+                    onError={() => {
+                        setIsLoading(false);
+                        setHasError(true);
+                    }}
+                    allow="autoplay"
+                    referrerPolicy="no-referrer"
+                    data-testid="pdf-iframe"
+                />
+            ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+                    <div className="bg-white p-10 rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full">
+                        <div className={`w-20 h-20 ${hasError ? 'bg-red-50 text-red-500' : 'bg-slate-100 text-slate-400'} rounded-2xl flex items-center justify-center mx-auto mb-6`}>
+                            <FileText size={40} />
                         </div>
-                    )}
+                        <h3 className="text-2xl font-bold text-slate-900 mb-3 line-clamp-2">{title}</h3>
+                        <p className="text-slate-500 mb-8 text-sm leading-relaxed">
+                            {hasError 
+                                ? 'Gagal memuat PDF. File mungkin bermasalah atau tidak tersedia.'
+                                : 'Dokumen PDF siap ditampilkan. Gunakan toolbar PDF untuk zoom, search, dan print.'
+                            }
+                        </p>
+                        {hasError && url ? (
+                            <button
+                                onClick={() => window.open(url, '_blank')}
+                                className="w-full px-6 py-4 bg-[#002824] text-[#D6F84C] rounded-2xl font-bold hover:bg-[#00403a] transition shadow-xl flex items-center justify-center gap-3"
+                            >
+                                <Download size={20} /> Buka di Tab Baru
+                            </button>
+                        ) : !url ? (
+                            <div className="w-full px-6 py-4 bg-slate-200 text-slate-500 rounded-2xl font-bold flex items-center justify-center gap-3">
+                                <span>Tidak ada file untuk diakses</span>
+                            </div>
+                        ) : null}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+const ExcelViewer = ({ url, title }) => {
+    const [data, setData] = useState(null);
+    const [sheets, setSheets] = useState([]);
+    const [activeSheet, setActiveSheet] = useState(0);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(false);
+
+    useEffect(() => {
+        const loadExcel = async () => {
+            try {
+                // Load SheetJS library dynamically
+                const script = document.createElement('script');
+                script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+                script.async = true;
+                script.onload = async () => {
+                    try {
+                        const response = await fetch(url, {
+                            method: 'GET',
+                            credentials: 'include', // Include auth cookies
+                            headers: {
+                                'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel'
+                            }
+                        });
+                        
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                        }
+                        
+                        const arrayBuffer = await response.arrayBuffer();
+                        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+                        
+                        setSheets(workbook.SheetNames);
+                        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                        const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+                        setData(jsonData);
+                        setLoading(false);
+                    } catch (fetchErr) {
+                        console.error('Error fetching Excel:', fetchErr);
+                        setError(true);
+                        setLoading(false);
+                    }
+                };
+                script.onerror = () => {
+                    console.error('Error loading SheetJS library');
+                    setError(true);
+                    setLoading(false);
+                };
+                document.head.appendChild(script);
+            } catch (err) {
+                console.error('Error loading Excel:', err);
+                setError(true);
+                setLoading(false);
+            }
+        };
+        loadExcel();
+    }, [url]);
+
+    if (loading) {
+        return (
+            <div className="w-full h-full flex items-center justify-center bg-slate-50">
+                <div className="text-center">
+                    <div className="w-14 h-14 border-4 border-[#005E54] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <p className="text-slate-600 font-medium">Memuat file Excel...</p>
                 </div>
             </div>
-        )}
-    </div>
-);
+        );
+    }
+
+    if (error || !data) {
+        return (
+            <div className="w-full h-full flex items-center justify-center bg-slate-50">
+                <div className="text-center max-w-md">
+                    <div className="w-20 h-20 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-6 text-amber-500">
+                        <FileText size={40} />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-900 mb-2">Gagal Memuat File</h3>
+                    <p className="text-slate-500 mb-6 text-sm">File Excel tidak dapat diproses.</p>
+                    <a 
+                        href={url} 
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 px-6 py-3 bg-[#005E54] text-white rounded-xl font-bold hover:bg-[#004a44]"
+                    >
+                        <Download size={18} /> Download File
+                    </a>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="w-full h-full flex flex-col bg-white">
+            {/* Sheet Tabs */}
+            {sheets.length > 1 && (
+                <div className="flex gap-2 p-4 border-b border-slate-200 bg-slate-50 overflow-x-auto">
+                    {sheets.map((sheet, idx) => (
+                        <button
+                            key={idx}
+                            onClick={() => setActiveSheet(idx)}
+                            className={`px-4 py-2 rounded-lg font-semibold whitespace-nowrap transition ${
+                                activeSheet === idx
+                                    ? 'bg-[#005E54] text-white'
+                                    : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                            }`}
+                        >
+                            {sheet}
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            {/* Table */}
+            <div className="flex-1 overflow-auto custom-scrollbar">
+                <table className="w-full border-collapse text-sm">
+                    <thead className="sticky top-0">
+                        <tr className="bg-[#005E54] text-white">
+                            {Object.keys(data[0] || {}).map((key, idx) => (
+                                <th 
+                                    key={idx}
+                                    className="border border-slate-200 px-4 py-3 text-left font-bold"
+                                >
+                                    {key}
+                                </th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {data.map((row, idx) => (
+                            <tr 
+                                key={idx}
+                                className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}
+                            >
+                                {Object.keys(row).map((key, colIdx) => (
+                                    <td 
+                                        key={colIdx}
+                                        className="border border-slate-200 px-4 py-3"
+                                    >
+                                        {typeof row[key] === 'object' ? JSON.stringify(row[key]) : String(row[key])}
+                                    </td>
+                                ))}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+
+            {/* Footer Info */}
+            <div className="border-t border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 flex items-center justify-between">
+                <span>Total baris: <strong>{data.length}</strong></span>
+                <span className="text-xs text-slate-500">Tampilan interaktif • Scroll untuk melihat lebih banyak data</span>
+            </div>
+        </div>
+    );
+};
+
+const PowerPointViewer = ({ url, title }) => {
+    return (
+        <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100">
+            <div className="text-center max-w-md mx-4">
+                <div className="bg-white p-12 rounded-3xl shadow-2xl border border-slate-200">
+                    <div className="w-20 h-20 bg-orange-50 rounded-2xl flex items-center justify-center mx-auto mb-8 text-orange-500">
+                        <FileText size={40} />
+                    </div>
+                    
+                    <h3 className="text-2xl font-bold text-slate-900 mb-3">{title}</h3>
+                    <p className="text-slate-500 mb-2 text-sm">File Type: <span className="font-semibold text-slate-700 uppercase">PPTX</span></p>
+                    <p className="text-slate-500 mb-8 text-sm leading-relaxed">
+                        Fitur pratinjau PowerPoint sedang dalam pengembangan. Silakan download untuk melihat presentasi lengkap.
+                    </p>
+                    
+                    <div className="flex flex-col gap-3">
+                        <a 
+                            href={url} 
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="w-full px-6 py-4 bg-[#005E54] text-white rounded-2xl font-bold hover:bg-[#004a44] transition flex items-center justify-center gap-3 shadow-lg"
+                        >
+                            <Download size={20} /> Download PowerPoint
+                        </a>
+                        <p className="text-xs text-slate-400 mt-2">
+                            💡 Download dan buka dengan Microsoft PowerPoint atau Google Slides
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 const IFrameViewer = ({ url, title, type }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [hasError, setHasError] = useState(false);
     
-    // Check if this is a secure route URL (our backend secure serving)
-    const isSecureRoute = url && url.includes('/api/training/') && url.includes('/serve');
-    
-    // For secure routes, don't try to display in iframe - provide download link instead
-    if (isSecureRoute) {
+    if (!url) {
         return (
-            <div className="w-full h-full bg-white flex flex-col items-center justify-center text-center p-8">
-                <div className="bg-gradient-to-br from-slate-50 to-slate-100 p-10 rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full">
-                    <div className="w-20 h-20 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-6 text-blue-500">
-                        <FileText size={40} />
-                    </div>
-                    <h3 className="text-2xl font-bold text-slate-900 mb-3 line-clamp-2">{title}</h3>
-                    <p className="text-slate-500 mb-8 text-sm leading-relaxed">
-                        File materi tersedia untuk diakses. Klik tombol di bawah untuk membuka atau mengunduh file.
-                    </p>
-                    <a 
-                        href={url} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="w-full px-6 py-4 bg-[#005E54] text-white rounded-2xl font-bold hover:bg-[#004a44] transition flex items-center justify-center gap-3 shadow-xl"
-                    >
-                        <Download size={20} /> Buka / Download File
-                    </a>
+            <div className="w-full h-full flex items-center justify-center bg-slate-50">
+                <div className="text-center">
+                    <FileText size={40} className="mx-auto text-slate-300 mb-4" />
+                    <p className="text-slate-500">Tidak ada file untuk ditampilkan</p>
                 </div>
             </div>
         );
+    }
+    
+    // Construct absolute URL if relative for PDFs and images
+    let absoluteUrl = url;
+    if (url.startsWith('/')) {
+        const baseUrl = window.location.origin;
+        absoluteUrl = baseUrl + url;
     }
     
     return (
@@ -398,11 +602,13 @@ const IFrameViewer = ({ url, title, type }) => {
                 </div>
             ) : (
                 <iframe
-                    src={url}
+                    src={absoluteUrl}
                     title={title || 'Materi Pembelajaran'}
                     className="content-frame w-full h-full"
                     onLoad={() => setIsLoading(false)}
                     onError={() => { setIsLoading(false); setHasError(true); }}
+                    allow="autoplay; encrypted-media"
+                    referrerPolicy="no-referrer"
                 />
             )}
         </div>
@@ -498,16 +704,17 @@ export default function MaterialViewer({ auth, trainingId, materialId }) {
         (materials && materials.find(m => m.id === material.id && m.is_completed)) || isCompleted
     );
 
-    // When returning to tab (e.g., after taking a quiz), refresh material data to reflect any changes
-    useEffect(() => {
-        const onVisibilityChange = () => {
-            if (document.visibilityState === 'visible') {
-                loadMaterialData();
-            }
-        };
-        document.addEventListener('visibilitychange', onVisibilityChange);
-        return () => document.removeEventListener('visibilitychange', onVisibilityChange);
-    }, [trainingId, materialId]);
+    // DISABLED: Auto-refresh on tab visibility was causing unnecessary page reloads
+    // Users can manually refresh if needed, or use browser back button to reload
+    // useEffect(() => {
+    //     const onVisibilityChange = () => {
+    //         if (document.visibilityState === 'visible') {
+    //             loadMaterialData();
+    //         }
+    //     };
+    //     document.addEventListener('visibilitychange', onVisibilityChange);
+    //     return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+    // }, [trainingId, materialId]);
 
     const handleNext = () => {
         if (currentIndex < materials.length - 1) {
@@ -620,19 +827,30 @@ export default function MaterialViewer({ auth, trainingId, materialId }) {
         }
         
         const isPdfFile = url.match(/\.(pdf)$/i);
-        const isDocFile = url.match(/\.(doc|docx|xls|xlsx|ppt|pptx)$/i);
+        const isExcelFile = url.match(/\.(xlsx|xls|xlsm|csv)$/i);
+        const isPowerpointFile = url.match(/\.(pptx|ppt)$/i);
+        const isDocFile = url.match(/\.(doc|docx)$/i);
         
-        // PDF files - use iframe with PDF viewer
+        // PRIORITY 1: PDF files - use PDFViewer with iframe
+        // This includes: converted Excel files, true PDFs, and material.type='pdf'
         if (material.type === 'pdf' || isPdfFile) {
             return <PDFViewer url={url} title={material.title} />;
         }
         
-        // Document/Presentation files - use iframe (Google Docs Viewer or direct)
-        if (material.type === 'document' || material.type === 'presentation' || isDocFile) {
-            const viewerUrl = isDocFile && !url.includes('docs.google.com') 
-                ? `https://docs.google.com/gview?url=${encodeURIComponent(url)}&embedded=true`
-                : url;
-            return <IFrameViewer url={viewerUrl} title={material.title} type={material.type} />;
+        // PRIORITY 2: Excel files - ONLY if not converted to PDF
+        // Backend sets type to 'pdf' when converted, so this only handles unconverted files
+        if (isExcelFile && material.type !== 'pdf') {
+            return <ExcelViewer url={url} title={material.title} />;
+        }
+        
+        // PRIORITY 3: PowerPoint/Presentation files
+        if (isPowerpointFile || material.type === 'presentation') {
+            return <PowerPointViewer url={url} title={material.title} />;
+        }
+        
+        // PRIORITY 4: Document files (DOC, DOCX)
+        if (material.type === 'document' || isDocFile) {
+            return <IFrameViewer url={url} title={material.title} type={material.type} />;
         }
         
         // Default - try iframe viewer for any other type (html, etc)

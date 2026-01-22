@@ -379,14 +379,14 @@ export default function MyReports({ auth, stats = {}, trainings = [], quizzes = 
             link.remove();
             URL.revokeObjectURL(url);
 
-            showToast('success', 'Unduhan dimulai');
+            showToast('Unduhan dimulai', 'success');
         } catch (error) {
             console.error('Export PDF error:', error);
             if (error.response && error.response.status === 401) {
                 router.visit('/login');
                 return;
             }
-            showToast('error', error.response?.data?.message || 'Gagal mengunduh laporan');
+            showToast(error.response?.data?.message || 'Gagal mengunduh laporan', 'error');
         } finally {
             setIsExporting(false);
         }

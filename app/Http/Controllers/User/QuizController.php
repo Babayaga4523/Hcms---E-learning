@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 
 class QuizController extends Controller
@@ -146,7 +147,7 @@ class QuizController extends Controller
                         'options' => $opts,
                         'difficulty' => $q->difficulty,
                         'points' => $q->points,
-                        'image_url' => $q->image_url,
+                        'image_url' => $this->normalizeImageUrl($q->image_url),
                     ];
                 });
             
@@ -368,6 +369,41 @@ class QuizController extends Controller
         }
     }
     
+    /**
+     * Normalize stored image references to a public URL.
+     */
+    private function normalizeImageUrl($imageUrl)
+    {
+        if (empty($imageUrl)) return null;
+
+        // If already absolute URL, return as-is
+        if (filter_var($imageUrl, FILTER_VALIDATE_URL)) {
+            return $imageUrl;
+        }
+
+        // If starts with /storage, treat as public URL already
+        if (str_starts_with($imageUrl, '/storage/')) {
+            return $imageUrl;
+        }
+
+        // Strip leading public/ or storage/ if present
+        $relative = preg_replace('#^public/#', '', ltrim($imageUrl, '/'));
+        $relative = preg_replace('#^storage/#', '', $relative);
+
+        try {
+            /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+            $disk = Storage::disk('public');
+            if ($disk->exists($relative)) {
+                return $disk->url($relative);
+            }
+        } catch (\Exception $e) {
+            Log::warning('normalizeImageUrl failed: ' . $e->getMessage());
+        }
+
+        // Fallback: return original value
+        return $imageUrl;
+    }
+
     /**
      * Start a quiz attempt
      */
@@ -690,9 +726,15 @@ class QuizController extends Controller
             // Format questions with full details
             $questions = $userAnswers->map(function($answer) {
                 $question = $answer->question;
+                $imageUrl = null;
+                if ($question->image_url && Storage::disk('public')->exists(str_replace('/storage/', '', $question->image_url))) {
+                    $imageUrl = $question->image_url;
+                }
+                
                 return [
                     'id' => $question->id,
                     'question_text' => $question->question_text,
+                    'image_url' => $imageUrl,
                     'option_a' => $question->option_a,
                     'option_b' => $question->option_b,
                     'option_c' => $question->option_c,
@@ -781,9 +823,15 @@ class QuizController extends Controller
             // Format questions with user answers
             $questions = $attempt->answers->map(function($answer) {
                 $question = $answer->question;
+                $imageUrl = null;
+                if ($question->image_url && Storage::disk('public')->exists(str_replace('/storage/', '', $question->image_url))) {
+                    $imageUrl = $question->image_url;
+                }
+                
                 return [
                     'id' => $question->id,
                     'question_text' => $question->question_text,
+                    'image_url' => $imageUrl,
                     'user_answer' => $answer->answer_text,
                     'correct_answer' => $question->correct_answer,
                     'is_correct' => $answer->is_correct,

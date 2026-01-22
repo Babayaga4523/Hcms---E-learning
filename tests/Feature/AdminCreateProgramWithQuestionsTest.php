@@ -21,7 +21,7 @@ class AdminCreateProgramWithQuestionsTest extends TestCase
             'description' => 'Desc',
             'duration_minutes' => 60,
             'passing_grade' => 70,
-            'category' => 'Technical',
+            'category' => 'IT & Digital Security',
             'is_active' => true,
             'questions' => [
                 [
@@ -74,7 +74,7 @@ class AdminCreateProgramWithQuestionsTest extends TestCase
                 'description' => 'Desc',
                 'duration_minutes' => 30,
                 'passing_grade' => 60,
-                'category' => 'Compliance',
+                'category' => 'Compliance & Regulatory',
                 'is_active' => false,
                 'questions' => [
                     [

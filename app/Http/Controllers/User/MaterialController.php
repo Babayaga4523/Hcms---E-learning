@@ -24,7 +24,20 @@ class MaterialController extends Controller
         try {
             $user = Auth::user();
 
-            $training = Module::findOrFail($trainingId);
+            // Try to find the training
+            try {
+                $training = Module::findOrFail($trainingId);
+            } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+                Log::warning("Training not found: {$trainingId}");
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Training not found',
+                    'materials' => [],
+                    'total' => 0,
+                    'completed' => 0,
+                    'progress_percentage' => 0
+                ], 404);
+            }
 
             // Check if user is enrolled in this training
             $userTraining = UserTraining::where('user_id', $user->id)
@@ -32,12 +45,14 @@ class MaterialController extends Controller
                 ->first();
 
             if (!$userTraining) {
+                Log::warning("User {$user->id} not enrolled in training {$trainingId}");
                 return response()->json([
                     'success' => false,
                     'message' => 'You are not assigned to this training',
                     'materials' => [],
                     'total' => 0,
-                    'completed' => 0
+                    'completed' => 0,
+                    'progress_percentage' => 0
                 ], 403);
             }
 
@@ -49,7 +64,8 @@ class MaterialController extends Controller
                     'message' => 'Training is not active',
                     'materials' => [],
                     'total' => 0,
-                    'completed' => 0
+                    'completed' => 0,
+                    'progress_percentage' => 0
                 ], 403);
             }
 
@@ -60,10 +76,10 @@ class MaterialController extends Controller
             // Add video material if video_url exists
             if ($training->video_url) {
                 $materials->push([
-                    'id' => $materialId++,
+                    'id' => 'video',
                     'title' => 'Video Pembelajaran',
                     'type' => 'video',
-                    'url' => $this->ensureValidUrl($training->video_url),
+                    'url' => route('user.material.serve', ['trainingId' => $trainingId, 'materialId' => 'video']),
                     'duration' => 30,
                     'module_title' => $training->title,
                     'is_completed' => false
@@ -102,11 +118,14 @@ class MaterialController extends Controller
                 ->get();
 
             foreach ($trainingMaterials as $material) {
+                // If PDF path exists (converted from Excel), display as PDF type
+                $materialType = $material->pdf_path ? 'pdf' : $material->file_type;
+                
                 $materials->push([
                     'id' => $material->id, // Use actual material ID
                     'title' => $material->title,
-                    'type' => $material->file_type,
-                    'url' => $material->file_path || $material->pdf_path ? route('user.materials.serve', [$trainingId, $material->id]) : null,
+                    'type' => $materialType,
+                    'url' => $material->external_url ? $material->external_url : ($material->file_path || $material->pdf_path ? route('user.material.serve', ['trainingId' => $trainingId, 'materialId' => $material->id]) : null),
                     'duration' => $material->duration_minutes ?? 15,
                     'module_title' => $training->title,
                     'is_completed' => false,
@@ -182,14 +201,15 @@ class MaterialController extends Controller
                 'progress_percentage' => $progressPercentage
             ]);
         } catch (\Exception $e) {
-            Log::error('Failed to load materials: ' . $e->getMessage());
+            Log::error('Failed to load materials: ' . $e->getMessage() . ' Trace: ' . $e->getTraceAsString());
             
             return response()->json([
                 'success' => false,
+                'message' => 'Failed to load materials: ' . $e->getMessage(),
                 'materials' => [],
                 'total' => 0,
                 'completed' => 0
-            ], 404);
+            ], 500);
         }
     }
     
@@ -306,11 +326,14 @@ class MaterialController extends Controller
                 ->get();
 
             foreach ($trainingMaterials as $trainingMaterial) {
+                // If PDF path exists (converted from Excel), display as PDF type
+                $materialType = $trainingMaterial->pdf_path ? 'pdf' : $trainingMaterial->file_type;
+                
                 $materials->push([
                     'id' => $trainingMaterial->id,
                     'title' => $trainingMaterial->title,
-                    'type' => $trainingMaterial->file_type,
-                    'url' => $trainingMaterial->file_path || $trainingMaterial->pdf_path ? route('user.materials.serve', [$trainingId, $trainingMaterial->id]) : null,
+                    'type' => $materialType,
+                    'url' => $trainingMaterial->file_path || $trainingMaterial->pdf_path ? route('user.material.serve', ['trainingId' => $trainingId, 'materialId' => $trainingMaterial->id]) : null,
                     'duration' => $trainingMaterial->duration_minutes ?? 15,
                     'module_title' => $training->title,
                     'is_completed' => false,
@@ -520,6 +543,51 @@ class MaterialController extends Controller
             }
 
             // Get material
+            if ($materialId === 'video') {
+                // Special case for legacy video material
+                $module = Module::findOrFail($trainingId);
+                $filePath = $module->video_url;
+
+                if (!$filePath) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Video tidak ditemukan'
+                    ], 404);
+                }
+
+                // Handle URL or local path
+                if (filter_var($filePath, FILTER_VALIDATE_URL)) {
+                    // External URL, redirect
+                    return redirect($filePath);
+                }
+
+                // Local file
+                $fullPath = null;
+                if (Storage::disk('public')->exists($filePath)) {
+                    $fullPath = Storage::disk('public')->path($filePath);
+                } elseif (Storage::exists($filePath)) {
+                    $fullPath = storage_path('app/' . $filePath);
+                } elseif (Str::startsWith($filePath, 'public/')) {
+                    $relative = substr($filePath, 7);
+                    if (Storage::disk('public')->exists($relative)) {
+                        $fullPath = Storage::disk('public')->path($relative);
+                    }
+                }
+
+                if (!$fullPath || !file_exists($fullPath)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'File video tidak ditemukan'
+                    ], 404);
+                }
+
+                $mimeType = mime_content_type($fullPath) ?: 'video/mp4';
+                return response()->file($fullPath, [
+                    'Content-Type' => $mimeType,
+                    'Cache-Control' => 'private, max-age=3600'
+                ]);
+            }
+
             $material = \App\Models\TrainingMaterial::findOrFail($materialId);
 
             // Verify material belongs to the training
@@ -533,6 +601,7 @@ class MaterialController extends Controller
             $filePath = $material->file_path ?: $material->pdf_path;
 
             if (!$filePath) {
+                Log::warning("No file path found for material {$materialId}. file_path: " . ($material->file_path ?? 'null') . ", pdf_path: " . ($material->pdf_path ?? 'null'));
                 return response()->json([
                     'success' => false,
                     'message' => 'File tidak ditemukan'
@@ -541,36 +610,37 @@ class MaterialController extends Controller
 
             $fullPath = null;
 
-            // First try Storage::exists on the given path (app/<path>)
-            if (Storage::exists($filePath)) {
+            // Try storage disk (accounts for FILESYSTEM_DISK setting)
+            if (@Storage::disk('public')->exists($filePath)) {
+                $fullPath = Storage::disk('public')->path($filePath);
+            } elseif (@Storage::exists($filePath)) {
+                // Fallback to default storage
                 $fullPath = storage_path('app/' . $filePath);
             } else {
-                // If path is stored with public/ prefix, check public disk
-                if (Str::startsWith($filePath, 'public/')) {
-                    $relative = substr($filePath, 7);
-                    if (Storage::disk('public')->exists($relative)) {
-                        $fullPath = Storage::disk('public')->path($relative);
-                    }
-                }
-
-                // Fallback: try common alternate locations where files might be stored
-                if (!$fullPath) {
-                    $basename = basename($filePath);
-                    $candidates = [
-                        storage_path('app/public/training-materials/' . $basename),
-                        storage_path('app/private/public/materials/' . $basename),
-                        storage_path('app/materials/' . $basename),
-                    ];
-                    foreach ($candidates as $candidate) {
-                        if (file_exists($candidate)) {
-                            $fullPath = $candidate;
-                            break;
-                        }
+                // Last resort: try other potential locations
+                $basename = basename($filePath);
+                $candidates = [
+                    storage_path('app/public/' . $filePath),
+                    storage_path('app/private/public/' . $filePath),
+                    storage_path('app/materials/' . $basename),
+                    storage_path('app/public/materials/' . $basename),
+                ];
+                
+                foreach ($candidates as $candidate) {
+                    if (@file_exists($candidate)) {
+                        $fullPath = $candidate;
+                        Log::info("Found material file at: {$candidate}");
+                        break;
                     }
                 }
             }
 
-            if (!$fullPath || !file_exists($fullPath)) {
+            if (!$fullPath) {
+                Log::warning("Could not resolve full path for file: {$filePath}");
+            }
+            
+            if (!$fullPath || !@file_exists($fullPath)) {
+                Log::error("Material file not found: {$filePath} (tried to resolve to: {$fullPath})");
                 return response()->json([
                     'success' => false,
                     'message' => 'File tidak ditemukan'
@@ -591,50 +661,115 @@ class MaterialController extends Controller
                 ]
             );
 
-            // Serve file with appropriate headers
+            // PERBAIKAN: Gunakan mime_content_type() untuk deteksi MIME type otomatis
+            // Ini lebih akurat daripada mengecek ekstensi manual
+            // PENTING: mime_content_type() membutuhkan file yang exist, jadi pastikan file sudah ada
+            $mimeType = 'application/octet-stream';
+            
+            if (@mime_content_type($fullPath)) {
+                $mimeType = @mime_content_type($fullPath);
+            } else {
+                // Fallback: deteksi dari extension
+                $extension = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
+                $mimeTypes = [
+                    'pdf' => 'application/pdf',
+                    'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    'xls' => 'application/vnd.ms-excel',
+                    'xlsm' => 'application/vnd.ms-excel.sheet.macroEnabled.12',
+                    'csv' => 'text/csv',
+                    'pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                    'ppt' => 'application/vnd.ms-powerpoint',
+                    'doc' => 'application/msword',
+                    'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    'mp4' => 'video/mp4',
+                    'webm' => 'video/webm',
+                    'ogg' => 'video/ogg',
+                    'mov' => 'video/quicktime',
+                    'avi' => 'video/x-msvideo',
+                    'mkv' => 'video/x-matroska',
+                ];
+                $mimeType = $mimeTypes[$extension] ?? 'application/octet-stream';
+            }
+            
+            $fileName = basename($fullPath);
+            
+            // DEBUG: Log MIME type yang terdeteksi
+            Log::info("Serving file: {$fileName} with MIME type: {$mimeType}");
+            
+            // PERBAIKAN: Untuk file video, gunakan response()->stream() agar bisa di-seek
+            // Ini memungkinkan user skip forward/backward di video
+            $isVideo = str_contains($mimeType, 'video');
+            $pathLower = strtolower($fullPath);
+            foreach (['.mp4', '.webm', '.mov', '.avi', '.mkv'] as $ext) {
+                if (str_ends_with($pathLower, $ext)) {
+                    $isVideo = true;
+                    break;
+                }
+            }
+            if ($isVideo) {
+                $fileSize = @filesize($fullPath);
+                $headers = [
+                    'Content-Type' => $mimeType,
+                    'Content-Disposition' => 'inline; filename="' . $fileName . '"',
+                    'Cache-Control' => 'private, max-age=3600',
+                    'Accept-Ranges' => 'bytes',
+                    'X-Content-Type-Options' => 'nosniff'
+                ];
+                if ($fileSize) {
+                    $headers['Content-Length'] = $fileSize;
+                }
+                
+                return response()->stream(function() use ($fullPath) {
+                    $stream = @fopen($fullPath, 'rb');
+                    if ($stream) {
+                        fpassthru($stream);
+                        fclose($stream);
+                    }
+                }, 200, $headers);
+            }
+            
+            // Untuk PDF dan Excel - gunakan response()->stream() juga untuk consistency
+            // dan full control atas headers
+            if (in_array(strtolower(pathinfo($fullPath, PATHINFO_EXTENSION)), ['pdf', 'xlsx', 'xls', 'xlsm', 'csv'])) {
+                $fileSize = @filesize($fullPath);
+                $headers = [
+                    'Content-Type' => $mimeType,
+                    'Content-Disposition' => 'inline; filename="' . $fileName . '"',
+                    'Cache-Control' => 'public, max-age=86400',
+                    'Pragma' => 'public',
+                    'Expires' => gmdate('D, d M Y H:i:s', time() + 86400) . ' GMT',
+                    'X-Content-Type-Options' => 'nosniff'
+                ];
+                if ($fileSize) {
+                    $headers['Content-Length'] = $fileSize;
+                }
+                
+                return response()->stream(function() use ($fullPath) {
+                    $stream = @fopen($fullPath, 'rb');
+                    if ($stream) {
+                        fpassthru($stream);
+                        fclose($stream);
+                    }
+                }, 200, $headers);
+            }
+
+            // Untuk file lainnya - gunakan response()->file()
             return response()->file($fullPath, [
-                'Content-Type' => $this->getMimeType($fullPath),
-                'Content-Disposition' => 'inline; filename="' . basename($fullPath) . '"',
-                'Cache-Control' => 'private, max-age=3600' // Cache for 1 hour
+                'Content-Type' => $mimeType,
+                'Content-Disposition' => 'inline; filename="' . $fileName . '"',
+                'Cache-Control' => 'public, max-age=86400',
+                'X-Content-Type-Options' => 'nosniff'
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Failed to serve file: ' . $e->getMessage());
+            Log::error('Failed to serve file: ' . $e->getMessage() . ' | File: ' . $e->getFile() . ' | Line: ' . $e->getLine());
+            Log::error('Stack trace: ' . $e->getTraceAsString());
 
             return response()->json([
                 'success' => false,
-                'message' => 'Gagal mengakses file'
+                'message' => 'Gagal mengakses file: ' . $e->getMessage()
             ], 500);
         }
-    }
-
-    /**
-     * Get MIME type for file
-     */
-    private function getMimeType($filePath)
-    {
-        $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
-
-        $mimeTypes = [
-            'pdf' => 'application/pdf',
-            'mp4' => 'video/mp4',
-            'avi' => 'video/x-msvideo',
-            'mov' => 'video/quicktime',
-            'wmv' => 'video/x-ms-wmv',
-            'doc' => 'application/msword',
-            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'xls' => 'application/vnd.ms-excel',
-            'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'ppt' => 'application/vnd.ms-powerpoint',
-            'pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            'txt' => 'text/plain',
-            'jpg' => 'image/jpeg',
-            'jpeg' => 'image/jpeg',
-            'png' => 'image/png',
-            'gif' => 'image/gif'
-        ];
-
-        return $mimeTypes[$extension] ?? 'application/octet-stream';
     }
 
     /**

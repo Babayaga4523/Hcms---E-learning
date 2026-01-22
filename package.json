@@ -28,6 +28,7 @@
         "vite": "^7.0.7"
     },
     "dependencies": {
+        "@tremor/react": "^3.18.7",
         "framer-motion": "^12.23.26",
         "lucide-react": "^0.562.0",
         "recharts": "^3.6.0"

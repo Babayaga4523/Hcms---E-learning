@@ -5,9 +5,18 @@
             "@/*": ["resources/js/*"],
             "ziggy-js": ["./vendor/tightenco/ziggy"]
         },
+        "typeRoots": ["./node_modules/@types"],
         "skipLibCheck": true,
         "allowJs": true,
         "checkJs": false
     },
+    "include": [
+        "resources/js/**/*",
+        "resources/js/**/*.jsx",
+        "resources/js/**/*.js",
+        "resources/js/**/*.ts",
+        "resources/js/**/*.tsx",
+        "tests/**/*"
+    ],
     "exclude": ["node_modules", "public", "vendor"]
 }

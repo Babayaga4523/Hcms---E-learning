@@ -144,6 +144,31 @@ const SubmitModal = ({ isOpen, onClose, onConfirm, answered, total }) => (
     </AnimatePresence>
 );
 
+// Image Zoom Modal for viewing question images fullscreen
+const ImageZoomModal = ({ src, onClose }) => (
+    <AnimatePresence>
+        {src && (
+            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm" onClick={onClose}>
+                <motion.div 
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.9 }}
+                    className="relative max-w-5xl w-full max-h-screen p-2"
+                >
+                    <button onClick={onClose} className="absolute -top-12 right-0 text-white p-2 hover:bg-white/20 rounded-full transition">
+                        <X size={24} />
+                    </button>
+                    <img 
+                        src={src} 
+                        alt="Zoomed Question" 
+                        className="w-full h-full max-h-[85vh] object-contain rounded-lg"
+                    />
+                </motion.div>
+            </div>
+        )}
+    </AnimatePresence>
+);
+
 // Main Component
 export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [], examAttempt = {} }) {
     const user = auth?.user || {};
@@ -153,6 +178,7 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
     const [showSubmitModal, setShowSubmitModal] = useState(false);
     const [isSidebarOpen, setSidebarOpen] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [zoomedImage, setZoomedImage] = useState(null);
     
     const totalQuestions = questions.length;
     const currentQuestion = questions[currentIndex];
@@ -200,6 +226,55 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
             // eslint-disable-next-line no-console
             console.error('TakeQuiz debug error', e);
         }
+    }, [currentQuestion]);
+
+    // Normalize options with useMemo (performance)
+    const normalizedOptions = useMemo(() => {
+        let raw = currentQuestion?.options ?? [];
+        if (typeof raw === 'string') {
+            try { raw = JSON.parse(raw); } catch (e) { raw = []; }
+        }
+        const out = [];
+
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+            Object.entries(raw).forEach(([k, v]) => {
+                if (!v) return;
+                if (typeof v === 'string') out.push({ label: k, text: v });
+                else if (v && typeof v === 'object') {
+                    const text = v.text || v.value || v.content || (v[0] ?? null);
+                    const label = v.label || k;
+                    if (text) out.push({ label, text });
+                }
+            });
+            return out;
+        }
+
+        if (Array.isArray(raw) && raw.length > 0) {
+            if (raw.every(x => typeof x === 'string')) {
+                const labels = ['a','b','c','d','e','f'];
+                raw.forEach((txt,i) => out.push({ label: labels[i]||String(i), text: txt }));
+                return out;
+            }
+            const labels = ['a','b','c','d','e','f'];
+            raw.forEach((item,i) => {
+                if (!item) return;
+                if (typeof item === 'string') out.push({ label: labels[i]||String(i), text: item });
+                else {
+                    const text = item.text || item.value || item.content || item[0] || null;
+                    const label = (item.label || labels[i] || (item.key && item.key.toString()) || String(i)).toString();
+                    if (text) out.push({ label, text });
+                }
+            });
+            return out;
+        }
+
+        // Legacy fallback
+        ['a','b','c','d'].forEach(f => {
+            const key = `option_${f}`;
+            if (currentQuestion && currentQuestion[key]) out.push({ label: f, text: currentQuestion[key] });
+        });
+
+        return out;
     }, [currentQuestion]);
 
     // Handle flag toggle
@@ -403,74 +478,31 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
                                     {currentQuestion.question_text}
                                 </h2>
                                 {currentQuestion.image_url && (
-                                    <img 
-                                        src={currentQuestion.image_url} 
-                                        alt="Question" 
-                                        className="mt-6 rounded-2xl max-h-80 object-cover w-full border border-slate-100"
-                                    />
-                                )}
+                                    <div className="mt-6 group relative">
+                                        <div className="absolute top-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                                            Klik untuk memperbesar
+                                        </div>
+                                        <img 
+                                            src={currentQuestion.image_url} 
+                                            alt="Question" 
+                                            loading="lazy"
+                                            onClick={() => setZoomedImage(currentQuestion.image_url)}
+                                            onError={(e) => {
+                                                e.currentTarget.onerror = null;
+                                                e.currentTarget.src = '/images/training-placeholder.svg';
+                                            }}
+                                            className="rounded-2xl max-h-96 w-full object-contain bg-slate-50 border border-slate-200 cursor-zoom-in hover:border-slate-300 transition-colors"
+                                        />
+                                    </div>
+                                )} 
                             </div>
 
                             {/* Options */}
                             <div className="space-y-3 mb-8">
-                                {(() => {
-                                    // Use memo-like local normalization for readability and deterministic output
-                                    let raw = currentQuestion?.options ?? [];
-                                    if (typeof raw === 'string') {
-                                        try { raw = JSON.parse(raw); } catch (e) { raw = []; }
-                                    }
-
-                                    const normalize = (opts) => {
-                                        const out = [];
-                                        if (opts && typeof opts === 'object' && !Array.isArray(opts)) {
-                                            Object.entries(opts).forEach(([k,v]) => {
-                                                if (!v) return;
-                                                if (typeof v === 'string') out.push({ label: k, text: v });
-                                                else if (v && typeof v === 'object') {
-                                                    const text = v.text || v.value || v.content || (v[0] ?? null);
-                                                    const label = v.label || k;
-                                                    if (text) out.push({ label, text });
-                                                }
-                                            });
-                                            return out;
-                                        }
-
-                                        if (Array.isArray(opts) && opts.length > 0) {
-                                            if (opts.every(x => typeof x === 'string')) {
-                                                const labels = ['a','b','c','d','e','f'];
-                                                opts.forEach((txt,i) => out.push({ label: labels[i]||String(i), text: txt }));
-                                                return out;
-                                            }
-                                            const labels = ['a','b','c','d','e','f'];
-                                            opts.forEach((item,i) => {
-                                                if (!item) return;
-                                                if (typeof item === 'string') out.push({ label: labels[i]||String(i), text: item });
-                                                else {
-                                                    const text = item.text || item.value || item.content || item[0] || null;
-                                                    const label = (item.label || labels[i] || (item.key && item.key.toString()) || String(i)).toString();
-                                                    if (text) out.push({ label, text });
-                                                }
-                                            });
-                                            return out;
-                                        }
-
-                                        // Legacy fallback
-                                        ['a','b','c','d'].forEach(f => {
-                                            const key = `option_${f}`;
-                                            if (currentQuestion[key]) out.push({ label: f, text: currentQuestion[key] });
-                                        });
-                                        return out;
-                                    };
-
-                                    const normalized = normalize(raw);
-
-                                    if (!normalized || normalized.length === 0) {
-                                        return (
-                                            <div className="text-sm text-slate-500 italic">Opsi jawaban belum tersedia untuk soal ini.</div>
-                                        );
-                                    }
-
-                                    return normalized.map((o, idx) => {
+                                {normalizedOptions.length === 0 ? (
+                                    <div className="text-sm text-slate-500 italic">Opsi jawaban belum tersedia untuk soal ini.</div>
+                                ) : (
+                                    normalizedOptions.map((o, idx) => {
                                         const label = (o.label || String.fromCharCode(97 + idx)).toString();
                                         const isSelected = answers[currentIndex] === label;
                                         return (
@@ -494,8 +526,8 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
                                                 )}
                                             </button>
                                         );
-                                    });
-                                })()}
+                                    })
+                                )} 
                             </div>
 
                         </motion.div>
@@ -603,6 +635,11 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
                 onConfirm={handleSubmit}
                 answered={answeredCount}
                 total={totalQuestions}
+            />
+
+            <ImageZoomModal 
+                src={zoomedImage} 
+                onClose={() => setZoomedImage(null)} 
             />
         </div>
     );

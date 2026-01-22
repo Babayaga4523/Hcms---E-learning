@@ -17,6 +17,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
 
 Route::get('/', function () {
@@ -35,6 +36,60 @@ Route::get('/', function () {
         'phpVersion' => PHP_VERSION,
     ]);
 });
+
+// Public helper route: safely serve question images from storage/app/public/questions
+// This is a fallback for environments where the web server symlink or permissions
+// prevent direct access to /storage/questions/...
+use Illuminate\Support\Facades\Storage;
+
+Route::get('/storage/questions/{path}', function ($path) {
+    $safePath = 'questions/' . ltrim($path, '/');
+    $disk = Storage::disk('public');
+
+    if (! $disk->exists($safePath)) {
+        Log::warning("Missing question image requested: {$safePath}");
+        abort(404);
+    }
+
+    $full = storage_path('app/public/' . $safePath);
+
+    return response()->file($full, [
+        'Cache-Control' => 'public, max-age=86400'
+    ]);
+})->where('path', '.*');
+
+// Public helper route: safely serve material files from storage/app/public/materials
+// For authenticated users only - provides fallback when direct symlink access fails
+Route::get('/storage/materials/{path}', function ($path) {
+    // Require authentication for material access
+    if (!Auth::check()) {
+        abort(401);
+    }
+
+    $safePath = 'materials/' . ltrim($path, '/');
+    $candidates = [
+        storage_path('app/public/' . $safePath),
+        storage_path('app/private/public/' . $safePath),
+        storage_path('app/' . $safePath),
+    ];
+
+    $fullPath = null;
+    foreach ($candidates as $candidate) {
+        if (file_exists($candidate)) {
+            $fullPath = $candidate;
+            break;
+        }
+    }
+
+    if (!$fullPath || !file_exists($fullPath)) {
+        Log::warning("Missing material file requested: {$safePath} by user " . Auth::id());
+        abort(404);
+    }
+
+    return response()->file($fullPath, [
+        'Cache-Control' => 'private, max-age=3600'
+    ]);
+})->where('path', '.*')->middleware('auth');
 
 Route::middleware(['auth'])->group(function () {
     // Dashboard
@@ -131,7 +186,7 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/api/training/{trainingId}/materials', [\App\Http\Controllers\User\MaterialController::class, 'index'])->name('user.api.materials');
     Route::get('/api/training/{trainingId}/material/{materialId}', [\App\Http\Controllers\User\MaterialController::class, 'show'])->name('user.api.material.show');
     Route::post('/api/training/{trainingId}/material/{materialId}/complete', [\App\Http\Controllers\User\MaterialController::class, 'complete'])->name('user.api.material.complete');
-    Route::get('/api/training/{trainingId}/material/{materialId}/serve', [\App\Http\Controllers\User\MaterialController::class, 'serveFile'])->name('user.materials.serve');
+    Route::get('/training/{trainingId}/material/{materialId}/serve', [\App\Http\Controllers\User\MaterialController::class, 'serveFile'])->name('user.material.serve');
     
     // Quiz API
     Route::get('/api/training/{trainingId}/quiz/{type}', [\App\Http\Controllers\User\QuizController::class, 'show'])->name('user.api.quiz.show');
@@ -168,6 +223,7 @@ Route::middleware(['auth', 'admin'])->group(function () {
     // Dashboard
     Route::get('/admin/dashboard', [AdminDashboardController::class, 'index'])->name('admin.dashboard');
     Route::get('/admin/search', [AdminDashboardController::class, 'search'])->name('admin.search');
+    Route::get('/admin/debug-top-performers', [AdminDashboardController::class, 'debugTopPerformers'])->name('admin.debug.top-performers');
     
     // User Management Routes
     Route::get('/admin/users', [AdminUserController::class, 'index'])->name('admin.users.index');
@@ -321,6 +377,8 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::get('/admin/training-programs/{id}', [AdminTrainingProgramController::class, 'show'])->name('admin.training-programs.show');
     Route::get('/api/admin/training-programs', [AdminTrainingProgramController::class, 'index'])->name('admin.api.training-programs.index');
     Route::post('/api/admin/training-programs', [AdminTrainingProgramController::class, 'store'])->name('admin.training-programs.store');
+    // Smoke debug endpoint to check image existence
+    Route::get('/api/admin/debug/image-exists', [AdminTrainingProgramController::class, 'checkImageExists'])->name('admin.debug.image-exists');
     // Backwards compatible endpoint used by some frontend components
     Route::post('/api/admin/training-programs/with-questions', [AdminTrainingProgramController::class, 'store'])->name('admin.training-programs.store-with-questions');
     Route::put('/api/admin/training-programs/{id}', [AdminTrainingProgramController::class, 'update'])->name('admin.training-programs.update');

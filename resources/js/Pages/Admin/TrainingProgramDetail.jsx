@@ -145,7 +145,8 @@ export default function TrainingProgramDetail({ program: initialProgram, materia
     const [formData, setFormData] = useState({ ...program });
 
     // Handlers
-    const showToast = (type, text) => {
+    // Use same (message, type) signature as global `showToast`
+    const showToast = (text, type = 'success') => {
         setMessage({ type, text });
         setTimeout(() => setMessage(null), 3000);
     };
@@ -156,12 +157,12 @@ export default function TrainingProgramDetail({ program: initialProgram, materia
         setTimeout(() => {
             setIsSaving(false);
             setIsEditing(false);
-            showToast('success', 'Perubahan berhasil disimpan!');
+            showToast('Perubahan berhasil disimpan!', 'success');
         }, 1200);
     };
 
     const handleBack = () => {
-        showToast('success', 'Navigasi kembali (Simulasi)');
+        showToast('Navigasi kembali (Simulasi)', 'success');
     };
 
     return (

@@ -100,7 +100,8 @@ export default function AdvancedAnalytics() {
     const [atRiskUsers, setAtRiskUsers] = useState([]);
     const [topPerformers, setTopPerformers] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [timeRange, setTimeRange] = useState('30');
+    // Use numeric ranges for clarity: 7, 30, 90, 365 (YTD)
+    const [timeRange, setTimeRange] = useState(30);
     const [department, setDepartment] = useState('all');
 
     useEffect(() => {
@@ -121,7 +122,7 @@ export default function AdvancedAnalytics() {
             ['Report Information:'],
             ['Generated Date:', dateStr],
             ['Generated Time:', timeStr],
-            ['Time Range:', timeRange === '7D' ? 'Last 7 Days' : timeRange === '30D' ? 'Last 30 Days' : timeRange === '90D' ? 'Last 90 Days' : 'Year to Date'],
+            ['Time Range:', timeRange === 7 ? 'Last 7 Days' : timeRange === 30 ? 'Last 30 Days' : timeRange === 90 ? 'Last 90 Days' : 'Year to Date'],
             ['Department Filter:', department === 'all' ? 'All Departments' : department],
             [''],
             ['======================================================================='],
@@ -261,22 +262,33 @@ export default function AdvancedAnalytics() {
             }
             
             if (engagementRes.ok) {
-                const data = await engagementRes.json();
-                setEngagement(data);
-                console.log('Engagement data:', data);
+                const payload = await engagementRes.json();
+                // Backwards-compatible: payload may be an array (legacy) or object with buckets
+                if (Array.isArray(payload)) {
+                    setEngagement(payload);
+                } else if (payload && payload.buckets) {
+                    setEngagement(payload.buckets);
+                    // prefer engagement-level at-risk list if provided
+                    if (Array.isArray(payload.at_risk) && payload.at_risk.length) {
+                        setAtRiskUsers(payload.at_risk);
+                    }
+                    console.log('Engagement thresholds:', payload.thresholds || {});
+                }
+                console.log('Engagement data:', payload);
             }
             
             if (skillsRes.ok) {
                 const response = await skillsRes.json();
-                // Transform data for radar chart format
-                const transformedData = response.data.map(item => ({
-                    subject: item.skill,
-                    A: item.value, // Completion Rate
-                    B: Math.min(item.value + 20, 100), // Target (completion + 20% or max 100%)
+                // Response shape: { data: [{ subject, A, B, gap }], summary: {...} }
+                const dataArr = (response && response.data) ? response.data : (Array.isArray(response) ? response : []);
+                const transformedData = dataArr.map(item => ({
+                    subject: item.subject ?? item.skill,
+                    A: item.A ?? item.value ?? 0,
+                    B: item.B ?? (typeof item.value !== 'undefined' ? Math.min(item.value + 20, 100) : 80),
                     fullMark: 100
                 }));
                 setSkillsRadar(transformedData);
-                console.log('Skills data:', transformedData);
+                console.log('Skills data:', transformedData, response.summary || {});
             }
             
             if (cohortRes.ok) {
@@ -328,19 +340,24 @@ export default function AdvancedAnalytics() {
                         
                         <div className="flex gap-3">
                             <div className="bg-slate-100 p-1 rounded-full flex">
-                                {['7D', '30D', '90D', 'YTD'].map((range) => (
+                                {[
+                                    { label: '7D', val: 7 },
+                                    { label: '30D', val: 30 },
+                                    { label: '90D', val: 90 },
+                                    { label: 'YTD', val: 365 }
+                                ].map((opt) => (
                                     <button 
-                                        key={range}
-                                        onClick={() => setTimeRange(range)}
+                                        key={opt.label}
+                                        onClick={() => setTimeRange(opt.val)}
                                         className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${
-                                            timeRange === range 
+                                            timeRange === opt.val 
                                             ? 'bg-white text-black shadow-sm' 
                                             : 'text-slate-500 hover:text-slate-900'
                                         }`}
                                     >
-                                        {range}
+                                        {opt.label}
                                     </button>
-                                ))}
+                                ))} 
                             </div>
                             <button 
                                 onClick={handleExportReport}
@@ -452,9 +469,9 @@ export default function AdvancedAnalytics() {
                                 onDetailClick={() => router.visit('/admin/reports')}
                             />
                             
-                            <div className="h-[350px] w-full">
+                            <div className="h-[350px] w-full" style={{ minHeight: 350 }}>
                                 {trends && trends.length > 0 ? (
-                                    <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={300}>
+                                    <ResponsiveContainer width="100%" height={350} minWidth={300} minHeight={300}>
                                         <ComposedChart data={trends}>
                                             <defs>
                                                 <linearGradient id="colorHours" x1="0" y1="0" x2="0" y2="1">
@@ -487,9 +504,9 @@ export default function AdvancedAnalytics() {
                                 onDetailClick={() => router.visit('/admin/users')}
                             />
                             
-                            <div className="flex-1 min-h-[250px] relative">
+                            <div className="flex-1 min-h-[250px] relative" style={{ minHeight: 260 }}>
                                 {engagement && engagement.length > 0 ? (
-                                    <ResponsiveContainer width="100%" height="100%" minWidth={200} minHeight={200}>
+                                    <ResponsiveContainer width="100%" height={260} minWidth={200} minHeight={200}>
                                         <PieChart>
                                             <Pie
                                                 data={engagement}
@@ -543,9 +560,9 @@ export default function AdvancedAnalytics() {
                                 onDetailClick={() => router.visit('/admin/departments')}
                                 dark={true}
                             />
-                            <div className="h-[300px] w-full relative z-10">
+                            <div className="h-[300px] w-full relative z-10" style={{ minHeight: 300 }}>
                                 {skillsRadar && skillsRadar.length > 0 ? (
-                                    <ResponsiveContainer width="100%" height="100%" minWidth={250} minHeight={250}>
+                                    <ResponsiveContainer width="100%" height={300} minWidth={250} minHeight={250}>
                                         <RadarChart outerRadius={90} data={skillsRadar}>
                                             <PolarGrid stroke="#334155" />
                                             <PolarAngleAxis dataKey="subject" tick={{ fill: '#94a3b8', fontSize: 11 }} />

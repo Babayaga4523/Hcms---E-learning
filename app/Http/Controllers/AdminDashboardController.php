@@ -13,13 +13,50 @@ use Inertia\Inertia;
 class AdminDashboardController extends Controller
 {
     /**
+     * Debug endpoint for top performers data
+     */
+    public function debugTopPerformers()
+    {
+        $topPerformers = User::where('role', 'user')
+            ->with(['trainings', 'examAttempts'])
+            ->get()
+            ->map(function($user) {
+                $completedTrainings = $user->trainings?->where('status', 'completed')->count() ?? 0;
+                $certifications = $user->trainings?->where('is_certified', true)->count() ?? 0;
+                $avgExamScore = $user->examAttempts?->avg('score') ?? 0;
+
+                // Calculate total points: certifications (200 pts) + completed trainings (50 pts) + avg score bonus
+                $totalPoints = ($certifications * 200) + ($completedTrainings * 50) + round($avgExamScore);
+
+                return [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'nip' => $user->nip,
+                    'department' => $user->department,
+                    'location' => $user->location,
+                    'completed_trainings' => $completedTrainings,
+                    'certifications' => $certifications,
+                    'avg_exam_score' => round($avgExamScore, 1),
+                    'total_points' => $totalPoints,
+                ];
+            })
+            ->sortByDesc('total_points')
+            ->take(10)
+            ->values()
+            ->toArray();
+
+        return response()->json([
+            'top_performers' => $topPerformers,
+            'count' => count($topPerformers)
+        ]);
+    }
+
+    /**
      * Display admin dashboard
      */
     public function index()
     {
         $user = Auth::user();
-
-        // Verify user is admin
         if ($user->role !== 'admin') {
             abort(403, 'Unauthorized');
         }
@@ -88,19 +125,31 @@ class AdminDashboardController extends Controller
                 ])
                 ->toArray();
 
-            // Get top performers - Simplified
+            // Get top performers - Enhanced calculation
             $topPerformers = User::where('role', 'user')
-                ->with('trainings')
-                ->limit(5)
+                ->with(['trainings', 'examAttempts'])
                 ->get()
-                ->map(fn($user) => [
-                    'id' => $user->id,
-                    'name' => $user->name,
-                    'nip' => $user->nip,
-                    'completed_trainings' => $user->trainings?->where('status', 'completed')->count() ?? 0,
-                    'certifications' => $user->trainings?->where('is_certified', true)->count() ?? 0,
-                ])
-                ->sortByDesc('certifications')
+                ->map(function($user) {
+                    $completedTrainings = $user->trainings?->where('status', 'completed')->count() ?? 0;
+                    $certifications = $user->trainings?->where('is_certified', true)->count() ?? 0;
+                    $avgExamScore = $user->examAttempts?->avg('score') ?? 0;
+
+                    // Calculate total points: certifications (200 pts) + completed trainings (50 pts) + avg score bonus
+                    $totalPoints = ($certifications * 200) + ($completedTrainings * 50) + round($avgExamScore);
+
+                    return [
+                        'id' => $user->id,
+                        'name' => $user->name,
+                        'nip' => $user->nip,
+                        'department' => $user->department,
+                        'completed_trainings' => $completedTrainings,
+                        'certifications' => $certifications,
+                        'avg_exam_score' => round($avgExamScore, 1),
+                        'total_points' => $totalPoints,
+                    ];
+                })
+                ->sortByDesc('total_points')
+                ->take(10) // Get top 10 performers
                 ->values()
                 ->toArray();
 
@@ -133,6 +182,19 @@ class AdminDashboardController extends Controller
                 ];
             }
 
+            // Enrollment trend (last 6 months)
+            $enrollmentTrend = [];
+            for ($i = 5; $i >= 0; $i--) {
+                $month = now()->subMonths($i);
+                $count = UserTraining::whereMonth('enrolled_at', $month->month)
+                    ->whereYear('enrolled_at', $month->year)
+                    ->count();
+                $enrollmentTrend[] = [
+                    'month' => $month->format('M'),
+                    'enrollments' => $count,
+                ];
+            }
+
             // Alerts
             $alerts = [];
             if ($overallComplianceRate < 70) {
@@ -151,6 +213,70 @@ class AdminDashboardController extends Controller
                     'icon' => 'Users',
                 ];
             }
+
+            // Weekly engagement (last 7 days)
+            $weeklyEngagement = [];
+            $daysOfWeek = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+            for ($i = 6; $i >= 0; $i--) {
+                $date = now()->subDays($i);
+                $count = UserTraining::whereDate('updated_at', $date->toDateString())
+                    ->distinct('user_id')
+                    ->count('user_id');
+                $weeklyEngagement[] = [
+                    'day' => $daysOfWeek[$date->dayOfWeek],
+                    'active' => $count,
+                ];
+            }
+
+            // Reports data for Reports tab
+            $complianceDistribution = [
+                ['name' => 'Compliant', 'value' => UserTraining::where('status', 'completed')->count()],
+                ['name' => 'Pending', 'value' => UserTraining::where('status', 'in_progress')->count()],
+                ['name' => 'Non-Compliant', 'value' => UserTraining::where('status', 'not_started')->count()],
+            ];
+
+            // Department reports data
+            $departmentReports = User::select('department')
+                ->whereNotNull('department')
+                ->distinct()
+                ->get()
+                ->map(function($dept) {
+                    $deptName = $dept->department;
+                    $usersInDept = User::where('department', $deptName)->pluck('id');
+                    $totalTrainings = UserTraining::whereIn('user_id', $usersInDept)->count();
+                    $completedTrainings = UserTraining::whereIn('user_id', $usersInDept)->where('status', 'completed')->count();
+                    $pendingTrainings = UserTraining::whereIn('user_id', $usersInDept)->where('status', 'in_progress')->count();
+                    $failedTrainings = $totalTrainings - $completedTrainings - $pendingTrainings;
+
+                    return [
+                        'name' => $deptName,
+                        'generated' => $completedTrainings,
+                        'pending' => $pendingTrainings,
+                        'failed' => max(0, $failedTrainings),
+                    ];
+                })
+                ->filter(function($dept) {
+                    return ($dept['generated'] + $dept['pending'] + $dept['failed']) > 0;
+                })
+                ->values()
+                ->toArray();
+
+            // Recent reports list
+            $recentReports = UserTraining::with(['user:id,name,nip,department', 'module:id,title'])
+                ->where('status', 'completed')
+                ->latest('updated_at')
+                ->limit(10)
+                ->get()
+                ->map(function($training, $index) {
+                    return [
+                        'id' => 'RPT-' . str_pad($training->id, 4, '0', STR_PAD_LEFT),
+                        'name' => 'Completion Report - ' . ($training->module?->title ?? 'Unknown Module'),
+                        'dept' => $training->user?->department ?? 'N/A',
+                        'date' => $training->updated_at ? $training->updated_at->format('d/m/Y H:i') : 'N/A',
+                        'status' => 'Selesai',
+                    ];
+                })
+                ->toArray();
 
             return Inertia::render('Admin/Dashboard', [
                 'auth' => [
@@ -174,6 +300,8 @@ class AdminDashboardController extends Controller
                     'overall_compliance_rate' => $overallComplianceRate,
                     'avg_trainings_per_user' => $avgTrainingsPerUser,
                     'pending_enrollments' => $pendingEnrollments,
+                    'weekly_engagement' => $weeklyEngagement,
+                    'department_reports' => $departmentReports,
                 ],
                 'recent_enrollments' => $recentEnrollments,
                 'recent_completions' => $recentCompletions,
@@ -182,7 +310,10 @@ class AdminDashboardController extends Controller
                 'exam_stats' => $examStats,
                 'pending_actions' => $pendingActions,
                 'compliance_trend' => $complianceTrend,
+                'enrollment_trend' => $enrollmentTrend,
                 'alerts' => $alerts,
+                'reports' => $recentReports,
+                'compliance_distribution' => $complianceDistribution,
             ]);
         } catch (\Exception $e) {
             Log::error('Admin Dashboard Error: ' . $e->getMessage());

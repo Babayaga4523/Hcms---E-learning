@@ -24,7 +24,7 @@ class AdminCreateProgramWithExcelMaterialTest extends TestCase
             'description' => 'Desc',
             'duration_minutes' => 45,
             'passing_grade' => 70,
-            'category' => 'Technical',
+            'category' => 'IT & Digital Security',
             'is_active' => true,
             'questions' => [
                 [

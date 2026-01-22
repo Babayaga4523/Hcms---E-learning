@@ -12,11 +12,15 @@ use App\Models\UserTraining;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
+use Carbon\Carbon;
 
 class PreTestPostTestController extends Controller
 {
     /**
-     * Get all questions for a module
+     * Get questions for an active attempt (secure)
+     * Note: we DO NOT return full question bank. Only questions assigned to an existing attempt.
      */
     public function getQuestions($moduleId, $examType)
     {
@@ -25,30 +29,48 @@ class PreTestPostTestController extends Controller
             return response()->json(['error' => 'Invalid exam type'], 400);
         }
 
+        $user = Auth::user();
         $module = Module::findOrFail($moduleId);
-        $questions = $module->questions()->get();
 
-        if ($questions->isEmpty()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'No questions available for this module'
-            ]);
+        // Find an active attempt for this user/module/type
+        $attempt = ExamAttempt::where('user_id', $user->id)
+            ->where('module_id', $moduleId)
+            ->where('exam_type', $examType)
+            ->whereNull('finished_at')
+            ->latest()
+            ->first();
+
+        if (!$attempt) {
+            return response()->json(['error' => 'No active attempt found. Please start the exam first.'], 404);
         }
+
+        // Return only snapshot questions assigned to this attempt
+        $assigned = UserExamAnswer::with('question')
+            ->where('exam_attempt_id', $attempt->id)
+            ->get();
+
+        $data = $assigned->map(function ($ua) {
+            $imageUrl = null;
+            if ($ua->question->image_url && Storage::disk('public')->exists(str_replace('/storage/', '', $ua->question->image_url))) {
+                $imageUrl = $ua->question->image_url;
+            }
+            
+            return [
+                'id' => $ua->question->id,
+                'question_text' => $ua->question->question_text,
+                'image_url' => $imageUrl,
+                'options' => $ua->question->getOptions(),
+                'type' => $ua->question->question_type
+            ];
+        });
 
         return response()->json([
             'success' => true,
             'data' => [
-                'module' => $module,
-                'exam_type' => $examType,
-                'total_questions' => $questions->count(),
-                'questions' => $questions->map(function ($q) {
-                    // Use getOptions() to support both JSON options and legacy option_a..d fields
-                    return [
-                        'id' => $q->id,
-                        'question_text' => $q->question_text,
-                        'options' => $q->getOptions()
-                    ];
-                })
+                'exam_attempt_id' => $attempt->id,
+                'started_at' => $attempt->started_at,
+                'server_time' => now(),
+                'questions' => $data
             ]
         ]);
     }
@@ -78,26 +100,66 @@ class PreTestPostTestController extends Controller
             }
         }
 
-        // Create exam attempt
-        $examAttempt = ExamAttempt::create([
-            'user_id' => $user->id,
-            'module_id' => $moduleId,
-            'exam_type' => $validated['exam_type'],
-            'score' => 0,
-            'percentage' => 0,
-            'is_passed' => false,
-            'started_at' => now()
-        ]);
+        // Check for an existing active attempt (resume)
+        $activeAttempt = ExamAttempt::where('user_id', $user->id)
+            ->where('module_id', $moduleId)
+            ->where('exam_type', $validated['exam_type'])
+            ->whereNull('finished_at')
+            ->latest()
+            ->first();
 
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'exam_attempt_id' => $examAttempt->id,
+        if ($activeAttempt) {
+            // if expired, force finish. otherwise return existing attempt
+            $maxDuration = $module->duration_minutes ?? 60;
+            $expired = Carbon::parse($activeAttempt->started_at)->addMinutes($maxDuration + 2)->isPast();
+            if ($expired) {
+                $this->forceFinishExam($activeAttempt);
+            } else {
+                return $this->respondWithExamData($activeAttempt, $module);
+            }
+        }
+
+        // Create new attempt and snapshot questions
+        DB::beginTransaction();
+        try {
+            $attempt = ExamAttempt::create([
+                'user_id' => $user->id,
                 'module_id' => $moduleId,
                 'exam_type' => $validated['exam_type'],
-                'started_at' => $examAttempt->started_at
-            ]
-        ]);
+                'score' => 0,
+                'percentage' => 0,
+                'is_passed' => false,
+                'started_at' => now()
+            ]);
+
+            // question limit and randomization
+            $limit = $module->questions_limit ?? 20;
+            $questions = $module->questions()->inRandomOrder()->take($limit)->get();
+
+            if ($questions->isEmpty()) {
+                DB::rollBack();
+                return response()->json(['error' => 'No questions available for this module'], 422);
+            }
+
+            $insert = [];
+            foreach ($questions as $q) {
+                $insert[] = [
+                    'exam_attempt_id' => $attempt->id,
+                    'user_id' => $user->id,
+                    'question_id' => $q->id,
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ];
+            }
+            UserExamAnswer::insert($insert);
+
+            DB::commit();
+            return $this->respondWithExamData($attempt, $module);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('startExam error: ' . $e->getMessage());
+            return response()->json(['error' => 'Failed to start exam'], 500);
+        }
     }
 
     /**
@@ -114,34 +176,50 @@ class PreTestPostTestController extends Controller
         $user = Auth::user();
         $examAttempt = ExamAttempt::findOrFail($examAttemptId);
 
-        // Verify ownership
+        // Verify ownership and status
         if ($examAttempt->user_id !== $user->id) {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
-        $totalQuestions = 0;
-        $correctAnswers = 0;
+        if ($examAttempt->finished_at) {
+            return response()->json(['error' => 'Exam already submitted'], 400);
+        }
+
+        // Server-side time check (with small grace window)
+        $maxMinutes = $examAttempt->module->duration_minutes ?? 60;
+        $deadline = Carbon::parse($examAttempt->started_at)->addMinutes($maxMinutes + 2);
+        if (now()->greaterThan($deadline)) {
+            // Force finish and reject late submissions
+            $this->forceFinishExam($examAttempt);
+            return response()->json(['error' => 'Time limit exceeded. Exam auto-submitted.'], 408);
+        }
 
         DB::beginTransaction();
 
         try {
-            foreach ($validated['answers'] as $answer) {
-                $question = Question::findOrFail($answer['question_id']);
-                $isCorrect = strtolower($answer['user_answer']) === strtolower($question->correct_answer);
+            // Re-fetch assigned questions to avoid trusting client-submitted IDs
+            $assigned = UserExamAnswer::where('exam_attempt_id', $examAttempt->id)->get()->keyBy('question_id');
 
-                UserExamAnswer::create([
-                    'exam_attempt_id' => $examAttempt->id,
-                    'user_id' => $user->id,
-                    'question_id' => $question->id,
-                    'user_answer' => strtolower($answer['user_answer']),
+            $totalQuestions = 0;
+            $correctAnswers = 0;
+
+            foreach ($assigned as $questionId => $record) {
+                $submitted = collect($validated['answers'])->firstWhere('question_id', $questionId);
+                $userAnswer = $submitted ? strtolower($submitted['user_answer']) : null;
+
+                $question = Question::findOrFail($questionId);
+                $isCorrect = $userAnswer !== null && strtolower($question->correct_answer) === $userAnswer;
+
+                // Update existing record (snapshot) - do not create new rows
+                UserExamAnswer::where('id', $record->id)->update([
+                    'user_answer' => $userAnswer,
                     'correct_answer' => strtolower($question->correct_answer),
-                    'is_correct' => $isCorrect
+                    'is_correct' => $isCorrect,
+                    'updated_at' => now()
                 ]);
 
                 $totalQuestions++;
-                if ($isCorrect) {
-                    $correctAnswers++;
-                }
+                if ($isCorrect) $correctAnswers++;
             }
 
             // Calculate score and percentage
@@ -187,6 +265,15 @@ class PreTestPostTestController extends Controller
                 }
             }
 
+            // Finalize exam attempt
+            $examAttempt->update([
+                'score' => $correctAnswers,
+                'percentage' => round($percentage, 2),
+                'is_passed' => $isPassed,
+                'finished_at' => now(),
+                'duration_minutes' => $examAttempt->started_at ? ceil($examAttempt->started_at->diffInSeconds(now()) / 60) : 0
+            ]);
+
             DB::commit();
 
             return response()->json([
@@ -205,12 +292,13 @@ class PreTestPostTestController extends Controller
 
         } catch (\Exception $e) {
             DB::rollBack();
-            return response()->json(['error' => $e->getMessage()], 500);
+            Log::error('submitExam error: ' . $e->getMessage());
+            return response()->json(['error' => 'Submission failed: ' . $e->getMessage()], 500);
         }
     }
 
     /**
-     * Get exam results
+     * Get exam results (owner-only). OK to include correct answers AFTER finishing.
      */
     public function getExamResult($examAttemptId)
     {
@@ -223,6 +311,10 @@ class PreTestPostTestController extends Controller
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
+        if (!$examAttempt->finished_at) {
+            return response()->json(['error' => 'Exam still in progress'], 409);
+        }
+
         $answers = $examAttempt->answers->map(function ($answer) {
             $opts = $answer->question->getOptions();
             return [
@@ -231,7 +323,7 @@ class PreTestPostTestController extends Controller
                 'user_answer' => $answer->user_answer,
                 'correct_answer' => $answer->correct_answer,
                 'is_correct' => $answer->is_correct,
-                'option' => $opts
+                'options' => $opts
             ];
         });
 
@@ -328,7 +420,8 @@ class PreTestPostTestController extends Controller
                     'is_passed' => $attempt->is_passed,
                     'started_at' => $attempt->started_at,
                     'finished_at' => $attempt->finished_at,
-                    'duration_minutes' => $attempt->duration_minutes
+                    'duration_minutes' => $attempt->duration_minutes,
+                    'status' => $attempt->finished_at ? 'finished' : 'in_progress'
                 ];
             });
 
@@ -336,5 +429,48 @@ class PreTestPostTestController extends Controller
             'success' => true,
             'data' => $attempts
         ]);
+    }
+
+    // --- Helper methods ---
+
+    private function respondWithExamData($attempt, $module)
+    {
+        $assigned = UserExamAnswer::with('question')
+            ->where('exam_attempt_id', $attempt->id)
+            ->get();
+
+        $questions = $assigned->map(function ($ua) {
+            $imageUrl = null;
+            if ($ua->question->image_url && Storage::disk('public')->exists(str_replace('/storage/', '', $ua->question->image_url))) {
+                $imageUrl = $ua->question->image_url;
+            }
+            
+            return [
+                'id' => $ua->question->id,
+                'question_text' => $ua->question->question_text,
+                'image_url' => $imageUrl,
+                'options' => $ua->question->getOptions(),
+                'type' => $ua->question->question_type
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'exam_attempt_id' => $attempt->id,
+                'exam_type' => $attempt->exam_type,
+                'duration_minutes' => $module->duration_minutes ?? 60,
+                'started_at' => $attempt->started_at,
+                'server_time' => now(),
+                'questions' => $questions
+            ]
+        ]);
+    }
+
+    private function forceFinishExam($attempt)
+    {
+        if (!$attempt->finished_at) {
+            $attempt->update(['finished_at' => now(), 'is_passed' => false]);
+        }
     }
 }

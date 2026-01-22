@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { Card, Title, Text, Metric, Grid, Col, LineChart } from '@tremor/react';
 import { Users, TrendingUp, Award, AlertCircle } from 'lucide-react';
 import axios from 'axios';
+import BRAND from '@/Constants/theme';
+
+// Use BRAND for consistent colors and icons across the dashboard
+// NOTE: Charts migrated to @tremor/react for a modern, Tailwind-friendly dashboard experience.
+// If you haven't installed it: `npm install @tremor/react`
 
 export default function DashboardMetrics() {
   const [stats, setStats] = useState(null);
@@ -52,30 +57,30 @@ export default function DashboardMetrics() {
     {
       title: 'Total Peserta Terdaftar',
       value: stats?.total_enrolled_learners || 0,
-      icon: Users,
-      color: 'bg-blue-50',
-      iconColor: 'text-blue-600',
+      icon: BRAND.icons.users,
+      color: BRAND.classes.primaryBg,
+      iconColor: BRAND.classes.primaryText,
     },
     {
       title: 'Tingkat Penyelesaian Rata-rata',
       value: `${stats?.average_completion_rate || 0}%`,
-      icon: TrendingUp,
-      color: 'bg-green-50',
-      iconColor: 'text-green-600',
+      icon: BRAND.icons.trending,
+      color: BRAND.classes.accentBg,
+      iconColor: BRAND.classes.accentText,
     },
     {
-      title: 'Sertifikasi Tertunda',
+      title: 'Sertifikasi Menunggu',
       value: stats?.pending_certifications || 0,
-      icon: Award,
-      color: 'bg-yellow-50',
-      iconColor: 'text-yellow-600',
+      icon: BRAND.icons.award,
+      color: BRAND.classes.warningBg,
+      iconColor: BRAND.classes.warningText,
     },
     {
-      title: 'Program Kadaluarsa',
+      title: 'Program Kedaluwarsa',
       value: stats?.expired_programs || 0,
-      icon: AlertCircle,
-      color: 'bg-red-50',
-      iconColor: 'text-red-600',
+      icon: BRAND.icons.trophy,
+      color: BRAND.classes.dangerBg,
+      iconColor: BRAND.classes.dangerText,
     },
   ];
 
@@ -92,10 +97,10 @@ export default function DashboardMetrics() {
             >
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-gray-600 text-sm font-medium">{card.title}</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-2">{card.value}</p>
+                  <p className="text-slate-600 text-sm font-medium">{card.title}</p>
+                  <p className="text-2xl font-bold text-slate-900 mt-2">{card.value}</p>
                 </div>
-                <Icon className={`${card.iconColor} w-12 h-12 opacity-80`} />
+                <Icon className={`${card.iconColor} w-12 h-12 opacity-95`} />
               </div>
             </div>
           );
@@ -106,33 +111,18 @@ export default function DashboardMetrics() {
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Tren Pendaftaran (30 Hari Terakhir)</h3>
         {trendData.length > 0 ? (
-          <ResponsiveContainer width="100%" height={400}>
-            <LineChart data={trendData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="total_enrolled"
-                stroke="#3B82F6"
-                name="Total Terdaftar"
-              />
-              <Line
-                type="monotone"
-                dataKey="completed"
-                stroke="#10B981"
-                name="Selesai"
-              />
-              <Line
-                type="monotone"
-                dataKey="in_progress"
-                stroke="#F59E0B"
-                name="Sedang Berlangsung"
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          <div className="h-96">
+            <LineChart
+              className="h-full"
+              data={trendData}
+              index="date"
+              categories={["total_enrolled", "completed", "in_progress"]}
+              colors={BRAND.colors.chartColors.slice(0,3)}
+              valueFormatter={(value) => new Intl.NumberFormat('id-ID').format(value)}
+              showLegend={true}
+              showTooltip={true}
+            />
+          </div>
         ) : (
           <div className="flex items-center justify-center h-64 text-gray-500">
             Tidak ada data tren
