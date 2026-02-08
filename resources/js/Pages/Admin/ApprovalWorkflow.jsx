@@ -412,37 +412,7 @@ export default function ApprovalWorkflow() {
 
                             {/* Drawer Body */}
                             <div className="flex-1 overflow-y-auto p-8 space-y-8 bg-[#FAFAFA]">
-                                
-                                {/* AI Risk Analysis Card */}
-                                <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-[24px] p-6 text-white relative overflow-hidden shadow-lg">
-                                    <div className="absolute top-0 right-0 w-32 h-32 bg-[#D6FF59] rounded-full blur-[60px] opacity-20"></div>
-                                    <div className="flex items-start gap-4 relative z-10">
-                                        <div className="p-3 bg-white/10 rounded-xl">
-                                            <ShieldCheck className="text-[#D6FF59]" size={24} />
-                                        </div>
-                                        <div>
-                                            <h4 className="font-bold text-lg">AI Risk Analysis</h4>
-                                            <div className="flex items-center gap-2 mt-1">
-                                                <div className="h-2 w-24 bg-white/20 rounded-full overflow-hidden">
-                                                    <div 
-                                                        className={`h-full ${selectedItem.risk_score > 50 ? 'bg-red-500' : 'bg-green-500'}`} 
-                                                        style={{ width: `${selectedItem.risk_score}%` }} 
-                                                    />
-                                                </div>
-                                                <span className="text-xs font-bold text-slate-300">
-                                                    {selectedItem.risk_score > 50 ? 'High Risk' : 'Low Risk'} ({selectedItem.risk_score}%)
-                                                </span>
-                                            </div>
-                                            <p className="text-sm text-slate-400 mt-2 leading-relaxed">
-                                                {selectedItem.risk_score > 50 
-                                                    ? "Peringatan: Parameter program melebihi standar. Pertimbangkan review lebih detail sebelum approve."
-                                                    : "Aman. Program ini sesuai dengan standar dan parameter yang telah ditetapkan."}
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
 
-                                {/* Detail Grid */}
                                 <div className="grid grid-cols-2 gap-4">
                                     <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
                                         <p className="text-xs font-bold text-slate-400 uppercase mb-1">Requester</p>

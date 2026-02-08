@@ -26,6 +26,7 @@ class TrainingScheduleController extends BaseController
             })
             ->orderBy('date', 'asc')
             ->get();
+            // Note: trainer_ids is automatically decoded by Model's $casts
 
         return response()->json([
             'data' => $schedules,
@@ -38,37 +39,46 @@ class TrainingScheduleController extends BaseController
      */
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'date' => 'required|date',
-            'start_time' => 'nullable|date_format:H:i',
-            'end_time' => 'nullable|date_format:H:i',
-            'location' => 'nullable|string|max:255',
-            'description' => 'nullable|string',
-            'program_id' => 'nullable|exists:modules,id',
-            'type' => 'nullable|in:training,deadline,reminder,event',
-            'capacity' => 'nullable|integer|min:0',
-            'status' => 'nullable|in:scheduled,ongoing,completed,cancelled',
-            'trainer_ids' => 'nullable|array',
-            'trainer_ids.*' => 'nullable|exists:users,id',
-        ]);
+        try {
+            $validated = $request->validate([
+                'title' => 'required|string|max:255',
+                'date' => 'required|date',
+                'start_time' => 'nullable|date_format:H:i',
+                'end_time' => 'nullable|date_format:H:i',
+                'location' => 'nullable|string|max:255',
+                'description' => 'nullable|string',
+                'program_id' => 'nullable|exists:modules,id',
+                'type' => 'nullable|in:training,deadline,reminder,event',
+                'capacity' => 'nullable|integer|min:0',
+                'status' => 'nullable|in:scheduled,ongoing,completed,cancelled',
+                'trainer_ids' => 'nullable|array',
+                'trainer_ids.*' => 'nullable|exists:users,id',
+            ]);
 
-        // Convert trainer_ids array to JSON for storage
-        if (isset($validated['trainer_ids'])) {
-            $validated['trainer_ids'] = json_encode($validated['trainer_ids']);
+            // Convert trainer_ids array to JSON for storage
+            if (isset($validated['trainer_ids'])) {
+                $validated['trainer_ids'] = json_encode($validated['trainer_ids']);
+            }
+
+            $schedule = TrainingSchedule::create($validated);
+            // Note: trainer_ids is automatically decoded by Model's $casts
+
+            return response()->json([
+                'message' => 'Jadwal pelatihan berhasil dibuat',
+                'data' => $schedule->load('program'),
+            ], 201);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'message' => 'Validasi gagal',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error creating training schedule: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Gagal membuat jadwal pelatihan',
+                'error' => $e->getMessage(),
+            ], 500);
         }
-
-        $schedule = TrainingSchedule::create($validated);
-
-        // Decode trainer_ids for response
-        if ($schedule->trainer_ids) {
-            $schedule->trainer_ids = json_decode($schedule->trainer_ids);
-        }
-
-        return response()->json([
-            'message' => 'Jadwal pelatihan berhasil dibuat',
-            'data' => $schedule->load('program'),
-        ], 201);
     }
 
     /**
@@ -76,6 +86,7 @@ class TrainingScheduleController extends BaseController
      */
     public function show(TrainingSchedule $trainingSchedule)
     {
+        // Note: trainer_ids is automatically decoded by Model's $casts
         return response()->json([
             'data' => $trainingSchedule->load('program'),
         ]);
@@ -86,38 +97,47 @@ class TrainingScheduleController extends BaseController
      */
     public function update(Request $request, TrainingSchedule $trainingSchedule)
     {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'date' => 'required|date',
-            'start_time' => 'nullable|date_format:H:i',
-            'end_time' => 'nullable|date_format:H:i',
-            'location' => 'nullable|string|max:255',
-            'description' => 'nullable|string',
-            'program_id' => 'nullable|exists:modules,id',
-            'type' => 'nullable|in:training,deadline,reminder,event',
-            'capacity' => 'nullable|integer|min:0',
-            'enrolled' => 'nullable|integer|min:0',
-            'status' => 'nullable|in:scheduled,ongoing,completed,cancelled',
-            'trainer_ids' => 'nullable|array',
-            'trainer_ids.*' => 'nullable|exists:users,id',
-        ]);
+        try {
+            $validated = $request->validate([
+                'title' => 'required|string|max:255',
+                'date' => 'required|date',
+                'start_time' => 'nullable|date_format:H:i',
+                'end_time' => 'nullable|date_format:H:i',
+                'location' => 'nullable|string|max:255',
+                'description' => 'nullable|string',
+                'program_id' => 'nullable|exists:modules,id',
+                'type' => 'nullable|in:training,deadline,reminder,event',
+                'capacity' => 'nullable|integer|min:0',
+                'enrolled' => 'nullable|integer|min:0',
+                'status' => 'nullable|in:scheduled,ongoing,completed,cancelled',
+                'trainer_ids' => 'nullable|array',
+                'trainer_ids.*' => 'nullable|exists:users,id',
+            ]);
 
-        // Convert trainer_ids array to JSON for storage
-        if (isset($validated['trainer_ids'])) {
-            $validated['trainer_ids'] = json_encode($validated['trainer_ids']);
+            // Convert trainer_ids array to JSON for storage
+            if (isset($validated['trainer_ids'])) {
+                $validated['trainer_ids'] = json_encode($validated['trainer_ids']);
+            }
+
+            $trainingSchedule->update($validated);
+            // Note: trainer_ids is automatically decoded by Model's $casts
+
+            return response()->json([
+                'message' => 'Jadwal pelatihan berhasil diperbarui',
+                'data' => $trainingSchedule->load('program'),
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'message' => 'Validasi gagal',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error updating schedule: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Gagal memperbarui jadwal pelatihan',
+                'error' => $e->getMessage(),
+            ], 500);
         }
-
-        $trainingSchedule->update($validated);
-
-        // Decode trainer_ids for response
-        if ($trainingSchedule->trainer_ids) {
-            $trainingSchedule->trainer_ids = json_decode($trainingSchedule->trainer_ids);
-        }
-
-        return response()->json([
-            'message' => 'Jadwal pelatihan berhasil diperbarui',
-            'data' => $trainingSchedule->load('program'),
-        ]);
     }
 
     /**
@@ -125,11 +145,19 @@ class TrainingScheduleController extends BaseController
      */
     public function destroy(TrainingSchedule $trainingSchedule)
     {
-        $trainingSchedule->delete();
+        try {
+            $trainingSchedule->delete();
 
-        return response()->json([
-            'message' => 'Jadwal pelatihan berhasil dihapus',
-        ]);
+            return response()->json([
+                'message' => 'Jadwal pelatihan berhasil dihapus',
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error deleting schedule: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Gagal menghapus jadwal pelatihan',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**
@@ -144,6 +172,7 @@ class TrainingScheduleController extends BaseController
             ->with('program')
             ->orderBy('date', 'asc')
             ->get();
+            // Note: trainer_ids is automatically decoded by Model's $casts
 
         return response()->json([
             'data' => $schedules,
@@ -200,6 +229,29 @@ class TrainingScheduleController extends BaseController
         return response()->json([
             'users' => $users,
             'departments' => $departments,
+        ]);
+    }
+
+    /**
+     * Diagnostic endpoint to check training schedule data
+     */
+    public function diagnostic()
+    {
+        $totalSchedules = TrainingSchedule::count();
+        $recentSchedules = TrainingSchedule::with('program')
+            ->latest('created_at')
+            ->limit(10)
+            ->get();
+            // Note: trainer_ids is automatically decoded by Model's $casts
+        $modules = \App\Models\Module::where('approval_status', 'approved')
+            ->where('is_active', true)
+            ->count();
+
+        return response()->json([
+            'total_schedules' => $totalSchedules,
+            'total_approved_modules' => $modules,
+            'recent_schedules' => $recentSchedules,
+            'database_status' => 'OK',
         ]);
     }
 }

@@ -359,7 +359,7 @@ export default function LearnerPerformance() {
                                                 <p className="text-sm text-slate-500">Perbandingan skor Anda vs Target</p>
                                             </div>
                                         </div>
-                                        <div className="h-[350px] w-full">
+                                        <div className="h-[350px] w-full flex-shrink-0">
                                             {scoresTrendData.length > 0 ? (
                                                 <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={300}>
                                                     <AreaChart data={scoresTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
@@ -394,7 +394,7 @@ export default function LearnerPerformance() {
                                         <h3 className="text-xl font-bold text-slate-900 mb-2">Kompetensi</h3>
                                         <p className="text-sm text-slate-500 mb-4">Pemetaan skill berdasarkan modul</p>
                                         
-                                        <div className="h-[300px] w-full relative">
+                                        <div className="h-[300px] w-full relative flex-shrink-0">
                                             {skillRadarData.length > 0 ? (
                                                 <ResponsiveContainer width="100%" height="100%" minWidth={250} minHeight={250}>
                                                     <RadarChart cx="50%" cy="50%" outerRadius="80%" data={skillRadarData}>
@@ -429,7 +429,7 @@ export default function LearnerPerformance() {
                                                 <span className="text-lg font-black text-[#005E54]">{hoursSpent} Jam</span>
                                             </div>
                                         </div>
-                                        <div className="h-[200px] w-full">
+                                        <div className="h-[200px] w-full flex-shrink-0">
                                             {learningActivityData.length > 0 ? (
                                                 <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={200}>
                                                     <BarChart data={learningActivityData}>

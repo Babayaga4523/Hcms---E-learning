@@ -372,50 +372,6 @@ export default function AdvancedAnalytics() {
                 <div className="px-8 max-w-[1600px] mx-auto space-y-10">
 
                     {/* --- 2. AI EXECUTIVE SUMMARY --- */}
-                    <motion.div 
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="bg-gradient-to-r from-[#00BFA5] to-[#009688] rounded-[32px] p-1 shadow-lg"
-                    >
-                        <div className="bg-white rounded-[30px] p-6 md:p-8 flex flex-col md:flex-row gap-8 items-center">
-                            <div className="flex-shrink-0 w-16 h-16 bg-[#E0F2F1] rounded-2xl flex items-center justify-center text-[#00BFA5]">
-                                <BrainCircuit size={32} />
-                            </div>
-                            <div className="flex-1">
-                                <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                                    AI Insight Summary 
-                                    <span className="px-2 py-0.5 bg-[#D6FF59] text-black text-[10px] rounded-full uppercase">Beta</span>
-                                </h3>
-                                <p className="text-slate-600 mt-2 leading-relaxed text-sm">
-                                    {overview && overview.completion_rate && overview.trends ? (
-                                        <>
-                                            Analisis periode ini menunjukkan {overview.trends.completions_trend > 0 ? 'tren positif' : 'penurunan'}. 
-                                            <strong className={overview.trends.completions_trend > 0 ? 'text-teal-600' : 'text-orange-600'}>
-                                                Completion rate {overview.trends.completions_trend > 0 ? 'naik' : 'turun'} {Math.abs(overview.trends.completions_trend)}%
-                                            </strong> dengan total {overview.completions} pelatihan selesai. 
-                                            {overview.completion_rate < 80 && (
-                                                <> Target completion rate belum tercapai (saat ini {overview.completion_rate}%). 
-                                                Disarankan untuk mengaktifkan <em>Smart Reminder</em> untuk meningkatkan engagement.</>
-                                            )}
-                                            {overview.completion_rate >= 80 && (
-                                                <> Kinerja sangat baik dengan completion rate {overview.completion_rate}%. 
-                                                Pertahankan momentum ini dengan program recognition untuk top performers.</>
-                                            )}
-                                        </>
-                                    ) : (
-                                        'Menganalisis data pembelajaran untuk memberikan insight yang relevan...'
-                                    )}
-                                </p>
-                            </div>
-                            <button 
-                                onClick={() => showToast('Fitur AI Detail Action akan segera hadir! Saat ini dalam tahap pengembangan.', 'info')}
-                                className="flex-shrink-0 px-6 py-3 border-2 border-slate-100 rounded-full text-sm font-bold text-slate-700 hover:border-[#D6FF59] hover:bg-[#F7FEE7] transition"
-                            >
-                                Generate Detail Action
-                            </button>
-                        </div>
-                    </motion.div>
-
                     {/* --- 3. KPI CARDS --- */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                         <InsightCard 
@@ -585,7 +541,7 @@ export default function AdvancedAnalytics() {
                                 title="Top Talent Leaderboard" 
                                 subtitle="Gamification" 
                                 icon={Users}
-                                onDetailClick={() => router.visit('/admin/users')}
+                                onDetailClick={() => router.visit('/admin/leaderboard')}
                             />
                             
                             <div className="overflow-x-auto">
@@ -629,7 +585,7 @@ export default function AdvancedAnalytics() {
                                                             </div>
                                                         </td>
                                                         <td className="py-4 text-sm text-slate-500">{performer.department || 'No Department'}</td>
-                                                        <td className="py-4 text-sm font-bold text-[#00BFA5]">{performer.xp_earned?.toLocaleString() || 0} XP</td>
+                                                        <td className="py-4 text-sm font-bold text-[#00BFA5]">{performer.total_points?.toLocaleString() || performer.xp_earned?.toLocaleString() || 0} Poin</td>
                                                         <td className="py-4">
                                                             <span className={`px-3 py-1 text-[10px] font-bold rounded-full ${
                                                                 performer.badge === 'PRO' ? 'bg-[#D6FF59] text-black' :

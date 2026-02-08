@@ -27,6 +27,7 @@ class User extends Authenticatable
         'role',
         'department',
         'location',
+        'phone',
     ];
 
     /**
@@ -166,37 +167,5 @@ class User extends Authenticatable
         return $this->belongsToMany(Module::class, 'user_trainings')
             ->wherePivot('status', 'completed')
             ->withPivot('final_score', 'is_certified', 'completed_at');
-    }
-
-    /**
-     * Relasi ke User Progress
-     */
-    public function userProgress(): HasMany
-    {
-        return $this->hasMany(UserProgress::class);
-    }
-
-    /**
-     * Relasi ke Activity Logs
-     */
-    public function activityLogs(): HasMany
-    {
-        return $this->hasMany(ActivityLog::class);
-    }
-
-    /**
-     * Relasi ke Notifications
-     */
-    public function notifications(): HasMany
-    {
-        return $this->hasMany(Notification::class);
-    }
-
-    /**
-     * Relasi ke User Bookmarks
-     */
-    public function bookmarks(): HasMany
-    {
-        return $this->hasMany(UserBookmark::class);
     }
 }

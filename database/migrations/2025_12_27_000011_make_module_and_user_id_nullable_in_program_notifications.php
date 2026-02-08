@@ -23,10 +23,7 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('program_notifications', function (Blueprint $table) {
-            // Revert to NOT NULL if rolling back
-            $table->unsignedBigInteger('module_id')->nullable(false)->change();
-            $table->unsignedBigInteger('user_id')->nullable(false)->change();
-        });
+        // Cannot revert to NOT NULL if NULL values exist, so just do nothing
+        // This prevents rolling back from breaking the schema
     }
 };

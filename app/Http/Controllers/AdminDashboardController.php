@@ -8,7 +8,10 @@ use App\Models\UserTraining;
 use App\Models\ExamAttempt;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
+use Maatwebsite\Excel\Facades\Excel;
+use App\Exports\TrainingReportExport;
 
 class AdminDashboardController extends Controller
 {
@@ -62,221 +65,27 @@ class AdminDashboardController extends Controller
         }
 
         try {
-            // Get overall statistics
-            $totalUsers = User::where('role', 'user')->count();
-            $totalModules = Module::where('is_active', true)->count();
-            $totalEnrollments = UserTraining::count();
-            $completedTrainings = UserTraining::where('status', 'completed')->count();
-            $totalCertifications = UserTraining::where('is_certified', true)->count();
-            $averageScore = ExamAttempt::where('is_passed', true)->avg('percentage') ?? 0;
-            $pendingEnrollments = UserTraining::where('status', 'in_progress')->count();
+            // Get comprehensive dashboard data from DashboardMetricsController
+            $metricsController = new \App\Http\Controllers\Admin\DashboardMetricsController();
+            
+            // Get all data from the metrics controller
+            $statistics = $metricsController->getStatistics();
+            $complianceTrend = $metricsController->getComplianceTrend();
+            $enrollmentTrend = $metricsController->getEnrollmentTrend();
+            $modulesStats = $metricsController->getModulesStats();
+            $topPerformers = $metricsController->getTopPerformers();
+            $recentEnrollments = $metricsController->getRecentEnrollments();
+            $recentCompletions = $metricsController->getRecentCompletions();
+            $recentActivityLogs = $metricsController->getRecentActivityLogs();
+            $alerts = $metricsController->getAlerts();
+            $reports = $metricsController->getReports();
+            $complianceDistribution = $metricsController->getComplianceDistribution();
 
-            // Calculate overall compliance rate
-            $overallComplianceRate = $totalEnrollments > 0 
-                ? round(($completedTrainings / $totalEnrollments) * 100, 2)
-                : 0;
-
-            // Calculate average trainings per user
-            $avgTrainingsPerUser = $totalUsers > 0 
-                ? round($totalEnrollments / $totalUsers, 2)
-                : 0;
-
-            // Get recent enrollments - Simplified
-            $recentEnrollments = UserTraining::with('user:id,name,nip,department', 'module:id,title')
-                ->latest('enrolled_at')
-                ->limit(5)
-                ->get()
-                ->map(fn($enrollment) => [
-                    'id' => $enrollment->id,
-                    'user_name' => $enrollment->user?->name ?? 'N/A',
-                    'user_nip' => $enrollment->user?->nip ?? 'N/A',
-                    'module_title' => $enrollment->module?->title ?? 'N/A',
-                    'status' => $enrollment->status,
-                    'enrolled_at' => $enrollment->enrolled_at,
-                ])
-                ->toArray();
-
-            // Get recent completions
-            $recentCompletions = UserTraining::with('user:id,name,nip', 'module:id,title')
-                ->where('status', 'completed')
-                ->latest('updated_at')
-                ->limit(5)
-                ->get()
-                ->map(fn($completion) => [
-                    'id' => $completion->id,
-                    'user_name' => $completion->user?->name ?? 'N/A',
-                    'module_title' => $completion->module?->title ?? 'N/A',
-                    'completed_at' => $completion->updated_at,
-                    'score' => round(rand(65, 95), 2), // Placeholder, should be from ExamAttempt
-                ])
-                ->toArray();
-
-            // Get modules with enrollment count - Simplified
-            $modulesStats = Module::with('userTrainings')
-                ->where('is_active', true)
-                ->get()
-                ->map(fn($module) => [
-                    'id' => $module->id,
-                    'title' => $module->title,
-                    'description' => $module->description,
-                    'total_enrollments' => $module->userTrainings->count(),
-                    'completed_count' => $module->userTrainings->where('status', 'completed')->count(),
-                    'is_active' => $module->is_active,
-                ])
-                ->toArray();
-
-            // Get top performers - Enhanced calculation
-            $topPerformers = User::where('role', 'user')
-                ->with(['trainings', 'examAttempts'])
-                ->get()
-                ->map(function($user) {
-                    $completedTrainings = $user->trainings?->where('status', 'completed')->count() ?? 0;
-                    $certifications = $user->trainings?->where('is_certified', true)->count() ?? 0;
-                    $avgExamScore = $user->examAttempts?->avg('score') ?? 0;
-
-                    // Calculate total points: certifications (200 pts) + completed trainings (50 pts) + avg score bonus
-                    $totalPoints = ($certifications * 200) + ($completedTrainings * 50) + round($avgExamScore);
-
-                    return [
-                        'id' => $user->id,
-                        'name' => $user->name,
-                        'nip' => $user->nip,
-                        'department' => $user->department,
-                        'completed_trainings' => $completedTrainings,
-                        'certifications' => $certifications,
-                        'avg_exam_score' => round($avgExamScore, 1),
-                        'total_points' => $totalPoints,
-                    ];
-                })
-                ->sortByDesc('total_points')
-                ->take(10) // Get top 10 performers
-                ->values()
-                ->toArray();
-
-            // Get pending actions (trainings due soon, etc)
-            $pendingActions = [
-                'enrollments_pending' => $pendingEnrollments,
-                'certifications_pending' => UserTraining::where('status', 'completed')
-                    ->where('is_certified', false)
-                    ->count(),
-                'modules_near_deadline' => 0, // Would need deadline column in modules table
-            ];
-
-            // Get exam stats - Simplified
-            $examStats = ExamAttempt::selectRaw('exam_type, COUNT(*) as count, AVG(percentage) as avg_score')
-                ->groupBy('exam_type')
-                ->get()
-                ->toArray();
-
-            // Compliance trend (last 6 months)
-            $complianceTrend = [];
-            for ($i = 5; $i >= 0; $i--) {
-                $month = now()->subMonths($i);
-                $count = UserTraining::where('status', 'completed')
-                    ->whereMonth('updated_at', $month->month)
-                    ->whereYear('updated_at', $month->year)
-                    ->count();
-                $complianceTrend[] = [
-                    'month' => $month->format('M'),
-                    'completed' => $count,
-                ];
-            }
-
-            // Enrollment trend (last 6 months)
-            $enrollmentTrend = [];
-            for ($i = 5; $i >= 0; $i--) {
-                $month = now()->subMonths($i);
-                $count = UserTraining::whereMonth('enrolled_at', $month->month)
-                    ->whereYear('enrolled_at', $month->year)
-                    ->count();
-                $enrollmentTrend[] = [
-                    'month' => $month->format('M'),
-                    'enrollments' => $count,
-                ];
-            }
-
-            // Alerts
-            $alerts = [];
-            if ($overallComplianceRate < 70) {
-                $alerts[] = [
-                    'id' => 1,
-                    'type' => 'warning',
-                    'message' => 'Overall compliance rate is below 70%. Current: ' . $overallComplianceRate . '%',
-                    'icon' => 'AlertCircle',
-                ];
-            }
-            if ($pendingEnrollments > 10) {
-                $alerts[] = [
-                    'id' => 2,
-                    'type' => 'info',
-                    'message' => 'You have ' . $pendingEnrollments . ' pending enrollments.',
-                    'icon' => 'Users',
-                ];
-            }
-
-            // Weekly engagement (last 7 days)
-            $weeklyEngagement = [];
-            $daysOfWeek = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
-            for ($i = 6; $i >= 0; $i--) {
-                $date = now()->subDays($i);
-                $count = UserTraining::whereDate('updated_at', $date->toDateString())
-                    ->distinct('user_id')
-                    ->count('user_id');
-                $weeklyEngagement[] = [
-                    'day' => $daysOfWeek[$date->dayOfWeek],
-                    'active' => $count,
-                ];
-            }
-
-            // Reports data for Reports tab
-            $complianceDistribution = [
-                ['name' => 'Compliant', 'value' => UserTraining::where('status', 'completed')->count()],
-                ['name' => 'Pending', 'value' => UserTraining::where('status', 'in_progress')->count()],
-                ['name' => 'Non-Compliant', 'value' => UserTraining::where('status', 'not_started')->count()],
-            ];
-
-            // Department reports data
-            $departmentReports = User::select('department')
-                ->whereNotNull('department')
-                ->distinct()
-                ->get()
-                ->map(function($dept) {
-                    $deptName = $dept->department;
-                    $usersInDept = User::where('department', $deptName)->pluck('id');
-                    $totalTrainings = UserTraining::whereIn('user_id', $usersInDept)->count();
-                    $completedTrainings = UserTraining::whereIn('user_id', $usersInDept)->where('status', 'completed')->count();
-                    $pendingTrainings = UserTraining::whereIn('user_id', $usersInDept)->where('status', 'in_progress')->count();
-                    $failedTrainings = $totalTrainings - $completedTrainings - $pendingTrainings;
-
-                    return [
-                        'name' => $deptName,
-                        'generated' => $completedTrainings,
-                        'pending' => $pendingTrainings,
-                        'failed' => max(0, $failedTrainings),
-                    ];
-                })
-                ->filter(function($dept) {
-                    return ($dept['generated'] + $dept['pending'] + $dept['failed']) > 0;
-                })
-                ->values()
-                ->toArray();
-
-            // Recent reports list
-            $recentReports = UserTraining::with(['user:id,name,nip,department', 'module:id,title'])
-                ->where('status', 'completed')
-                ->latest('updated_at')
-                ->limit(10)
-                ->get()
-                ->map(function($training, $index) {
-                    return [
-                        'id' => 'RPT-' . str_pad($training->id, 4, '0', STR_PAD_LEFT),
-                        'name' => 'Completion Report - ' . ($training->module?->title ?? 'Unknown Module'),
-                        'dept' => $training->user?->department ?? 'N/A',
-                        'date' => $training->updated_at ? $training->updated_at->format('d/m/Y H:i') : 'N/A',
-                        'status' => 'Selesai',
-                    ];
-                })
-                ->toArray();
+            Log::info('Dashboard data loaded successfully', [
+                'stats' => count($statistics),
+                'modules' => count($modulesStats),
+                'performers' => count($topPerformers),
+            ]);
 
             return Inertia::render('Admin/Dashboard', [
                 'auth' => [
@@ -287,43 +96,192 @@ class AdminDashboardController extends Controller
                         'role' => $user->role,
                     ],
                 ],
-                'statistics' => [
-                    'total_users' => $totalUsers,
-                    'total_modules' => $totalModules,
-                    'total_enrollments' => $totalEnrollments,
-                    'completed_trainings' => $completedTrainings,
-                    'total_certifications' => $totalCertifications,
-                    'average_score' => round($averageScore, 2),
-                    'completion_rate' => $totalEnrollments > 0 
-                        ? round(($completedTrainings / $totalEnrollments) * 100, 2)
-                        : 0,
-                    'overall_compliance_rate' => $overallComplianceRate,
-                    'avg_trainings_per_user' => $avgTrainingsPerUser,
-                    'pending_enrollments' => $pendingEnrollments,
-                    'weekly_engagement' => $weeklyEngagement,
-                    'department_reports' => $departmentReports,
-                ],
+                'statistics' => $statistics,
                 'recent_enrollments' => $recentEnrollments,
                 'recent_completions' => $recentCompletions,
                 'modules_stats' => $modulesStats,
                 'top_performers' => $topPerformers,
-                'exam_stats' => $examStats,
-                'pending_actions' => $pendingActions,
                 'compliance_trend' => $complianceTrend,
                 'enrollment_trend' => $enrollmentTrend,
                 'alerts' => $alerts,
-                'reports' => $recentReports,
+                'reports' => $reports,
                 'compliance_distribution' => $complianceDistribution,
+                'recent_activity_logs' => $recentActivityLogs,
             ]);
         } catch (\Exception $e) {
-            Log::error('Admin Dashboard Error: ' . $e->getMessage());
-            abort(500, 'Error loading dashboard');
+            Log::error('Admin Dashboard Error: ' . $e->getMessage(), [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+            abort(500, 'Error loading dashboard: ' . $e->getMessage());
         }
     }
 
     /**
-     * Get user management data
+     * Download reports as CSV with professional template
      */
+    public function downloadReports()
+    {
+        try {
+            $user = Auth::user();
+            if ($user->role !== 'admin') {
+                abort(403, 'Unauthorized');
+            }
+
+            // Get reports data and statistics
+            $metricsController = new \App\Http\Controllers\Admin\DashboardMetricsController();
+            $reports = $metricsController->getReports();
+            $statistics = $metricsController->getStatistics();
+            $complianceDistribution = $metricsController->getComplianceDistribution();
+
+            // Create CSV
+            $fileName = 'Laporan-Pelatihan-' . date('Y-m-d-H-i-s') . '.csv';
+            $headers = [
+                "Content-Type" => "text/csv; charset=utf-8",
+                "Content-Disposition" => "attachment; filename=$fileName",
+                "Pragma" => "no-cache",
+                "Cache-Control" => "must-revalidate, post-check=0, pre-check=0",
+                "Expires" => "0",
+            ];
+
+            $callback = function() use ($reports, $statistics, $complianceDistribution, $user) {
+                $file = fopen('php://output', 'w');
+                
+                // Set BOM untuk Excel compatibility
+                fprintf($file, chr(0xEF).chr(0xBB).chr(0xBF));
+                
+                // ========== HEADER SECTION ==========
+                fputcsv($file, [], ';');
+                fputcsv($file, ['SISTEM MANAJEMEN PELATIHAN'], ';');
+                fputcsv($file, ['ARSIP LAPORAN PELATIHAN'], ';');
+                fputcsv($file, [], ';');
+                
+                // ========== INFO SECTION ==========
+                fputcsv($file, ['Tanggal Generate', date('d-m-Y H:i:s')], ';');
+                fputcsv($file, ['Dibuat Oleh', $user->name], ';');
+                fputcsv($file, ['Total Laporan', count($reports)], ';');
+                fputcsv($file, [], ';');
+                
+                // ========== SUMMARY SECTION ==========
+                fputcsv($file, ['RINGKASAN STATISTIK'], ';');
+                fputcsv($file, [], ';');
+                fputcsv($file, ['Metrik', 'Nilai'], ';');
+                fputcsv($file, ['Total Pengguna', $statistics['total_users'] ?? 0], ';');
+                fputcsv($file, ['Tingkat Penyelesaian', ($statistics['completion_rate'] ?? 0) . '%'], ';');
+                fputcsv($file, ['Rata-rata Skor', number_format($statistics['average_score'] ?? 0, 2)], ';');
+                fputcsv($file, ['Tingkat Kepatuhan', ($statistics['overall_compliance_rate'] ?? 0) . '%'], ';');
+                
+                // Compliance Distribution
+                if (!empty($complianceDistribution)) {
+                    fputcsv($file, [], ';');
+                    fputcsv($file, ['Status Kepatuhan', 'Jumlah'], ';');
+                    foreach ($complianceDistribution as $compliance) {
+                        fputcsv($file, [
+                            $compliance['name'],
+                            $compliance['value'],
+                        ], ';');
+                    }
+                }
+                
+                // ========== DATA SECTION ==========
+                fputcsv($file, [], ';');
+                fputcsv($file, ['DETAIL LAPORAN'], ';');
+                fputcsv($file, [], ';');
+                fputcsv($file, ['No', 'ID Laporan', 'Nama Laporan', 'Departemen', 'Tanggal', 'Status'], ';');
+                
+                // Data rows
+                $no = 1;
+                foreach ($reports as $report) {
+                    fputcsv($file, [
+                        $no++,
+                        $report->id,
+                        $report->name,
+                        $report->dept,
+                        $report->date,
+                        $report->status,
+                    ], ';');
+                }
+                
+                // ========== FOOTER SECTION ==========
+                fputcsv($file, [], ';');
+                fputcsv($file, [], ';');
+                fputcsv($file, ['Catatan: File ini berisi data sensitif pelatihan. Simpan dengan aman.'], ';');
+                fputcsv($file, ['Untuk informasi lebih lanjut, hubungi bagian HR/Training.'], ';');
+                fputcsv($file, ['Generated by: HCMS E-Learning System'], ';');
+                fputcsv($file, ['Generated Date: ' . date('d-m-Y H:i:s')], ';');
+                
+                fclose($file);
+            };
+
+            return response()->stream($callback, 200, $headers);
+        } catch (\Exception $e) {
+            Log::error('Download Reports Error: ' . $e->getMessage());
+            return back()->with('error', 'Error downloading reports: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Download comprehensive training reports as Excel
+     */
+    public function downloadReportsExcel()
+    {
+        try {
+            $user = Auth::user();
+            if ($user->role !== 'admin') {
+                abort(403, 'Unauthorized');
+            }
+
+            // Get comprehensive data
+            $metricsController = new \App\Http\Controllers\Admin\DashboardMetricsController();
+            $statistics = $metricsController->getStatistics();
+            $complianceDistribution = $metricsController->getComplianceDistribution();
+            $departmentReports = $metricsController->getDepartmentReports();
+            
+            // Get detailed training data
+            $trainings = DB::table('user_trainings')
+                ->join('users', 'user_trainings.user_id', '=', 'users.id')
+                ->join('modules', 'user_trainings.module_id', '=', 'modules.id')
+                ->select(
+                    'users.name as user_name',
+                    'users.email as user_email',
+                    'users.nip',
+                    'users.department',
+                    'users.location',
+                    'modules.title as module_title',
+                    'modules.passing_grade',
+                    'modules.duration as module_duration',
+                    'user_trainings.status',
+                    'user_trainings.final_score',
+                    'user_trainings.is_certified',
+                    'user_trainings.enrolled_at',
+                    'user_trainings.completed_at',
+                    DB::raw('(SELECT COUNT(*) FROM exam_attempts ea WHERE ea.user_training_id = user_trainings.id) as attempts'),
+                    DB::raw('(SELECT MAX(score) FROM exam_attempts ea WHERE ea.user_training_id = user_trainings.id) as highest_score'),
+                    DB::raw('(SELECT ROUND(AVG(score),2) FROM exam_attempts ea WHERE ea.user_training_id = user_trainings.id) as avg_attempt_score'),
+                    DB::raw('TIMESTAMPDIFF(MINUTE, user_trainings.enrolled_at, user_trainings.completed_at) as time_to_complete_minutes')
+                )
+                ->orderBy('users.department')
+                ->orderBy('users.name')
+                ->get();
+
+            // Create Excel file
+            $fileName = 'Laporan-Pelatihan-Lengkap-' . date('Y-m-d-H-i-s') . '.xlsx';
+            
+            return Excel::download(new TrainingReportExport(
+                $trainings,
+                $statistics,
+                $complianceDistribution,
+                $departmentReports,
+                $user
+            ), $fileName);
+
+        } catch (\Exception $e) {
+            Log::error('Download Reports Excel Error: ' . $e->getMessage());
+            return back()->with('error', 'Error downloading reports: ' . $e->getMessage());
+        }
+    }
+
     public function getUserManagement()
     {
         $users = User::where('role', 'user')
@@ -483,6 +441,65 @@ class AdminDashboardController extends Controller
             'trainings' => $trainings,
             'auth' => [
                 'user' => Auth::user(),
+            ],
+        ]);
+    }
+
+    /**
+     * Recent Activity page - send same data as dashboard for consistency
+     */
+    public function recentActivity()
+    {
+        $user = Auth::user();
+        if ($user->role !== 'admin') {
+            abort(403, 'Unauthorized');
+        }
+
+        try {
+            // Get data from DashboardMetricsController for consistency
+            $metricsController = new \App\Http\Controllers\Admin\DashboardMetricsController();
+            
+            $recentEnrollments = $metricsController->getRecentEnrollments();
+            $recentCompletions = $metricsController->getRecentCompletions();
+            $recentActivityLogs = $metricsController->getRecentActivityLogs();
+
+            return Inertia::render('Admin/RecentActivity', [
+                'auth' => [
+                    'user' => [
+                        'id' => $user->id,
+                        'name' => $user->name,
+                        'email' => $user->email,
+                        'role' => $user->role,
+                    ],
+                ],
+                'recent_enrollments' => $recentEnrollments,
+                'recent_completions' => $recentCompletions,
+                'recent_activity_logs' => $recentActivityLogs,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Recent Activity Error: ' . $e->getMessage());
+            abort(500, 'Error loading recent activity: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Display leaderboard page
+     */
+    public function leaderboard()
+    {
+        $user = Auth::user();
+        if ($user->role !== 'admin') {
+            abort(403, 'Unauthorized');
+        }
+
+        return Inertia::render('Admin/Leaderboard', [
+            'auth' => [
+                'user' => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'role' => $user->role,
+                ],
             ],
         ]);
     }

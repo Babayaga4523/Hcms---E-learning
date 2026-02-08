@@ -47,6 +47,12 @@ class LearnerPerformanceController extends Controller
         // Get scores trend data
         $scoresTrend = $this->getScoresTrendData($userId);
 
+        // Get skill radar data (competency distribution)
+        $skillRadar = $this->getSkillRadarData($userId);
+
+        // Get learning activity data
+        $learningActivity = $this->getLearningActivityData($userId);
+
         // Get performance by program
         $performanceByProgram = $this->getPerformanceByProgram($userId);
 
@@ -73,6 +79,8 @@ class LearnerPerformanceController extends Controller
             'scoreChange' => $scoreChange,
             'completionChange' => $completionChange,
             'scoresTrend' => $scoresTrend,
+            'skillRadar' => $skillRadar,
+            'learningActivity' => $learningActivity,
             'performanceByProgram' => $performanceByProgram,
             'engagement' => $engagement,
             'recentActivities' => $recentActivities,
@@ -408,5 +416,76 @@ class LearnerPerformanceController extends Controller
         });
 
         return array_slice($activities, 0, 4);
+    }
+
+    /**
+     * Helper method: Get skill radar data (competency distribution by category)
+     */
+    private function getSkillRadarData($userId)
+    {
+        $categories = [
+            'Core Business' => 0,
+            'Technical Skills' => 0,
+            'Leadership' => 0,
+            'Compliance' => 0,
+            'Customer Service' => 0,
+        ];
+
+        // Get performance by category from completed trainings
+        $trainings = UserTraining::where('user_id', $userId)
+            ->where('status', 'completed')
+            ->with('module:id,category')
+            ->get();
+
+        foreach ($trainings as $training) {
+            if (!$training->module) continue;
+            
+            $category = $training->module->category ?? 'Core Business';
+            if (isset($categories[$category])) {
+                $categories[$category] += $training->final_score ?? 0;
+            }
+        }
+
+        // Average the scores
+        $skillData = [];
+        foreach ($categories as $skill => $score) {
+            $skillData[] = [
+                'subject' => $skill,
+                'A' => min(100, max(0, $score / max(count($trainings), 1))),
+                'fullMark' => 100,
+            ];
+        }
+
+        return $skillData;
+    }
+
+    /**
+     * Helper method: Get learning activity data for heatmap/activity chart
+     */
+    private function getLearningActivityData($userId)
+    {
+        $activities = [];
+        
+        // Get activity for last 7 days
+        for ($i = 6; $i >= 0; $i--) {
+            $date = now()->subDays($i)->format('Y-m-d');
+            $dayName = now()->subDays($i)->format('D');
+            
+            $activityCount = ModuleProgress::where('user_id', $userId)
+                ->whereDate('updated_at', $date)
+                ->count();
+            
+            // Convert to hours by multiplying by approximate study time
+            $hoursSpent = round($activityCount * 0.5, 1);
+            
+            $activities[] = [
+                'date' => $date,
+                'day' => $dayName,
+                'hours' => $hoursSpent,
+                'activities' => $activityCount,
+            ];
+        }
+
+        return $activities;
     }
 }

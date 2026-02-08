@@ -100,6 +100,80 @@ class Question extends Model
     }
 
     /**
+     * Get normalized options untuk frontend (accessor)
+     * Menangani multiple format: JSON modern, legacy option_a/b/c/d, dan various data structures
+     * Ini menghindari normalisasi logic yang panjang di dalam controller
+     */
+    public function getNormalizedOptionsAttribute(): array
+    {
+        $opts = [];
+
+        // 1. Coba parse dari column options (JSON format modern)
+        if ($this->options) {
+            $opts = is_string($this->options) ? json_decode($this->options, true) : $this->options;
+            if ($opts instanceof \Illuminate\Support\Collection) {
+                $opts = $opts->toArray();
+            }
+        }
+
+        // 2. Normalisasi berbagai format opsi ke standard format
+        if (is_array($opts) && count($opts) > 0) {
+            $normalized = [];
+            $isAssoc = array_keys($opts) !== range(0, count($opts) - 1);
+
+            if ($isAssoc) {
+                // Format associatif seperti ['a' => 'text', 'b' => 'text2', ...]
+                foreach ($opts as $k => $v) {
+                    if (is_string($v)) {
+                        $normalized[] = ['label' => $k, 'text' => $v];
+                    } elseif (is_array($v) && isset($v['text'])) {
+                        $normalized[] = ['label' => ($v['label'] ?? $k), 'text' => $v['text']];
+                    }
+                }
+            } else {
+                // Format sequential dengan objects atau strings
+                $labels = ['a', 'b', 'c', 'd', 'e', 'f'];
+                foreach ($opts as $i => $v) {
+                    if (is_string($v)) {
+                        $normalized[] = ['label' => ($labels[$i] ?? (string)$i), 'text' => $v];
+                    } elseif (is_array($v)) {
+                        if (isset($v['text'])) {
+                            $normalized[] = ['label' => ($v['label'] ?? ($labels[$i] ?? (string)$i)), 'text' => $v['text']];
+                        } elseif (isset($v[0])) {
+                            $normalized[] = ['label' => ($v['label'] ?? ($labels[$i] ?? (string)$i)), 'text' => $v[0]];
+                        }
+                    }
+                }
+            }
+
+            $opts = $normalized;
+        }
+
+        // 3. Jika masih kosong, coba legacy format option_a, option_b, dst
+        if (!$opts || !is_array($opts) || count($opts) === 0) {
+            $opts = [];
+            foreach (['a', 'b', 'c', 'd'] as $label) {
+                $field = 'option_' . $label;
+                if (isset($this->$field) && $this->$field !== null && $this->$field !== '') {
+                    $opts[] = ['label' => $label, 'text' => $this->$field];
+                }
+            }
+        }
+
+        // 4. Bersihkan dan normalize output
+        $opts = array_values(array_map(function ($o) {
+            if (!is_array($o)) return null;
+            $label = isset($o['label']) ? (string)$o['label'] : null;
+            $text = isset($o['text']) ? trim((string)$o['text']) : (isset($o[0]) ? trim((string)$o[0]) : null);
+            if (!$text) return null;
+            return ['label' => $label ?? '', 'text' => $text];
+        }, $opts));
+
+        // Remove any nulls (invalid options)
+        return array_values(array_filter($opts));
+    }
+
+    /**
      * Check if answer is correct
      */
     public function isAnswerCorrect($answer): bool

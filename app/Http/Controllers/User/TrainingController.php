@@ -603,4 +603,222 @@ class TrainingController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Get training schedules for the authenticated user
+     * PERFECT LOGIC: Combines Personal (enrolled) + Global (program_id=null) events
+     */
+    public function getSchedules(Request $request)
+    {
+        try {
+            $user = Auth::user();
+
+            // Admin users should see all schedules; learners see global + their program events
+            if ($user && $user->role === 'admin') {
+                $schedules = \App\Models\TrainingSchedule::query()
+                    ->with('program:id,title,category')
+                    ->where('status', '!=', 'cancelled')
+                    ->when($request->input('from_date'), fn($q, $date) =>
+                        $q->where('date', '>=', $date)
+                    )
+                    ->when($request->input('to_date'), fn($q, $date) =>
+                        $q->where('date', '<=', $date)
+                    )
+                    ->orderBy('date', 'asc')
+                    ->orderBy('start_time', 'asc')
+                    ->get();
+            } else {
+                // Matches both Global events AND Personal events user is enrolled in
+                $schedules = \App\Models\TrainingSchedule::query()
+                    ->with('program:id,title,category')
+                    ->where(function($query) use ($user) {
+                        // Global Events (no program_id = for all users)
+                        $query->whereNull('program_id');
+                        
+                        // OR: Personal Events (user must be actively enrolled in program)
+                        if ($user) {
+                            $query->orWhereHas('program.userTrainings', function($q) use ($user) {
+                                $q->where('user_id', $user->id)
+                                  ->whereIn('status', ['enrolled', 'in_progress', 'completed']);
+                            });
+                        }
+                    })
+                    ->where('status', '!=', 'cancelled')
+                    ->when($request->input('from_date'), fn($q, $date) =>
+                        $q->where('date', '>=', $date)
+                    )
+                    ->when($request->input('to_date'), fn($q, $date) =>
+                        $q->where('date', '<=', $date)
+                    )
+                    ->orderBy('date', 'asc')
+                    ->orderBy('start_time', 'asc')
+                    ->get();
+            }
+
+            // FORMAT DATA for Frontend Calendar
+            $formattedEvents = $schedules->map(function($event) {
+                // Combine program title + event title if personal, else just title for global
+                $title = $event->program 
+                    ? "{$event->program->title} - {$event->title}"
+                    : $event->title;
+                
+                // Build datetime strings - ensure always Carbon instance
+                $startDateTime = $event->date instanceof \DateTime 
+                    ? \Carbon\Carbon::instance($event->date) 
+                    : \Carbon\Carbon::parse($event->date);
+                
+                if ($event->start_time) {
+                    $startDateTime = $startDateTime->copy()->setTimeFromTimeString($event->start_time);
+                }
+                
+                $endDateTime = $startDateTime->copy();
+                if ($event->end_time) {
+                    $endDateTime = $event->date instanceof \DateTime 
+                        ? \Carbon\Carbon::instance($event->date) 
+                        : \Carbon\Carbon::parse($event->date);
+                    $endDateTime = $endDateTime->setTimeFromTimeString($event->end_time);
+                }
+                
+                return [
+                    'id' => $event->id,
+                    'title' => $title,
+                    'start' => $startDateTime->toIso8601String(),
+                    'end' => $endDateTime->toIso8601String(),
+                    'type' => $event->type, // webinar, offline, exam, holiday, training, deadline, reminder, event
+                    'location' => $event->location,
+                    'description' => $event->description,
+                    'program' => $event->program ? [
+                        'id' => $event->program->id,
+                        'title' => $event->program->title,
+                        'category' => $event->program->category,
+                    ] : null,
+                    'is_global' => is_null($event->program_id), // Flag untuk frontend (styling berbeda)
+                    'capacity' => $event->capacity,
+                    'enrolled_count' => $event->enrolled,
+                    'status' => $event->status,
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $formattedEvents,
+                'total' => $formattedEvents->count(),
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('Failed to fetch user training schedules: ' . $e->getMessage(), [
+                'exception' => $e,
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal memuat jadwal pelatihan',
+                'data' => [],
+                'total' => 0,
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get training recommendations for the user
+     * Returns modules with status: assigned, not_started, enrolled (trainings to do)
+     */
+    public function getRecommendations(Request $request)
+    {
+        try {
+            if (!Auth::check()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthenticated'
+                ], 401);
+            }
+
+            $user = Auth::user();
+            
+            // Get modules where user is enrolled with assigned/not_started/enrolled status
+            $recommendations = Module::query()
+                ->with('instructor')
+                ->join('user_trainings', 'modules.id', '=', 'user_trainings.module_id')
+                ->where('user_trainings.user_id', $user->id)
+                ->whereIn('user_trainings.status', ['assigned', 'not_started', 'enrolled'])
+                ->select('modules.*', 'user_trainings.status as enrollment_status', 'user_trainings.enrolled_at')
+                ->orderBy('user_trainings.enrolled_at', 'desc')
+                ->get();
+            
+            // Transform data to match frontend format
+            $recommendations = $recommendations->map(function($module) use ($user) {
+                // Get enrollment count
+                $enrolledCount = UserTraining::where('module_id', $module->id)->count();
+                
+                // Calculate duration in hours
+                $durationHours = $module->duration_minutes 
+                    ? round($module->duration_minutes / 60, 1)
+                    : ($module->duration ?? 2);
+                
+                // Get instructor name
+                $instructorName = $module->instructor 
+                    ? $module->instructor->name 
+                    : 'BNI Learning Team';
+                
+                // Get module progress
+                $moduleProgress = ModuleProgress::where('user_id', $user->id)
+                    ->where('module_id', $module->id)
+                    ->first();
+                
+                $progress = $moduleProgress ? (int)$moduleProgress->progress_percentage : 0;
+                
+                return [
+                    'id' => $module->id,
+                    'title' => $module->title,
+                    'description' => $module->description,
+                    'category' => $module->category ?? 'technical',
+                    'difficulty' => $module->difficulty ?? 'intermediate',
+                    'duration' => $durationHours,
+                    'duration_hours' => $durationHours,
+                    'enrolled_count' => $enrolledCount,
+                    'rating' => $module->rating ?? 4.5,
+                    'instructor' => $instructorName,
+                    'thumbnail' => $module->cover_image,
+                    'status' => $module->enrollment_status,
+                    'is_mandatory' => $module->is_mandatory ?? false,
+                    'progress' => $progress,
+                ];
+            });
+            
+            return response()->json([
+                'success' => true,
+                'data' => $recommendations,
+                'total' => $recommendations->count(),
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('Failed to fetch training recommendations: ' . $e->getMessage(), [
+                'exception' => $e,
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal memuat rekomendasi pelatihan',
+                'data' => [],
+                'total' => 0,
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Show training calendar page
+     */
+    public function calendar()
+    {
+        try {
+            return Inertia::render('User/Training/TrainingCalendar');
+        } catch (\Exception $e) {
+            Log::error('Failed to render calendar page: ' . $e->getMessage());
+            abort(500);
+        }
+    }
 }

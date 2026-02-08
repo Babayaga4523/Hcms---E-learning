@@ -3,7 +3,7 @@ import { Link, router, usePage } from '@inertiajs/react';
 import { 
     LayoutDashboard, BookOpen, Users, FileText, LogOut, 
     HelpCircle, Calendar, CheckSquare, 
-    Settings, Bell, Megaphone, BarChart, X, Menu
+    Settings, Bell, Megaphone, BarChart, X, Menu, TrendingUp, Shield
 } from 'lucide-react';
 
 // Komponen Item Menu - Menggunakan anchor tag biasa untuk routing sempurna
@@ -60,15 +60,15 @@ export default function AdminSidebar({ user }) {
             title: "Pengguna & Kepatuhan",
             items: [
                 { label: 'Manajemen Pengguna', icon: <Users size={20} />, href: '/admin/users', id: 'users' },
-                { label: 'Laporan', icon: <FileText size={20} />, href: '/admin/reports', id: 'reports' },
+                { label: 'Laporan Terpadu', icon: <TrendingUp size={20} />, href: '/admin/reports/unified', id: 'reports-unified' },
+                { label: 'Laporan Lama', icon: <FileText size={20} />, href: '/admin/reports', id: 'reports' },
                 { label: 'Kepatuhan', icon: <CheckSquare size={20} />, href: '/admin/compliance', id: 'compliance' },
             ]
         },
         {
             title: "Sistem",
             items: [
-                { label: 'Pengumuman', icon: <Megaphone size={20} />, href: '/admin/announcements', id: 'announcements' },
-                { label: 'Notifikasi', icon: <Bell size={20} />, href: '/admin/notifications', id: 'notifications' },
+                { label: 'Communications', icon: <Megaphone size={20} />, href: '/admin/communications', id: 'communications' },
                 { label: 'Pengaturan', icon: <Settings size={20} />, href: '/admin/system-settings', id: 'settings' },
             ]
         }
@@ -99,7 +99,7 @@ export default function AdminSidebar({ user }) {
 
     // Sidebar Desktop
     const SidebarDesktop = () => (
-        <aside className="hidden md:flex md:fixed md:left-0 md:top-0 md:w-[280px] md:h-screen md:flex-col md:bg-gradient-to-b md:from-slate-900 md:via-slate-950 md:to-slate-950 md:border-r md:border-slate-700/50 md:shadow-xl md:z-40">
+        <aside className="hidden md:flex md:fixed md:left-0 md:top-0 md:w-[280px] md:h-screen md:flex-col md:bg-gradient-to-b md:from-slate-900 md:via-slate-950 md:to-slate-950 md:border-r md:border-slate-700/50 md:shadow-xl md:z-40 md:overflow-hidden">
             <SidebarContent />
         </aside>
     );
@@ -139,7 +139,7 @@ export default function AdminSidebar({ user }) {
     const SidebarContent = ({ onClose }) => (
         <>
             {/* Logo */}
-            <div className="h-20 flex items-center px-6 border-b border-slate-700/50 bg-gradient-to-b from-slate-900 to-slate-950">
+            <div className="h-20 flex items-center px-6 border-b border-slate-700/50 bg-gradient-to-b from-slate-900 to-slate-950 flex-shrink-0">
                 <div className="flex items-center gap-3 w-full">
                     <img 
                         src="/bni-finance.png" 
@@ -154,7 +154,7 @@ export default function AdminSidebar({ user }) {
             </div>
 
             {/* Menu */}
-            <nav className="flex-1 overflow-y-auto py-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900">
+            <nav className="flex-1 overflow-y-auto overflow-x-hidden py-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900 scroll-smooth">
                 {menuGroups.map((group, idx) => (
                     <MenuSection key={idx} title={group.title}>
                         {group.items.map((item) => (
@@ -170,7 +170,7 @@ export default function AdminSidebar({ user }) {
             </nav>
 
             {/* User Profile Card */}
-            <div className="p-4 border-t border-slate-700/50 bg-slate-950">
+            <div className="p-4 border-t border-slate-700/50 bg-slate-950 flex-shrink-0">
                 <div className="p-3 bg-slate-800/40 border border-slate-700/50 rounded-lg flex items-center gap-3 backdrop-blur-sm">
                     <div className="w-10 h-10 rounded-full bg-gradient-to-br from-lime-400 to-teal-400 flex items-center justify-center flex-shrink-0 font-bold text-slate-900 text-sm">
                         {user?.name?.charAt(0).toUpperCase() || 'A'}

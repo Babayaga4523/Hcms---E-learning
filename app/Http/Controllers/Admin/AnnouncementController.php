@@ -29,7 +29,7 @@ class AnnouncementController extends Controller
     }
 
     /**
-     * Create announcement
+     * Create announcement - DENGAN LOGIC SEMPURNA
      */
     public function store(Request $request)
     {
@@ -44,6 +44,14 @@ class AnnouncementController extends Controller
                 'is_featured' => 'boolean',
                 'display_type' => 'required|in:banner,modal,notification',
             ]);
+
+            // Validate scheduled date jika status scheduled
+            if ($request->input('status') === 'scheduled' && !$request->input('start_date')) {
+                return response()->json([
+                    'message' => 'start_date harus diisi untuk announcement scheduled',
+                    'error' => 'start_date_required'
+                ], 422);
+            }
 
             $id = DB::table('announcements')->insertGetId([
                 'title' => $request->input('title'),
@@ -60,18 +68,30 @@ class AnnouncementController extends Controller
 
             $announcement = DB::table('announcements')->where('id', $id)->first();
 
-            // Send notification to all users if status is active
+            // Send notification to all users HANYA jika status adalah active
+            // Jangan kirim notif jika scheduled - kirim sesuai cron schedule saja
             if ($request->input('status') === 'active') {
-                $this->sendAnnouncementNotification($announcement);
+                try {
+                    $this->sendAnnouncementNotification($announcement);
+                } catch (\Exception $notificationError) {
+                    Log::error('Failed to send announcement notification: ' . $notificationError->getMessage());
+                    // Jangan gagal announcement creation karena notification error
+                }
             }
 
             return response()->json([
-                'message' => 'Announcement created successfully',
+                'message' => 'Announcement berhasil dibuat',
                 'data' => $announcement
             ], 201);
-        } catch (\Exception $e) {
+        } catch (\Illuminate\Validation\ValidationException $ve) {
             return response()->json([
-                'message' => 'Failed to create announcement',
+                'message' => 'Validasi gagal',
+                'errors' => $ve->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Create announcement error: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Gagal membuat announcement',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -99,7 +119,7 @@ class AnnouncementController extends Controller
     }
 
     /**
-     * Update announcement
+     * Update announcement - DENGAN LOGIC SEMPURNA
      */
     public function update(Request $request, $id)
     {
@@ -115,6 +135,20 @@ class AnnouncementController extends Controller
                 'display_type' => 'required|in:banner,modal,notification',
             ]);
 
+            // Check if announcement exists
+            $existing = DB::table('announcements')->where('id', $id)->first();
+            if (!$existing) {
+                return response()->json(['message' => 'Announcement tidak ditemukan'], 404);
+            }
+
+            // Validate scheduled date jika status scheduled
+            if ($request->input('status') === 'scheduled' && !$request->input('start_date')) {
+                return response()->json([
+                    'message' => 'start_date harus diisi untuk announcement scheduled',
+                    'error' => 'start_date_required'
+                ], 422);
+            }
+
             DB::table('announcements')->where('id', $id)->update([
                 'title' => $request->input('title'),
                 'content' => $request->input('content'),
@@ -129,13 +163,29 @@ class AnnouncementController extends Controller
 
             $announcement = DB::table('announcements')->where('id', $id)->first();
 
+            // Jika status berubah dari inactive menjadi active, send notification
+            if ($existing->status !== 'active' && $request->input('status') === 'active') {
+                try {
+                    $this->sendAnnouncementNotification($announcement);
+                } catch (\Exception $notificationError) {
+                    Log::error('Failed to send updated announcement notification: ' . $notificationError->getMessage());
+                    // Don't fail update karena notification error
+                }
+            }
+
             return response()->json([
-                'message' => 'Announcement updated successfully',
+                'message' => 'Announcement berhasil diupdate',
                 'data' => $announcement
             ]);
-        } catch (\Exception $e) {
+        } catch (\Illuminate\Validation\ValidationException $ve) {
             return response()->json([
-                'message' => 'Failed to update announcement',
+                'message' => 'Validasi gagal',
+                'errors' => $ve->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Update announcement error: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Gagal mengupdate announcement',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -161,7 +211,7 @@ class AnnouncementController extends Controller
     }
 
     /**
-     * Toggle announcement status
+     * Toggle announcement status dengan logic proper
      */
     public function toggleStatus(Request $request, $id)
     {
@@ -170,6 +220,15 @@ class AnnouncementController extends Controller
                 'status' => 'required|in:active,inactive,scheduled'
             ]);
 
+            $existing = DB::table('announcements')->where('id', $id)->first();
+            if (!$existing) {
+                return response()->json(['message' => 'Announcement tidak ditemukan'], 404);
+            }
+
+            // Jika status akan berubah ke active dan sebelumnya inactive, kirim notification
+            $statusChanged = $existing->status !== $request->input('status');
+            $becomingActive = $request->input('status') === 'active' && $existing->status !== 'active';
+
             DB::table('announcements')->where('id', $id)->update([
                 'status' => $request->input('status'),
                 'updated_at' => now(),
@@ -177,13 +236,28 @@ class AnnouncementController extends Controller
 
             $announcement = DB::table('announcements')->where('id', $id)->first();
 
+            // Send notification HANYA jika becoming active
+            if ($becomingActive) {
+                try {
+                    $this->sendAnnouncementNotification($announcement);
+                } catch (\Exception $notificationError) {
+                    Log::error('Failed to send status change notification: ' . $notificationError->getMessage());
+                }
+            }
+
             return response()->json([
                 'message' => 'Status updated successfully',
                 'data' => $announcement
             ]);
-        } catch (\Exception $e) {
+        } catch (\Illuminate\Validation\ValidationException $ve) {
             return response()->json([
-                'message' => 'Failed to toggle status',
+                'message' => 'Validasi gagal',
+                'errors' => $ve->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Toggle announcement status error: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Gagal mengupdate status',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -221,7 +295,8 @@ class AnnouncementController extends Controller
     }
 
     /**
-     * Send announcement notification to all users
+     * Send announcement notification to all users - DENGAN LOGIC SEMPURNA
+     * PREVENT DUPLICATE: Check jika sudah ada notification untuk announcement ini
      */
     private function sendAnnouncementNotification($announcement)
     {
@@ -229,39 +304,71 @@ class AnnouncementController extends Controller
             // Get all non-admin users
             $users = \App\Models\User::where('role', '!=', 'admin')->get();
 
-            // Determine notification type based on announcement type
-            $notificationType = match($announcement->type) {
+            if ($users->isEmpty()) {
+                Log::warning('No users found to send announcement notification');
+                return true;
+            }
+
+            // Determine notification type based on announcement type dengan mapping yang jelas
+            $typeMapping = [
                 'urgent' => 'warning',
                 'maintenance' => 'info',
                 'event' => 'success',
-                default => 'info',
-            };
+                'general' => 'info',
+            ];
+            
+            $notificationType = $typeMapping[$announcement->type] ?? 'info';
+            
+            // Prepare announcement title dengan emoji
+            $emojiMap = [
+                'urgent' => '🚨',
+                'maintenance' => '🔧',
+                'event' => '📅',
+                'general' => '📢',
+            ];
+            $emoji = $emojiMap[$announcement->type] ?? '📢';
+            
+            $notificationTitle = $emoji . ' ' . $announcement->title;
+            $notificationMessage = strip_tags(substr($announcement->content, 0, 200)) . (strlen($announcement->content) > 200 ? '...' : '');
 
-            // Create notification for each user (only if not already sent)
+            $successCount = 0;
+            $failureCount = 0;
+
             foreach ($users as $user) {
-                // Check if notification already exists for this announcement and user
-                $exists = \App\Models\Notification::where('user_id', $user->id)
-                    ->whereRaw("JSON_EXTRACT(data, '$.announcement_id') = ?", [$announcement->id])
-                    ->exists();
+                try {
+                    // Check jika notification sudah pernah dikirim untuk announcement ini ke user ini
+                    // Ini PREVENT DUPLICATE jika announcement diupdate berkali-kali
+                    $exists = \App\Models\Notification::where('user_id', $user->id)
+                        ->whereRaw("JSON_EXTRACT(data, '$.announcement_id') = ?", [$announcement->id])
+                        ->exists();
 
-                if (!$exists) {
-                    \App\Models\Notification::create([
-                        'user_id' => $user->id,
-                        'type' => $notificationType,
-                        'title' => '📢 ' . $announcement->title,
-                        'message' => strip_tags(substr($announcement->content, 0, 200)) . (strlen($announcement->content) > 200 ? '...' : ''),
-                        'data' => json_encode([
-                            'announcement_id' => $announcement->id,
-                            'type' => 'announcement',
-                        ]),
-                        'is_read' => false,
-                    ]);
+                    if (!$exists) {
+                        \App\Models\Notification::create([
+                            'user_id' => $user->id,
+                            'type' => $notificationType,
+                            'title' => $notificationTitle,
+                            'message' => $notificationMessage,
+                            'data' => json_encode([
+                                'announcement_id' => $announcement->id,
+                                'announcement_type' => $announcement->type,
+                                'type' => 'announcement',
+                                'display_type' => $announcement->display_type,
+                                'source' => 'announcement_system',
+                            ]),
+                            'is_read' => false,
+                        ]);
+                        $successCount++;
+                    }
+                } catch (\Exception $userError) {
+                    Log::error("Failed to create notification for user {$user->id}: " . $userError->getMessage());
+                    $failureCount++;
                 }
             }
 
+            Log::info("Announcement notification sent: success={$successCount}, failure={$failureCount}");
             return true;
         } catch (\Exception $e) {
-            // Log error but don't fail the announcement creation
+            // Log error tapi jangan fail announcement creation
             Log::error('Failed to send announcement notifications: ' . $e->getMessage());
             return false;
         }

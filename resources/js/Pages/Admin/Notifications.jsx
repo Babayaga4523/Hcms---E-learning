@@ -144,13 +144,7 @@ export default function Notifications() {
         }
     };
 
-    const handleAIGenerate = () => {
-        setFormData({
-            ...formData,
-            title: "Penting: Update Kebijakan Keamanan",
-            message: "Halo Tim! Kami telah memperbarui kebijakan keamanan data. Mohon luangkan waktu 5 menit untuk membacanya di menu Dokumen. Terima kasih atas kerjasama Anda menjaga keamanan data perusahaan. 🔒"
-        });
-    };
+    
 
     const filteredNotifications = notifications.filter(notif => {
         const matchesSearch = notif.title.toLowerCase().includes(searchTerm.toLowerCase()) ||

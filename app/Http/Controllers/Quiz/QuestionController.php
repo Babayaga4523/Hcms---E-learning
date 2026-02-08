@@ -7,6 +7,7 @@ use App\Http\Requests\StoreQuestionRequest;
 use App\Http\Requests\UpdateQuestionRequest;
 use App\Models\Question;
 use App\Models\Quiz;
+use App\Services\ImageUploadHandler;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -56,11 +57,35 @@ class QuestionController extends Controller
         try {
             $validated = $request->validated();
 
-            // Handle image upload
+            // Handle image upload using centralized ImageUploadHandler service
             if ($request->hasFile('image_url')) {
-                $image = $request->file('image_url');
-                $path = $image->store('questions', 'public');
-                $validated['image_url'] = '/storage/' . $path;
+                $handler = new ImageUploadHandler();
+                $imageUrl = $handler->handle($request->file('image_url'), [
+                    'module_id' => $validated['module_id'] ?? null,
+                ]);
+                
+                if ($imageUrl) {
+                    $validated['image_url'] = $imageUrl;
+                } else {
+                    return response()->json(['error' => 'Image upload failed'], 422);
+                }
+            } else if (isset($validated['image_url']) && !empty($validated['image_url'])) {
+                // If image_url is provided but not as a file (e.g., string URL),
+                // validate it using the handler
+                $handler = new ImageUploadHandler();
+                $imageUrl = $handler->handle($validated['image_url'], [
+                    'module_id' => $validated['module_id'] ?? null,
+                ]);
+                
+                if ($imageUrl) {
+                    $validated['image_url'] = $imageUrl;
+                } else {
+                    // Handler couldn't process it - clear the reference to prevent 404
+                    $validated['image_url'] = null;
+                    \Log::warning('ImageUploadHandler rejected image_url', [
+                        'provided_url' => $validated['image_url']
+                    ]);
+                }
             }
 
             // Auto-assign points based on difficulty if not provided
@@ -168,17 +193,47 @@ class QuestionController extends Controller
         try {
             $validated = $request->validated();
 
-            // Handle image upload
+            // Handle image upload using centralized ImageUploadHandler service
             if ($request->hasFile('image_url')) {
                 // Delete old image if exists
                 if ($question->image_url) {
-                    $oldPath = str_replace('/storage/', '', $question->image_url);
-                    Storage::disk('public')->delete($oldPath);
+                    $handler = new ImageUploadHandler();
+                    $handler->delete($question->image_url);
                 }
                 
-                $image = $request->file('image_url');
-                $path = $image->store('questions', 'public');
-                $validated['image_url'] = '/storage/' . $path;
+                $handler = new ImageUploadHandler();
+                $imageUrl = $handler->handle($request->file('image_url'), [
+                    'module_id' => $question->module_id,
+                    'question_id' => $question->id
+                ]);
+                
+                if ($imageUrl) {
+                    $validated['image_url'] = $imageUrl;
+                } else {
+                    return response()->json(['error' => 'Image upload failed'], 422);
+                }
+            } else if (isset($validated['image_url'])) {
+                // If image_url is provided but not as a file, validate it using handler
+                if (!empty($validated['image_url'])) {
+                    $handler = new ImageUploadHandler();
+                    $imageUrl = $handler->handle($validated['image_url'], [
+                        'module_id' => $question->module_id,
+                        'question_id' => $question->id
+                    ]);
+                    
+                    if ($imageUrl) {
+                        $validated['image_url'] = $imageUrl;
+                    } else {
+                        // Handler couldn't process it - clear to prevent 404
+                        $validated['image_url'] = null;
+                        \Log::warning('ImageUploadHandler rejected image_url in update', [
+                            'provided_url' => $validated['image_url'],
+                            'question_id' => $question->id
+                        ]);
+                    }
+                } else {
+                    $validated['image_url'] = null;
+                }
             }
 
             // Auto-assign points based on difficulty if not provided

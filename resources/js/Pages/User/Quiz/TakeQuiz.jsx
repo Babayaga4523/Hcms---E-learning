@@ -179,11 +179,51 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
     const [isSidebarOpen, setSidebarOpen] = useState(false);
     const [loading, setLoading] = useState(false);
     const [zoomedImage, setZoomedImage] = useState(null);
+    const [failedImages, setFailedImages] = useState(new Set()); // Track images that failed to load
     
     const totalQuestions = questions.length;
     const currentQuestion = questions[currentIndex];
     const answeredCount = Object.keys(answers).length;
     const progress = Math.round((answeredCount / totalQuestions) * 100);
+
+    // Storage key for persisting answers
+    const storageKey = `quiz_answers_${examAttempt.id}`;
+    const flaggedStorageKey = `quiz_flagged_${examAttempt.id}`;
+
+    // Load answers from localStorage on mount
+    useEffect(() => {
+        try {
+            const savedAnswers = localStorage.getItem(storageKey);
+            const savedFlagged = localStorage.getItem(flaggedStorageKey);
+            
+            if (savedAnswers) {
+                setAnswers(JSON.parse(savedAnswers));
+            }
+            if (savedFlagged) {
+                setFlagged(JSON.parse(savedFlagged));
+            }
+        } catch (error) {
+            console.error('Error loading saved answers:', error);
+        }
+    }, [storageKey, flaggedStorageKey]);
+
+    // Auto-save answers to localStorage whenever they change
+    useEffect(() => {
+        try {
+            localStorage.setItem(storageKey, JSON.stringify(answers));
+        } catch (error) {
+            console.error('Error saving answers:', error);
+        }
+    }, [answers, storageKey]);
+
+    // Auto-save flagged questions to localStorage
+    useEffect(() => {
+        try {
+            localStorage.setItem(flaggedStorageKey, JSON.stringify(flagged));
+        } catch (error) {
+            console.error('Error saving flagged questions:', error);
+        }
+    }, [flagged, flaggedStorageKey]);
 
     // Keyboard Shortcuts
     useEffect(() => {
@@ -321,6 +361,14 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
                     answers: formattedAnswers
                 });
 
+                // Clear saved answers from localStorage after successful submit
+                try {
+                    localStorage.removeItem(storageKey);
+                    localStorage.removeItem(flaggedStorageKey);
+                } catch (error) {
+                    console.error('Error clearing saved answers:', error);
+                }
+
                 // Redirect to result page
                 router.visit(`/training/${training.id}/quiz/${quiz.type}/result/${response.data.attempt_id || examAttempt.id}`);
                 return true;
@@ -379,6 +427,14 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
         <div className="min-h-screen bg-[#F8F9FA] font-sans flex flex-col">
             <WondrStyles />
             <Head title={`${quiz.type === 'pretest' ? 'Pre-Test' : 'Post-Test'} - ${training.title}`} />
+
+            {/* --- Auto-Save Notification --- */}
+            <div className="bg-green-50 border-b border-green-200 px-6 py-2">
+                <div className="max-w-[1400px] mx-auto flex items-center gap-2 text-xs text-green-700 font-medium">
+                    <CheckCircle2 size={14} />
+                    <span>Jawaban Anda disimpan otomatis 💾</span>
+                </div>
+            </div>
 
             {/* --- Top Bar (Sticky) --- */}
             <header className="glass-header sticky top-0 z-40 px-6 py-4">
@@ -477,7 +533,7 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
                                 <h2 className="text-xl md:text-2xl font-bold text-slate-900 leading-relaxed">
                                     {currentQuestion.question_text}
                                 </h2>
-                                {currentQuestion.image_url && (
+                                {currentQuestion.image_url && !failedImages.has(currentIndex) && (
                                     <div className="mt-6 group relative">
                                         <div className="absolute top-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                                             Klik untuk memperbesar
@@ -488,8 +544,11 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
                                             loading="lazy"
                                             onClick={() => setZoomedImage(currentQuestion.image_url)}
                                             onError={(e) => {
-                                                e.currentTarget.onerror = null;
-                                                e.currentTarget.src = '/images/training-placeholder.svg';
+                                                console.warn('Failed to load question image:', currentQuestion.image_url);
+                                                // Mark this image as failed
+                                                setFailedImages(prev => new Set([...prev, currentIndex]));
+                                                // Hide the image element gracefully
+                                                e.currentTarget.style.display = 'none';
                                             }}
                                             className="rounded-2xl max-h-96 w-full object-contain bg-slate-50 border border-slate-200 cursor-zoom-in hover:border-slate-300 transition-colors"
                                         />

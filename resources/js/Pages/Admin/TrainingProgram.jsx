@@ -5,7 +5,7 @@ import {
     CheckCircle, AlertCircle, Copy, Upload, Zap, Users, 
     TrendingUp, Shield, MoreHorizontal, X, Sparkles, 
     LayoutGrid, List, Filter, ChevronDown, Award, 
-    BarChart3, FileCheck, Clipboard, Brain
+    BarChart3, FileCheck, Clipboard, Brain, FileText
 } from 'lucide-react';
 import axios from 'axios';
 import AdminLayout from '@/Layouts/AdminLayout';
@@ -175,6 +175,24 @@ const ProgramCard = ({ program, onAction, isSelected, onSelect }) => {
                             <Award className="w-3.5 h-3.5 text-amber-600" /> 
                             <span>{program.passing_grade}%</span>
                         </div>
+                        {program.start_date && (
+                            <div className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 ${
+                                new Date(program.start_date) > new Date() 
+                                ? 'bg-blue-100 text-blue-700' 
+                                : 'bg-slate-100 text-slate-700'
+                            }`}>
+                                📅 Mulai: {new Date(program.start_date).toLocaleDateString('id-ID', { month: 'short', day: 'numeric' })}
+                            </div>
+                        )}
+                        {program.end_date && (
+                            <div className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 ${
+                                new Date(program.end_date) < new Date() 
+                                ? 'bg-red-100 text-red-700' 
+                                : 'bg-slate-100 text-slate-700'
+                            }`}>
+                                📅 Berakhir: {new Date(program.end_date).toLocaleDateString('id-ID', { month: 'short', day: 'numeric' })}
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -277,7 +295,9 @@ export default function TrainingProgram({ programs = [], stats = {}, categories 
         category: '', 
         is_active: true,
         allow_retake: true,
-        max_retake_attempts: 3
+        max_retake_attempts: 3,
+        start_date: '',
+        end_date: ''
     });
 
     const availableCategories = categories && categories.length > 0 ? categories : ['Core Business & Product', 'Credit & Risk Management', 'Collection & Recovery', 'Compliance & Regulatory', 'Sales & Marketing', 'Service Excellence', 'Leadership & Soft Skills', 'IT & Digital Security', 'Onboarding'];
@@ -331,6 +351,8 @@ export default function TrainingProgram({ programs = [], stats = {}, categories 
                 passing_grade: parseInt(formData.passing_grade),
                 max_retake_attempts: formData.allow_retake ? parseInt(formData.max_retake_attempts) : null,
                 category: formData.category || null,
+                start_date: formData.start_date || null,
+                end_date: formData.end_date || null,
             };
 
             const response = await axios[method](url, payload);
@@ -415,24 +437,9 @@ export default function TrainingProgram({ programs = [], stats = {}, categories 
         }
     };
 
-    const handleUploadMaterial = () => {
-        if (!selectedProgram) return;
-        window.location.href = `/admin/training-programs/${selectedProgram.id}/materials`;
-    };
-
     const handleAssignUsers = () => {
         if (!selectedProgram) return;
         window.location.href = `/admin/training-programs/${selectedProgram.id}/assign-users`;
-    };
-
-    const handleViewPretest = () => {
-        if (!selectedProgram) return;
-        window.location.href = `/admin/training-programs/${selectedProgram.id}/pretest`;
-    };
-
-    const handleViewPosttest = () => {
-        if (!selectedProgram) return;
-        window.location.href = `/admin/training-programs/${selectedProgram.id}/posttest`;
     };
 
     const handleViewExamAttempts = () => {
@@ -467,7 +474,9 @@ export default function TrainingProgram({ programs = [], stats = {}, categories 
                 category: selectedProgram.category || '',
                 is_active: selectedProgram.is_active || true,
                 allow_retake: selectedProgram.allow_retake !== undefined ? selectedProgram.allow_retake : true,
-                max_retake_attempts: selectedProgram.max_retake_attempts || 3
+                max_retake_attempts: selectedProgram.max_retake_attempts || 3,
+                start_date: selectedProgram.start_date ? selectedProgram.start_date.replace(' ', 'T') : '',
+                end_date: selectedProgram.end_date ? selectedProgram.end_date.replace(' ', 'T') : ''
             });
         } else if (activeModal === 'create') {
             // Reset form for new program
@@ -479,7 +488,9 @@ export default function TrainingProgram({ programs = [], stats = {}, categories 
                 category: '',
                 is_active: true,
                 allow_retake: true,
-                max_retake_attempts: 3
+                max_retake_attempts: 3,
+                start_date: '',
+                end_date: ''
             });
         }
     }, [activeModal, selectedProgram]);
@@ -1193,6 +1204,29 @@ export default function TrainingProgram({ programs = [], stats = {}, categories 
                             </div>
                         </div>
 
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label className="block text-sm font-extrabold text-slate-700 mb-2 ml-1">Tanggal & Waktu Mulai</label>
+                                <input 
+                                    type="datetime-local" 
+                                    className="w-full px-6 py-4 bg-slate-50 border-transparent rounded-[20px] focus:ring-2 focus:ring-[#005E54] font-bold"
+                                    value={formData.start_date}
+                                    onChange={e => setFormData({...formData, start_date: e.target.value})}
+                                />
+                                <p className="text-xs text-slate-500 mt-2">Kapan program bisa diakses peserta</p>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-extrabold text-slate-700 mb-2 ml-1">Tanggal & Waktu Berakhir</label>
+                                <input 
+                                    type="datetime-local" 
+                                    className="w-full px-6 py-4 bg-slate-50 border-transparent rounded-[20px] focus:ring-2 focus:ring-[#005E54] font-bold"
+                                    value={formData.end_date}
+                                    onChange={e => setFormData({...formData, end_date: e.target.value})}
+                                />
+                                <p className="text-xs text-slate-500 mt-2">Kapan program tidak bisa lagi diakses peserta</p>
+                            </div>
+                        </div>
+
                         <div>
                             <label className="block text-sm font-extrabold text-slate-700 mb-2 ml-1">Deskripsi & Tujuan</label>
                             <textarea 
@@ -1259,18 +1293,11 @@ export default function TrainingProgram({ programs = [], stats = {}, categories 
             <Modal isOpen={activeModal === 'menu'} onClose={() => setActiveModal(null)} title="Menu Cepat" size="lg">
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                     <button 
-                        onClick={() => window.location.href = `/admin/training-materials-manager/${selectedProgram?.id}`}
+                        onClick={() => window.location.href = `/admin/training-programs/${selectedProgram?.id}/content-manager`}
                         className="flex flex-col items-center justify-center p-6 bg-slate-50 rounded-[24px] hover:bg-slate-100 transition-colors group"
                     >
-                        <Eye className="w-8 h-8 text-violet-600 mb-3 group-hover:scale-110 transition-transform" />
-                        <span className="font-bold text-slate-700 text-sm text-center">Lihat Materi</span>
-                    </button>
-                    <button 
-                        onClick={handleUploadMaterial}
-                        className="flex flex-col items-center justify-center p-6 bg-slate-50 rounded-[24px] hover:bg-slate-100 transition-colors group"
-                    >
-                        <Upload className="w-8 h-8 text-[#005E54] mb-3 group-hover:scale-110 transition-transform" />
-                        <span className="font-bold text-slate-700 text-sm text-center">Upload Materi</span>
+                        <FileText className="w-8 h-8 text-violet-600 mb-3 group-hover:scale-110 transition-transform" />
+                        <span className="font-bold text-slate-700 text-sm text-center">Kelola Konten</span>
                     </button>
                     <button 
                         onClick={handleAssignUsers}
@@ -1280,25 +1307,11 @@ export default function TrainingProgram({ programs = [], stats = {}, categories 
                         <span className="font-bold text-slate-700 text-sm text-center">Assign Peserta</span>
                     </button>
                     <button 
-                        onClick={handleViewPretest}
-                        className="flex flex-col items-center justify-center p-6 bg-slate-50 rounded-[24px] hover:bg-slate-100 transition-colors group"
-                    >
-                        <Brain className="w-8 h-8 text-cyan-600 mb-3 group-hover:scale-110 transition-transform" />
-                        <span className="font-bold text-slate-700 text-sm text-center">Pretest</span>
-                    </button>
-                    <button 
-                        onClick={handleViewPosttest}
-                        className="flex flex-col items-center justify-center p-6 bg-slate-50 rounded-[24px] hover:bg-slate-100 transition-colors group"
-                    >
-                        <FileCheck className="w-8 h-8 text-emerald-600 mb-3 group-hover:scale-110 transition-transform" />
-                        <span className="font-bold text-slate-700 text-sm text-center">Posttest</span>
-                    </button>
-                    <button 
                         onClick={handleViewExamAttempts}
                         className="flex flex-col items-center justify-center p-6 bg-slate-50 rounded-[24px] hover:bg-slate-100 transition-colors group"
                     >
                         <Clipboard className="w-8 h-8 text-orange-600 mb-3 group-hover:scale-110 transition-transform" />
-                        <span className="font-bold text-slate-700 text-sm text-center">Attempts</span>
+                        <span className="font-bold text-slate-700 text-sm text-center">Exam Attempts</span>
                     </button>
                     <button 
                         onClick={handleViewAnalytics}

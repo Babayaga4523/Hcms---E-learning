@@ -82,8 +82,10 @@ export default function TrainingCalendar() {
             const res = await fetch('/api/admin/training-schedules', { headers: { 'Accept': 'application/json' } });
             if (res.ok) {
                 const data = await res.json();
+                console.log('Admin schedules data:', data);
                 setTrainings(data.data || data || []);
             } else {
+                console.error('API Response Error:', res.status, res.statusText);
                 setTrainings([]);
             }
         } catch (err) {

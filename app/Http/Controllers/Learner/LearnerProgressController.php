@@ -49,8 +49,17 @@ class LearnerProgressController extends Controller
             })
             ->values();
 
+        // Flatten modules from all programs for top-level access
+        $allModules = [];
+        foreach ($programs as $program) {
+            if (isset($program['modules']) && is_array($program['modules'])) {
+                $allModules = array_merge($allModules, $program['modules']);
+            }
+        }
+
         return response()->json([
             'programs' => $programs,
+            'modules' => $allModules,
         ]);
     }
 

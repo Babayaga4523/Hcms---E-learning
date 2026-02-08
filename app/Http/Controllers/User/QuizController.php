@@ -3,11 +3,13 @@
 namespace App\Http\Controllers\User;
 
 use App\Http\Controllers\Controller;
-use App\Models\Quiz;
-use App\Models\Question;
+use App\Http\Controllers\User\Traits\ValidatesQuizAccess;
 use App\Models\ExamAttempt;
-use App\Models\UserExamAnswer;
 use App\Models\Module;
+use App\Models\Question;
+use App\Models\Quiz;
+use App\Models\UserExamAnswer;
+use App\Services\QuizService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
@@ -18,6 +20,14 @@ use Inertia\Inertia;
 
 class QuizController extends Controller
 {
+    use ValidatesQuizAccess;
+
+    protected $quizService;
+
+    public function __construct(QuizService $quizService)
+    {
+        $this->quizService = $quizService;
+    }
     /**
      * Render quiz page with questions
      */
@@ -25,147 +35,41 @@ class QuizController extends Controller
     {
         try {
             $user = Auth::user();
+            $examType = $type === 'pretest' ? 'pre_test' : 'post_test';
 
-            $module = Module::findOrFail($trainingId);
-
-            // Check if user is assigned to this training
-            $userTraining = \App\Models\UserTraining::where('user_id', $user->id)
-                ->where('module_id', $trainingId)
-                ->first();
-
-            if (!$userTraining) {
-                return Inertia::render('User/Quiz/TakeQuiz', [
-                    'training' => [
-                        'id' => $module->id,
-                        'title' => $module->title,
-                    ],
-                    'quiz' => [
-                        'type' => $type,
-                    ],
+            // Validasi full access menggunakan trait
+            $validation = $this->validateFullQuizAccess($trainingId, $type, $user->id);
+            if (isset($validation['success']) && !$validation['success']) {
+                return Inertia::render('User/Quiz/TakeQuiz', array_merge($validation, [
+                    'training' => ['id' => $trainingId],
+                    'quiz' => ['type' => $type],
                     'questions' => [],
-                    'error' => 'You are not assigned to this training'
-                ]);
+                ]));
             }
 
-            // Find quiz
-            $quiz = Quiz::where(function($query) use ($trainingId) {
-                $query->where('module_id', $trainingId)
-                      ->orWhere('training_program_id', $trainingId);
-            })
-                ->where('type', $type)
-                ->where('is_active', true)
-                ->first();
-            
-            if (!$quiz) {
-                return Inertia::render('User/Quiz/TakeQuiz', [
-                    'training' => [
-                        'id' => $module->id,
-                        'title' => $module->title,
-                    ],
-                    'quiz' => [
-                        'type' => $type,
-                    ],
-                    'questions' => [],
-                    'error' => 'Quiz tidak tersedia'
-                ]);
-            }
-            
-            // Get questions from module
-            // Build select dynamically: only include legacy option_* if the column exists in this DB
-            $select = ['id', 'question_text', 'options', 'difficulty', 'points', 'image_url'];
-            if (\Illuminate\Support\Facades\Schema::hasColumn('questions', 'option_a')) {
-                $select = array_merge($select, ['option_a', 'option_b', 'option_c', 'option_d']);
-            }
+            $module = $validation['module'];
+            $quiz = $validation['quiz'];
 
+            // Get questions dengan normalized options dari model accessor
             $questions = Question::where('module_id', $trainingId)
                 ->where('question_type', $type)
-                ->select($select)
                 ->inRandomOrder()
                 ->limit($quiz->question_count ?? 5)
                 ->get()
                 ->map(function($q) {
-                    // Normalize options: prefer JSON 'options', fallback to legacy fields if present
-                    $opts = [];
-                    if ($q->options) {
-                        $opts = is_string($q->options) ? json_decode($q->options, true) : $q->options;
-                        if ($opts instanceof \Illuminate\Support\Collection) {
-                            $opts = $opts->toArray();
-                        }
-                    }
-
-                    // If options is associative like ['a' => 'text', ...], convert to normalized array
-                    if (is_array($opts) && count($opts) > 0) {
-                        // detect associative (keys like a,b,c) or sequential with strings/objects
-                        $normalized = [];
-                        $isAssoc = array_keys($opts) !== range(0, count($opts) - 1);
-
-                        if ($isAssoc) {
-                            foreach ($opts as $k => $v) {
-                                // v may be string or ['text' => '...'] or ['label'=>'a','text'=>'...']
-                                if (is_string($v)) {
-                                    $normalized[] = ['label' => $k, 'text' => $v];
-                                } elseif (is_array($v) && isset($v['text'])) {
-                                    $normalized[] = ['label' => ($v['label'] ?? $k), 'text' => $v['text']];
-                                }
-                            }
-                        } else {
-                            // sequential array
-                            $labels = ['a','b','c','d','e','f'];
-                            foreach ($opts as $i => $v) {
-                                if (is_string($v)) {
-                                    $normalized[] = ['label' => ($v['label'] ?? $labels[$i] ?? (string)$i), 'text' => $v];
-                                } elseif (is_array($v)) {
-                                    if (isset($v['text'])) {
-                                        $normalized[] = ['label' => ($v['label'] ?? ($labels[$i] ?? (string)$i)), 'text' => $v['text']];
-                                    } elseif (isset($v[0])) {
-                                        $normalized[] = ['label' => ($v['label'] ?? ($labels[$i] ?? (string)$i)), 'text' => $v[0]];
-                                    }
-                                }
-                            }
-                        }
-
-                        $opts = $normalized;
-                    }
-
-                    if (!$opts || !is_array($opts) || count($opts) === 0) {
-                        // Legacy fallback: attempt to read option_a..d if available
-                        $opts = [];
-                        foreach (['a','b','c','d'] as $label) {
-                            $field = 'option_' . $label;
-                            if (isset($q->$field) && $q->$field !== null && $q->$field !== '') {
-                                $opts[] = ['label' => $label, 'text' => $q->$field];
-                            }
-                        }
-                    }
-
-                    // Shuffle options within each question for additional security
-                    //shuffle($opts); // disabled global shuffling to preserve original option order
-
                     return [
                         'id' => $q->id,
                         'question_text' => $q->question_text,
-                        'options' => $opts,
+                        'options' => $q->normalized_options, // Gunakan accessor dari model
                         'difficulty' => $q->difficulty,
                         'points' => $q->points,
                         'image_url' => $this->normalizeImageUrl($q->image_url),
                     ];
                 });
-            
-            // Create or get existing attempt
-            $examType = $type === 'pretest' ? 'pre_test' : 'post_test'; // Convert to database format
-            
-            $attempt = ExamAttempt::firstOrCreate([
-                'user_id' => $user->id,
-                'module_id' => $trainingId,
-                'exam_type' => $examType,
-                'finished_at' => null, // Only unfinished attempts
-            ], [
-                'score' => 0,
-                'percentage' => 0,
-                'is_passed' => false,
-                'started_at' => now()
-            ]);
-            
+
+            // Create atau get existing attempt
+            $attempt = $this->quizService->getOrCreateAttempt($user->id, $trainingId, $examType);
+
             return Inertia::render('User/Quiz/TakeQuiz', [
                 'training' => [
                     'id' => $module->id,
@@ -198,133 +102,39 @@ class QuizController extends Controller
     }
     
     /**
-     * Get quiz details
+     * Get quiz details via API
      */
     public function show($trainingId, $type)
     {
         try {
             $user = Auth::user();
 
-            $module = Module::findOrFail($trainingId);
-
-            // Check if user is assigned to this training
-            $userTraining = \App\Models\UserTraining::where('user_id', $user->id)
-                ->where('module_id', $trainingId)
-                ->first();
-
-            if (!$userTraining) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'You are not assigned to this training'
-                ], 403);
+            // Validasi full access
+            $validation = $this->validateFullQuizAccess($trainingId, $type, $user->id);
+            if (isset($validation['success']) && !$validation['success']) {
+                return response()->json($validation, 403);
             }
 
-            // Find quiz by type (pretest/posttest)
-            // Try module_id first, then training_program_id (legacy support)
-            $quiz = Quiz::where(function($query) use ($trainingId) {
-                $query->where('module_id', $trainingId)
-                      ->orWhere('training_program_id', $trainingId);
-            })
-                ->where('type', $type)
-                ->where('is_active', true)
-                ->first();
-            
-            if (!$quiz) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Quiz not found',
-                    'message' => ucfirst($type) . ' quiz belum tersedia untuk training ini'
-                ], 404);
-            }
-            
-            // Get questions from module (not from quiz directly since questions table uses module_id)
-            // Get questions from module (not from quiz directly since questions table uses module_id)
-            $select = ['id', 'question_text', 'options', 'difficulty', 'points', 'image_url'];
-            if (\Illuminate\Support\Facades\Schema::hasColumn('questions', 'option_a')) {
-                $select = array_merge($select, ['option_a', 'option_b', 'option_c', 'option_d']);
-            }
+            $module = $validation['module'];
+            $quiz = $validation['quiz'];
 
+            // Get questions dengan normalized options
             $questions = Question::where('module_id', $trainingId)
                 ->where('question_type', $type)
-                ->select($select)
-                ->inRandomOrder() // Shuffle questions for security
+                ->inRandomOrder()
                 ->limit($quiz->question_count ?? 5)
                 ->get()
                 ->map(function($q) {
-                    $opts = [];
-                    if ($q->options) {
-                        $opts = is_string($q->options) ? json_decode($q->options, true) : $q->options;
-                        if ($opts instanceof \Illuminate\Support\Collection) {
-                            $opts = $opts->toArray();
-                        }
-                    }
-
-                    // Normalization (handle associative, sequential, and simple string formats)
-                    if (is_array($opts) && count($opts) > 0) {
-                        $normalized = [];
-                        $isAssoc = array_keys($opts) !== range(0, count($opts) - 1);
-
-                        if ($isAssoc) {
-                            foreach ($opts as $k => $v) {
-                                if (is_string($v)) {
-                                    $normalized[] = ['label' => $k, 'text' => $v];
-                                } elseif (is_array($v) && isset($v['text'])) {
-                                    $normalized[] = ['label' => ($v['label'] ?? $k), 'text' => $v['text']];
-                                }
-                            }
-                        } else {
-                            $labels = ['a','b','c','d','e','f'];
-                            foreach ($opts as $i => $v) {
-                                if (is_string($v)) {
-                                    $normalized[] = ['label' => ($v['label'] ?? $labels[$i] ?? (string)$i), 'text' => $v];
-                                } elseif (is_array($v)) {
-                                    if (isset($v['text'])) {
-                                        $normalized[] = ['label' => ($v['label'] ?? ($labels[$i] ?? (string)$i)), 'text' => $v['text']];
-                                    } elseif (isset($v[0])) {
-                                        $normalized[] = ['label' => ($v['label'] ?? ($labels[$i] ?? (string)$i)), 'text' => $v[0]];
-                                    }
-                                }
-                            }
-                        }
-
-                        $opts = $normalized;
-                    }
-
-                    if (!$opts || !is_array($opts) || count($opts) === 0) {
-                        $opts = [];
-                        foreach (['a','b','c','d'] as $label) {
-                            $field = 'option_' . $label;
-                            if (isset($q->$field) && $q->$field !== null && $q->$field !== '') {
-                                $opts[] = ['label' => $label, 'text' => $q->$field];
-                            }
-                        }
-                    }
-
-                    // Shuffle options within each question for additional security
-                    //shuffle($opts); // disabled global shuffling to preserve original option order
-
-                    // Normalize numeric keys and clean text
-                    $opts = array_values(array_map(function($o){
-                        if (!is_array($o)) return null;
-                        $label = isset($o['label']) ? (string)$o['label'] : null;
-                        $text = isset($o['text']) ? trim((string)$o['text']) : (isset($o[0]) ? trim((string)$o[0]) : null);
-                        if (!$text) return null;
-                        return ['label' => $label ?? '', 'text' => $text];
-                    }, $opts));
-                    // Remove any nulls (invalid options)
-                    $opts = array_values(array_filter($opts));
-
                     return [
                         'id' => $q->id,
                         'question_text' => $q->question_text,
-                        'options' => $opts,
+                        'options' => $q->normalized_options, // Gunakan accessor
                         'difficulty' => $q->difficulty,
                         'points' => $q->points,
                         'image_url' => $q->image_url,
-                        // Intentionally exclude correct_answer for security
                     ];
                 });
-            
+
             // Check for existing attempts
             $examType = $type === 'pretest' ? 'pre_test' : 'post_test';
             $lastAttempt = ExamAttempt::where('user_id', $user->id)
@@ -332,7 +142,7 @@ class QuizController extends Controller
                 ->where('exam_type', $examType)
                 ->orderBy('created_at', 'desc')
                 ->first();
-            
+
             return response()->json([
                 'success' => true,
                 'training' => [
@@ -346,15 +156,14 @@ class QuizController extends Controller
                     'type' => $quiz->type,
                     'description' => $quiz->description,
                     'time_limit' => $quiz->time_limit,
-                    'duration' => $quiz->time_limit, // For frontend compatibility
+                    'duration' => $quiz->time_limit,
                     'passing_score' => $quiz->passing_score ?? 70,
                     'question_count' => $questions->count(),
-                    'questions_count' => $questions->count(), // For frontend compatibility
+                    'questions_count' => $questions->count(),
                     'show_answers' => $quiz->show_answers ?? true
                 ],
                 'questions' => $questions,
                 'lastAttempt' => $lastAttempt,
-                // Frontend expects these fields at root level
                 'is_passed' => false,
                 'score' => 0,
                 'attempts' => 0
@@ -411,45 +220,23 @@ class QuizController extends Controller
     {
         try {
             $user = Auth::user();
-
-            // Check if user is assigned to this training
-            $userTraining = \App\Models\UserTraining::where('user_id', $user->id)
-                ->where('module_id', $trainingId)
-                ->first();
-
-            if (!$userTraining) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'You are not assigned to this training'
-                ], 403);
-            }
-
-            // Find quiz by module_id or training_program_id (legacy support)
-            $quiz = Quiz::where(function($query) use ($trainingId) {
-                $query->where('module_id', $trainingId)
-                      ->orWhere('training_program_id', $trainingId);
-            })
-                ->where('type', $type)
-                ->where('is_active', true)
-                ->firstOrFail();
-
-            // Define exam type
             $examType = $type === 'pretest' ? 'pre_test' : 'post_test';
 
-            // Check attempt limit (max 3 attempts per quiz type)
-            $existingAttempts = ExamAttempt::where('user_id', $user->id)
-                ->where('module_id', $trainingId)
-                ->where('exam_type', $examType)
-                ->count();
-
-            if ($existingAttempts >= 3) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Anda telah mencapai batas maksimal percobaan (3 kali) untuk quiz ini'
-                ], 403);
+            // Validasi full access
+            $validation = $this->validateFullQuizAccess($trainingId, $type, $user->id);
+            if (isset($validation['success']) && !$validation['success']) {
+                return response()->json($validation, 403);
             }
 
-            // Check if already has an ongoing attempt
+            $quiz = $validation['quiz'];
+
+            // Cek attempt limit menggunakan service (configurable)
+            $attemptLimitError = $this->quizService->validateAttemptLimit($user->id, $trainingId, $examType, $quiz);
+            if ($attemptLimitError) {
+                return response()->json($attemptLimitError, 403);
+            }
+
+            // Check if already has ongoing attempt
             $ongoingAttempt = ExamAttempt::where('user_id', $user->id)
                 ->where('module_id', $trainingId)
                 ->where('exam_type', $examType)
@@ -457,14 +244,7 @@ class QuizController extends Controller
                 ->first();
 
             if ($ongoingAttempt) {
-                // Cache quiz draft for this attempt
-                $cacheKey = "quiz_draft_{$user->id}_{$trainingId}_{$type}_{$ongoingAttempt->id}";
-                Cache::put($cacheKey, [
-                    'attempt_id' => $ongoingAttempt->id,
-                    'started_at' => $ongoingAttempt->started_at,
-                    'time_limit' => $quiz->time_limit
-                ], 3600); // Cache for 1 hour
-
+                // Resume existing attempt
                 return response()->json([
                     'success' => true,
                     'attempt' => [
@@ -476,23 +256,7 @@ class QuizController extends Controller
             }
 
             // Create new attempt
-            $attempt = ExamAttempt::create([
-                'user_id' => $user->id,
-                'module_id' => $trainingId,
-                'exam_type' => $examType,
-                'score' => 0,
-                'percentage' => 0,
-                'is_passed' => false,
-                'started_at' => now()
-            ]);
-
-            // Cache quiz draft for new attempt
-            $cacheKey = "quiz_draft_{$user->id}_{$trainingId}_{$type}_{$attempt->id}";
-            Cache::put($cacheKey, [
-                'attempt_id' => $attempt->id,
-                'started_at' => $attempt->started_at,
-                'time_limit' => $quiz->time_limit
-            ], 3600); // Cache for 1 hour
+            $attempt = $this->quizService->getOrCreateAttempt($user->id, $trainingId, $examType);
 
             return response()->json([
                 'success' => true,
@@ -514,6 +278,7 @@ class QuizController extends Controller
     
     /**
      * Submit quiz answers
+     * Delegasi scoring logic ke QuizService
      */
     public function submit(Request $request, $attemptId)
     {
@@ -523,160 +288,39 @@ class QuizController extends Controller
             $attempt = ExamAttempt::where('id', $attemptId)
                 ->where('user_id', $user->id)
                 ->firstOrFail();
+
+            // Check if program is still accessible (not ended)
+            $module = Module::find($attempt->module_id);
+            if ($module && $module->end_date && now() > $module->end_date) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Program telah berakhir',
+                    'message' => 'Program ini berakhir pada ' . $module->end_date->format('d M Y H:i') . '. Anda tidak dapat submit jawaban.'
+                ], 403);
+            }
             
             $answers = $request->input('answers', []);
             
             DB::beginTransaction();
             try {
-                $totalScore = 0;
-                $correctCount = 0;
-                $totalPoints = 0;
-                
-                foreach ($answers as $answerData) {
-                    $question = Question::find($answerData['question_id']);
-                    
-                    if (!$question) continue;
-                    
-                    $userAnswer = strtoupper($answerData['answer']);
-                    $correctAnswer = strtoupper($question->correct_answer);
-                    $isCorrect = $userAnswer === $correctAnswer;
-                    $pointsEarned = $isCorrect ? ($question->points ?? 10) : 0;
-                    
-                    // Save answer using UserExamAnswer model
-                    UserExamAnswer::create([
-                        'exam_attempt_id' => $attempt->id,
-                        'user_id' => $user->id,
-                        'question_id' => $question->id,
-                        'user_answer' => $userAnswer,
-                        'correct_answer' => $correctAnswer,
-                        'is_correct' => $isCorrect
-                    ]);
-                    
-                    if ($isCorrect) {
-                        $correctCount++;
-                    }
-                    $totalPoints += $question->points ?? 10;
-                    $totalScore += $pointsEarned;
+                // Delegasi ke service - ini sudah fix N+1 query problem
+                $result = $this->quizService->processSubmission($attempt, $answers);
+
+                if (!$result['success']) {
+                    DB::rollback();
+                    return response()->json($result, 400);
                 }
-                
-                // Calculate percentage score
-                $percentage = $totalPoints > 0 ? round(($totalScore / $totalPoints) * 100, 2) : 0;
-                
-                // Find quiz to get passing score
-                $quiz = Quiz::where(function($query) use ($attempt) {
-                    $query->where('module_id', $attempt->module_id)
-                          ->orWhere('training_program_id', $attempt->module_id);
-                })
-                    ->where('type', $attempt->exam_type)
-                    ->first();
-                
-                $passingScore = $quiz ? ($quiz->passing_score ?? 70) : 70;
-                $isPassed = $percentage >= $passingScore;
-                
-                // Calculate duration
-                $durationMinutes = now()->diffInMinutes($attempt->started_at);
-                
-                $attempt->update([
-                    'finished_at' => now(),
-                    'score' => $totalScore,
-                    'percentage' => $percentage,
-                    'is_passed' => $isPassed,
-                    'duration_minutes' => $durationMinutes
-                ]);
-                
-                // Handle post-test results
+
+                // Handle post-test vs pre-test
                 if ($attempt->exam_type === 'post_test') {
-                    $userTraining = \App\Models\UserTraining::where('user_id', $user->id)
-                        ->where('module_id', $attempt->module_id)
-                        ->first();
-                    
-                    if ($userTraining) {
-                        if ($isPassed) {
-                            // PASSED: Update status to completed
-                            $userTraining->update([
-                                'status' => 'completed',
-                                'final_score' => $percentage,
-                                'completed_at' => now()
-                            ]);
-
-                            // Only create certificate and mark certified if user completed all materials and pretest (if required)
-                            $moduleId = $attempt->module_id;
-
-                            $module = \App\Models\Module::with(['trainingMaterials', 'questions'])->find($moduleId);
-                            $materialsTotal = $module->trainingMaterials->count();
-                            $completedMaterials = \App\Models\UserMaterialProgress::where('user_id', $user->id)
-                                ->whereIn('training_material_id', $module->trainingMaterials->pluck('id')->toArray())
-                                ->where('is_completed', true)
-                                ->count();
-
-                            $pretestCount = $module->questions->where('question_type', 'pretest')->count();
-                            $pretestPassed = true;
-                            if ($pretestCount > 0) {
-                                $pretestPassed = \App\Models\ExamAttempt::where('user_id', $user->id)
-                                    ->where('module_id', $moduleId)
-                                    ->where('exam_type', 'pre_test')
-                                    ->where('is_passed', true)
-                                    ->exists();
-                            }
-
-                            $allMaterialsDone = $materialsTotal === $completedMaterials;
-
-                            if ($allMaterialsDone && $pretestPassed) {
-                                // Create certificate if not exists
-                                $existingCert = \App\Models\Certificate::where('user_id', $user->id)
-                                    ->where('module_id', $moduleId)
-                                    ->first();
-                                
-                                if (!$existingCert) {
-                                    $certificate = \App\Models\Certificate::createForUser($user->id, $moduleId);
-                                    if ($certificate) {
-                                        $userTraining->update(['certificate_id' => $certificate->id, 'is_certified' => true]);
-                                    }
-                                } else {
-                                    // mark as certified if already exists
-                                    $userTraining->update(['is_certified' => true]);
-                                }
-                            } else {
-                                // Not yet eligible for certificate — keep is_certified false
-                                $userTraining->update(['is_certified' => false]);
-                            }
-                        } else {
-                            // FAILED: Keep status as in_progress, allow retake
-                            // Update final_score to track latest attempt but don't complete
-                            $userTraining->update([
-                                'status' => 'in_progress',
-                                'final_score' => $percentage, // Track latest score
-                                'is_certified' => false
-                            ]);
-                        }
-                    }
+                    $this->quizService->handlePostTestResult($attempt, $result['is_passed']);
+                } elseif ($attempt->exam_type === 'pre_test') {
+                    $this->quizService->handlePreTestResult($attempt);
                 }
-                
-                // Handle pre-test results (just track the score, don't affect status)
-                if ($attempt->exam_type === 'pre_test') {
-                    $userTraining = \App\Models\UserTraining::where('user_id', $user->id)
-                        ->where('module_id', $attempt->module_id)
-                        ->first();
-                    
-                    if ($userTraining && $userTraining->status === 'enrolled') {
-                        // Update status to in_progress after completing pre-test
-                        $userTraining->update([
-                            'status' => 'in_progress'
-                        ]);
-                    }
-                }
-                
+
                 DB::commit();
-                
-                return response()->json([
-                    'success' => true,
-                    'attempt_id' => $attempt->id,
-                    'score' => $totalScore,
-                    'percentage' => $percentage,
-                    'is_passed' => $isPassed,
-                    'correct_count' => $correctCount,
-                    'total_questions' => count($answers)
-                ]);
+
+                return response()->json($result);
                 
             } catch (\Exception $e) {
                 DB::rollback();
@@ -694,6 +338,7 @@ class QuizController extends Controller
     
     /**
      * Show quiz result page
+     * NOTE: User dapat melihat hasil meskipun program sudah berakhir
      */
     public function showResult($trainingId, $type, $attemptId = null)
     {
@@ -760,6 +405,10 @@ class QuizController extends Controller
             $correctCount = $userAnswers->where('is_correct', true)->count();
             $wrongCount = $userAnswers->where('is_correct', false)->count();
             
+            // Check if program has ended
+            $isProgramEnded = $module->end_date && now() > $module->end_date;
+            $programEndMessage = $isProgramEnded ? 'Program telah berakhir pada ' . $module->end_date->format('d M Y H:i') . ', tetapi Anda masih dapat melihat hasil Anda.' : null;
+            
             // Format time spent properly
             // Default to 00:00 instead of '-' so UI can display 0s rather than '-'
             $timeSpent = '00:00';
@@ -799,6 +448,7 @@ class QuizController extends Controller
                     'points_earned' => $attempt->score,
                 ],
                 'questions' => $questions,
+                'program_end_message' => $programEndMessage,
             ]);
         } catch (\Exception $e) {
             Log::error('Error showing quiz result: ' . $e->getMessage());

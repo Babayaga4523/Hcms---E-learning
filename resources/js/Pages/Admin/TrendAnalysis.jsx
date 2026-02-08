@@ -304,68 +304,32 @@ export default function TrendAnalysis() {
                         </div>
                     </div>
 
-                    {/* AI Insights Panel (1 col) */}
-                    <div className="glass-card rounded-[32px] p-8 animate-fade-up space-y-6 flex flex-col" style={{ animationDelay: '600ms' }}>
-                        <div className="flex items-center gap-2">
-                            <div className="p-2 bg-purple-50 text-purple-600 rounded-lg">
-                                <Sparkles className="w-5 h-5" />
-                            </div>
-                            <h2 className="text-xl font-bold text-slate-900">AI Insights</h2>
-                        </div>
-
-                        <div className="space-y-4 flex-1">
-                            <div className="p-4 bg-white rounded-2xl border border-slate-100 shadow-sm">
-                                <h4 className="font-bold text-slate-800 text-sm mb-1">Lonjakan Aktivitas</h4>
-                                <p className="text-xs text-slate-500 leading-relaxed">
-                                    Terdeteksi peningkatan enrollments sebesar <strong>24%</strong> pada akhir pekan lalu. Pertimbangkan merilis materi baru di hari Jumat.
-                                </p>
-                            </div>
-                            <div className="p-4 bg-white rounded-2xl border border-slate-100 shadow-sm">
-                                <h4 className="font-bold text-slate-800 text-sm mb-1">Prediksi Retensi</h4>
-                                <p className="text-xs text-slate-500 leading-relaxed">
-                                    Berdasarkan tren saat ini, tingkat penyelesaian diprediksi naik menjadi <strong>82%</strong> bulan depan.
-                                </p>
-                            </div>
-                            <div className="p-4 bg-red-50 rounded-2xl border border-red-100 shadow-sm">
-                                <h4 className="font-bold text-red-800 text-sm mb-1">Perhatian Diperlukan</h4>
-                                <p className="text-xs text-red-700 leading-relaxed">
-                                    Kategori "Leadership" mengalami penurunan engagement selama 3 hari terakhir.
-                                </p>
-                            </div>
-                        </div>
-
-                        <button className="w-full py-3 rounded-xl bg-[#002824] text-[#D6F84C] font-bold text-sm hover:scale-[1.02] transition-transform">
-                            Generate Full Report
-                        </button>
-                    </div>
-                </div>
-
-                {/* 3. Secondary Metrics Grid */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pb-10">
-                    <div className="glass-card rounded-[32px] p-8 animate-fade-up" style={{ animationDelay: '700ms' }}>
-                        <h3 className="font-bold text-slate-900 mb-6">Top Performing Categories</h3>
-                        <div className="space-y-6">
-                            {[
-                                { name: 'Compliance', val: 92, color: 'bg-emerald-500' },
-                                { name: 'Product Knowledge', val: 78, color: 'bg-blue-500' },
-                                { name: 'Soft Skills', val: 64, color: 'bg-amber-500' },
-                                { name: 'Technical', val: 45, color: 'bg-rose-500' },
-                            ].map((cat) => (
-                                <div key={cat.name}>
-                                    <div className="flex justify-between text-sm font-bold text-slate-700 mb-2">
-                                        <span>{cat.name}</span>
-                                        <span>{cat.val}%</span>
+                    {/* 3. Secondary Metrics Grid */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pb-10">
+                        <div className="glass-card rounded-[32px] p-8 animate-fade-up" style={{ animationDelay: '700ms' }}>
+                            <h3 className="font-bold text-slate-900 mb-6">Top Performing Categories</h3>
+                            <div className="space-y-6">
+                                {[
+                                    { name: 'Compliance', val: 92, color: 'bg-emerald-500' },
+                                    { name: 'Product Knowledge', val: 78, color: 'bg-blue-500' },
+                                    { name: 'Soft Skills', val: 64, color: 'bg-amber-500' },
+                                    { name: 'Technical', val: 45, color: 'bg-rose-500' },
+                                ].map((cat) => (
+                                    <div key={cat.name}>
+                                        <div className="flex justify-between text-sm font-bold text-slate-700 mb-2">
+                                            <span>{cat.name}</span>
+                                            <span>{cat.val}%</span>
+                                        </div>
+                                        <div className="w-full bg-slate-100 rounded-full h-3">
+                                            <div 
+                                                className={`h-3 rounded-full ${cat.color}`} 
+                                                style={{ width: `${cat.val}%` }}
+                                            ></div>
+                                        </div>
                                     </div>
-                                    <div className="w-full bg-slate-100 rounded-full h-3">
-                                        <div 
-                                            className={`h-3 rounded-full ${cat.color}`} 
-                                            style={{ width: `${cat.val}%` }}
-                                        ></div>
-                                    </div>
-                                </div>
-                            ))}
+                                ))}
+                            </div>
                         </div>
-                    </div>
 
                     <div className="glass-card rounded-[32px] p-8 animate-fade-up" style={{ animationDelay: '800ms' }}>
                         <div className="flex items-center justify-between mb-6">
@@ -389,6 +353,7 @@ export default function TrendAnalysis() {
                             ))}
                         </div>
                         <p className="text-center text-xs text-slate-400 mt-4 font-medium">Activity Distribution (00:00 - 23:59)</p>
+                    </div>
                     </div>
                 </div>
 

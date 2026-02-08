@@ -17,7 +17,8 @@
         "maatwebsite/excel": "^3.1",
         "mpdf/mpdf": "^8.2",
         "phpoffice/phpspreadsheet": "^1.30",
-        "tightenco/ziggy": "^2.0"
+        "tightenco/ziggy": "^2.0",
+        "vlucas/phpdotenv": "*"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

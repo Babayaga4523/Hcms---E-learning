@@ -102,7 +102,18 @@ export default function TrainingProgramEdit({ program: initialProgram, auth }) {
     const [activeTab, setActiveTab] = useState('general');
     const [formData, setFormData] = useState(programData);
 
-    const categories = ['Compliance', 'Technical', 'Leadership', 'Soft Skills', 'Product', 'Security'];
+    // Must match backend allowed categories
+    const categories = [
+        'Core Business & Product',
+        'Credit & Risk Management',
+        'Collection & Recovery',
+        'Compliance & Regulatory',
+        'Sales & Marketing',
+        'Service Excellence',
+        'Leadership & Soft Skills',
+        'IT & Digital Security',
+        'Onboarding'
+    ];
 
     const showNotification = (msg, type = 'success') => {
         setMessage({ text: msg, type });
@@ -112,6 +123,8 @@ export default function TrainingProgramEdit({ program: initialProgram, auth }) {
     const handleSubmit = async (e) => {
         e.preventDefault();
         
+        // For draft programs: only require title & description
+        // For published programs: require all fields
         if (!formData.title.trim()) {
             showNotification('Nama program tidak boleh kosong', 'error');
             return;
@@ -122,19 +135,52 @@ export default function TrainingProgramEdit({ program: initialProgram, auth }) {
             return;
         }
         
-        if (formData.duration_minutes < 1) {
-            showNotification('Durasi harus minimal 1 menit', 'error');
-            return;
-        }
-        
-        if (formData.passing_grade < 0 || formData.passing_grade > 100) {
-            showNotification('Nilai lulus harus antara 0-100', 'error');
-            return;
+        // Only validate these fields if program is being published
+        if (formData.is_active) {
+            if (!formData.duration_minutes || formData.duration_minutes < 1) {
+                showNotification('Durasi harus minimal 1 menit', 'error');
+                return;
+            }
+            
+            if (formData.passing_grade === null || formData.passing_grade === undefined || formData.passing_grade < 0 || formData.passing_grade > 100) {
+                showNotification('Nilai lulus harus antara 0-100', 'error');
+                return;
+            }
+            
+            if (!formData.category) {
+                showNotification('Kategori harus dipilih untuk program yang dipublikasikan', 'error');
+                return;
+            }
         }
         
         setLoading(true);
         
         try {
+            // Prepare data: only send required fields for draft, all fields for published
+            const sendData = {
+                title: formData.title,
+                description: formData.description,
+                is_active: formData.is_active,
+            };
+            
+            // If publishing or updating published program: include all fields
+            if (formData.is_active) {
+                sendData.duration_minutes = formData.duration_minutes || 1;
+                sendData.passing_grade = formData.passing_grade !== null ? formData.passing_grade : 0;
+                sendData.category = formData.category || 'Core Business & Product';
+                sendData.allow_retake = formData.allow_retake || false;
+                sendData.max_retake_attempts = formData.allow_retake ? formData.max_retake_attempts : null;
+                sendData.expiry_date = formData.expiry_date || null;
+            } else {
+                // For draft: send optional fields if they exist
+                if (formData.duration_minutes) sendData.duration_minutes = formData.duration_minutes;
+                if (formData.passing_grade !== null && formData.passing_grade !== undefined) sendData.passing_grade = formData.passing_grade;
+                if (formData.category) sendData.category = formData.category;
+                if (formData.allow_retake !== undefined) sendData.allow_retake = formData.allow_retake;
+                if (formData.allow_retake && formData.max_retake_attempts) sendData.max_retake_attempts = formData.max_retake_attempts;
+                if (formData.expiry_date) sendData.expiry_date = formData.expiry_date;
+            }
+            
             const response = await fetch(`/api/admin/training-programs/${initialProgram.id}`, {
                 method: 'PUT',
                 headers: {
@@ -142,17 +188,7 @@ export default function TrainingProgramEdit({ program: initialProgram, auth }) {
                     'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content,
                     'Accept': 'application/json',
                 },
-                body: JSON.stringify({
-                    title: formData.title,
-                    description: formData.description,
-                    duration_minutes: formData.duration_minutes,
-                    passing_grade: formData.passing_grade,
-                    category: formData.category || null,
-                    is_active: formData.is_active,
-                    allow_retake: formData.allow_retake,
-                    max_retake_attempts: formData.allow_retake ? formData.max_retake_attempts : null,
-                    expiry_date: formData.expiry_date || null,
-                }),
+                body: JSON.stringify(sendData),
             });
             
             const result = await response.json();

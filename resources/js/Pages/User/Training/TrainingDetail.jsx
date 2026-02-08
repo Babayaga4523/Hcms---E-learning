@@ -467,7 +467,15 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
             <Head title={training.title || 'Detail Training'} />
 
             {/* Immersive Hero Header */}
-            <div className="hero-pattern pt-8 pb-40 px-6 lg:px-12 relative rounded-b-[48px] overflow-hidden shadow-2xl shadow-[#002824]/30 mb-8">
+            <div className={`relative pt-8 pb-40 px-6 lg:px-12 rounded-b-[48px] overflow-hidden shadow-2xl shadow-[#002824]/30 mb-8 ${
+                training.cover_image ? '' : 'hero-pattern'
+            }`}
+            style={training.cover_image ? {
+                backgroundImage: `linear-gradient(135deg, rgba(0, 40, 36, 0.85) 0%, rgba(0, 94, 84, 0.8) 100%), url(/storage/${training.cover_image})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                backgroundAttachment: 'fixed'
+            } : {}}>
                 {/* Navigation */}
                 <div className="relative z-20 flex justify-between items-center mb-12 max-w-7xl mx-auto">
                     <Link 

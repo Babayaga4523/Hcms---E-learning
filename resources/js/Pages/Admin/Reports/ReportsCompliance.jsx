@@ -197,6 +197,53 @@ export default function ReportsCompliance({ auth, stats, learnerProgress, questi
     // Format comparison data
     const formattedComparisonData = Array.isArray(comparisonData) && comparisonData.length > 0 ? comparisonData : [];
 
+    // Export to Excel (Backend - Premium)
+    const handleExportExcel = async () => {
+        try {
+            setIsLoading(true);
+            
+            // Call backend API untuk premium Excel export (correct route with /api prefix)
+            const response = await fetch('/api/admin/reports/export?format=excel', {
+                method: 'GET',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            });
+            
+            if (!response.ok) {
+                throw new Error('Gagal download Excel');
+            }
+            
+            // Get filename dari response header
+            const contentDisposition = response.headers.get('content-disposition');
+            let fileName = `Laporan_Compliance_${new Date().toISOString().split('T')[0]}.xlsx`;
+            
+            if (contentDisposition) {
+                const fileNameMatch = contentDisposition.match(/filename[^;=\n]*=(["\']?)([^"\';]*)\1/);
+                if (fileNameMatch && fileNameMatch[2]) {
+                    fileName = fileNameMatch[2];
+                }
+            }
+            
+            // Download file
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
+            
+            setIsLoading(false);
+        } catch (error) {
+            console.error('Error exporting Excel:', error);
+            alert('Gagal export Excel: ' + error.message);
+            setIsLoading(false);
+        }
+    };
+
     // Mock Fetch
     const refreshData = () => {
         setIsLoading(true);
@@ -242,8 +289,11 @@ export default function ReportsCompliance({ auth, stats, learnerProgress, questi
                             >
                                 <RefreshCw className={`w-5 h-5 ${isLoading ? 'animate-spin' : ''}`} />
                             </button>
-                            <button className="flex items-center gap-2 px-6 py-3 bg-[#D6F84C] hover:bg-[#c2e43c] text-[#002824] rounded-xl font-bold shadow-lg transition-all hover:scale-105">
-                                <Download className="w-4 h-4" /> Export Report
+                            <button 
+                                onClick={handleExportExcel}
+                                disabled={isLoading}
+                                className="flex items-center gap-2 px-6 py-3 bg-[#D6F84C] hover:bg-[#c2e43c] disabled:opacity-50 disabled:cursor-not-allowed text-[#002824] rounded-xl font-bold shadow-lg transition-all hover:scale-105">
+                                <Download className="w-4 h-4" /> {isLoading ? 'Exporting...' : 'Export Report'}
                             </button>
                         </div>
                     </div>

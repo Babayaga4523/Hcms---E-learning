@@ -24,7 +24,18 @@ export default function CreateProgramWithQuestions({ isOpen, onClose, onSuccess 
 
     const [materials, setMaterials] = useState([]);
 
-    const categories = ['Compliance', 'Technical', 'Leadership', 'Soft Skills', 'Product', 'Security'];
+    // Must match backend allowed categories
+    const categories = [
+        'Core Business & Product',
+        'Credit & Risk Management',
+        'Collection & Recovery',
+        'Compliance & Regulatory',
+        'Sales & Marketing',
+        'Service Excellence',
+        'Leadership & Soft Skills',
+        'IT & Digital Security',
+        'Onboarding'
+    ];
 
     const handleProgramChange = (field, value) => {
         setProgramData({ ...programData, [field]: value });

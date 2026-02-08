@@ -14,7 +14,6 @@ class Module extends Model
     protected $fillable = [
         'title',
         'description',
-        
         'passing_grade',
         'has_pretest',
         'has_posttest',
@@ -48,8 +47,8 @@ class Module extends Model
         'allow_retake' => 'boolean',
         'rating' => 'decimal:2',
         'approved_at' => 'datetime',
-        'start_date' => 'date',
-        'end_date' => 'date',
+        'start_date' => 'datetime',
+        'end_date' => 'datetime',
         'expiry_date' => 'date',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
@@ -103,6 +102,14 @@ class Module extends Model
     public function trainingMaterials(): HasMany
     {
         return $this->hasMany(TrainingMaterial::class);
+    }
+
+    /**
+     * Relasi ke Quizzes
+     */
+    public function quizzes(): HasMany
+    {
+        return $this->hasMany(Quiz::class);
     }
 
     /**
@@ -160,4 +167,66 @@ class Module extends Model
     {
         return $this->hasMany(ModuleAssignment::class);
     }
+
+    /**
+     * Check if the program is currently accessible based on start and end dates
+     * Returns: 'not_started', 'active', 'ended', or null if no dates set
+     */
+    public function getAccessStatus()
+    {
+        if (!$this->start_date && !$this->end_date) {
+            return null; // No date restrictions
+        }
+
+        $now = now();
+
+        if ($this->start_date && $now < $this->start_date) {
+            return 'not_started';
+        }
+
+        if ($this->end_date && $now > $this->end_date) {
+            return 'ended';
+        }
+
+        return 'active';
+    }
+
+    /**
+     * Check if program can be accessed by users right now
+     */
+    public function isAccessible()
+    {
+        $status = $this->getAccessStatus();
+        
+        // If no date restrictions, it's accessible
+        if ($status === null) {
+            return true;
+        }
+
+        // Only 'active' status allows access
+        return $status === 'active';
+    }
+
+    /**
+     * Get human-readable access message
+     */
+    public function getAccessMessage()
+    {
+        $status = $this->getAccessStatus();
+
+        if ($status === null) {
+            return 'Program tersedia';
+        }
+
+        if ($status === 'not_started') {
+            return 'Program dimulai pada ' . $this->start_date->format('d M Y H:i');
+        }
+
+        if ($status === 'ended') {
+            return 'Program telah berakhir pada ' . $this->end_date->format('d M Y H:i');
+        }
+
+        return 'Program aktif';
+    }
 }
+

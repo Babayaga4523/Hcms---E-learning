@@ -105,7 +105,9 @@ const TrainingCard = ({ training }) => {
         >
             {/* Thumbnail */}
             <div className="relative h-48 bg-gradient-to-br from-[#005E54] to-[#002824] overflow-hidden group">
-                {training.thumbnail ? (
+                {training.cover_image ? (
+                    <img src={`/storage/${training.cover_image}`} alt={training.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                ) : training.thumbnail ? (
                     <img src={training.thumbnail} alt={training.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
                 ) : (
                     <div className="w-full h-full flex items-center justify-center">

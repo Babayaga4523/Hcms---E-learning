@@ -6,7 +6,11 @@ use App\Models\Module;
 use App\Models\UserTraining;
 use App\Models\ExamAttempt;
 use App\Models\AuditLog;
+use App\Models\ModuleProgress;
+use App\Models\Notification;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
 class DashboardController extends Controller
@@ -20,19 +24,29 @@ class DashboardController extends Controller
 
         // Get all user trainings with module relationship
         $userId = $user->id;
+        
+        // Pre-fetch all module progress records to avoid N+1 queries
+        $progressRecords = ModuleProgress::where('user_id', $userId)
+            ->pluck('progress_percentage', 'module_id')
+            ->toArray();
+        
         $trainings = UserTraining::where('user_id', $userId)
-            ->with(['module', 'module.questions'])
+            ->with(['module'])
             ->get()
             ->filter(function ($training) {
                 // Only include trainings that have a valid module
                 return $training->module !== null;
             })
-            ->map(function ($training) use ($userId) {
+            ->map(function ($training) use ($userId, $progressRecords) {
                 $status = $training->status;
                 // Ensure status is not empty, default to 'enrolled' if empty
                 if (empty($status)) {
                     $status = 'enrolled';
                 }
+                
+                // Use pre-fetched progress data
+                $moduleProgress = $progressRecords[$training->module_id] ?? null;
+                $progressPercentage = $moduleProgress ? (int)$moduleProgress : ($training->final_score ?? 0);
                 
                 return [
                     'id' => $training->id,
@@ -44,12 +58,7 @@ class DashboardController extends Controller
                     'passing_grade' => $training->module->passing_grade ?? 70,
                     'enrolled_at' => $training->enrolled_at,
                     'completed_at' => $training->completed_at,
-                    'module_progress' => $training->module->progress()
-                        ->where('user_id', $userId)
-                        ->first(),
-                    // Top-level numeric progress for compatibility with frontend components
-                    'progress' => ($training->module->progress()->where('user_id', $userId)->first() ? (int)$training->module->progress()->where('user_id', $userId)->first()->progress_percentage : ($training->final_score ?? 0)),
-                    
+                    'progress' => $progressPercentage,
                 ];
             });
 
@@ -242,17 +251,21 @@ class DashboardController extends Controller
         $user = Auth::user();
         $userId = $user->id;
 
+        // Pre-fetch all module progress records to avoid N+1 queries
+        $progressRecords = ModuleProgress::where('user_id', $userId)
+            ->get()
+            ->groupBy('module_id')
+            ->map(fn($items) => $items->first());
+
         $trainings = UserTraining::where('user_id', $userId)
-            ->with(['module', 'module.progress'])
+            ->with(['module'])
             ->get()
             ->filter(function ($training) {
                 // Only include trainings that have a valid module
                 return $training->module !== null;
             })
-            ->map(function ($training) use ($userId) {
-                $progress = $training->module->progress()
-                    ->where('user_id', $userId)
-                    ->first();
+            ->map(function ($training) use ($userId, $progressRecords) {
+                $progress = $progressRecords->get($training->module_id);
 
                 return [
                     'id' => $training->id,
@@ -274,5 +287,153 @@ class DashboardController extends Controller
             });
 
         return response()->json($trainings);
+    }
+
+    /**
+     * Get unified updates (announcements + notifications) with tabs support
+     */
+    public function getUnifiedUpdates(Request $request)
+    {
+        if (!Auth::check()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated'
+            ], 401);
+        }
+
+        $user = Auth::user();
+        $userId = $user->id;
+        
+        // Get all active announcements from database if table exists
+        $announcements = collect();
+        try {
+            $announcementRecords = DB::table('announcements')
+                ->where('status', 'active')
+                ->where(function($q) {
+                    $q->whereNull('start_date')
+                      ->orWhere('start_date', '<=', now());
+                })
+                ->where(function($q) {
+                    $q->whereNull('end_date')
+                      ->orWhere('end_date', '>=', now());
+                })
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            $announcements = $announcementRecords->map(function($ann) {
+                return [
+                    'id' => $ann->id,
+                    'type' => 'announcement',
+                    'category' => $ann->type ?? 'general',
+                    'title' => $ann->title,
+                    'content' => $ann->content,
+                    'body' => $ann->content,
+                    'is_read' => true,
+                    'created_at' => $ann->created_at,
+                    'timestamp' => strtotime($ann->created_at),
+                    'icon' => $this->getAnnouncementIcon($ann->type ?? 'general'),
+                    'color' => $this->getAnnouncementColor($ann->type ?? 'general'),
+                ];
+            });
+        } catch (\Exception $e) {
+            // Announcements table doesn't exist, skip
+        }
+
+        // Get user's notifications
+        $notifications = Notification::query()
+            ->where('user_id', $userId)
+            ->orderBy('created_at', 'desc')
+            ->limit(50)
+            ->get()
+            ->map(function($notif) {
+                return [
+                    'id' => $notif->id,
+                    'type' => 'notification',
+                    'category' => $notif->type ?? 'info',
+                    'title' => $notif->title,
+                    'content' => $notif->message,
+                    'body' => $notif->message,
+                    'is_read' => $notif->is_read ?? false,
+                    'created_at' => $notif->created_at,
+                    'timestamp' => $notif->created_at->timestamp,
+                    'icon' => $this->getNotificationIcon($notif->type ?? 'info'),
+                    'color' => $this->getNotificationColor($notif->type ?? 'info'),
+                ];
+            });
+
+        // Merge and sort by timestamp (newest first)
+        $allUpdates = collect()
+            ->merge($announcements)
+            ->merge($notifications)
+            ->sortByDesc('timestamp')
+            ->values()
+            ->toArray();
+
+        // Count unread notifications
+        $unreadCount = Notification::query()
+            ->where('user_id', $userId)
+            ->where('is_read', false)
+            ->count();
+
+        return response()->json([
+            'success' => true,
+            'data' => $allUpdates,
+            'announcements_count' => $announcements->count(),
+            'notifications_count' => $notifications->count(),
+            'unread_count' => $unreadCount,
+            'total_count' => count($allUpdates),
+        ]);
+    }
+
+    /**
+     * Helper: Get icon for announcement type
+     */
+    private function getAnnouncementIcon($type)
+    {
+        return match($type) {
+            'urgent' => '⚠️',
+            'maintenance' => '🔧',
+            'event' => '📅',
+            default => '📢',
+        };
+    }
+
+    /**
+     * Helper: Get color for announcement type
+     */
+    private function getAnnouncementColor($type)
+    {
+        return match($type) {
+            'urgent' => 'red',
+            'maintenance' => 'orange',
+            'event' => 'green',
+            default => 'blue',
+        };
+    }
+
+    /**
+     * Helper: Get icon for notification type
+     */
+    private function getNotificationIcon($type)
+    {
+        return match($type) {
+            'success' => '✓',
+            'warning' => '⚠',
+            'error' => '✕',
+            default => 'ℹ',
+        };
+    }
+
+    /**
+     * Helper: Get color for notification type
+     */
+    private function getNotificationColor($type)
+    {
+        return match($type) {
+            'success' => 'green',
+            'warning' => 'orange',
+            'error' => 'red',
+            default => 'blue',
+        };
     }
 }

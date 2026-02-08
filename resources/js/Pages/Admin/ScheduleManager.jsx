@@ -214,17 +214,6 @@ export default function ScheduleManager({ date = null, schedule = null, onClose 
         setFormData(prev => ({ ...prev, endTime }));
     };
 
-    const handleGenerateAI = () => {
-        const aiDescriptions = [
-            "✨ Sesi pelatihan komprehensif yang membahas strategi kepatuhan terbaru sesuai regulasi OJK 2025. Peserta akan mempelajari studi kasus pencucian uang, mitigasi risiko digital, dan best practices industri perbankan.",
-            "✨ Workshop interaktif fokus pada penerapan regulasi anti-pencucian uang (AML). Diskusi mendalam tentang red flags dalam transaksi, teknologi detection, dan prosedur laporan mencurigakan (STR).",
-            "✨ Pelatihan teknis mengenai sistem keamanan siber modern untuk financial institutions. Topik mencakup threat assessment, incident response, penetration testing, dan compliance dengan standar ISO 27001.",
-            "✨ Sesi knowledge sharing tentang transformasi digital di sektor perbankan. Peserta akan memahami blockchain, AI dalam risk management, dan strategi digitalisasi operasional yang compliant.",
-        ];
-        const randomAI = aiDescriptions[Math.floor(Math.random() * aiDescriptions.length)];
-        setFormData(prev => ({ ...prev, description: randomAI }));
-    };
-
     const handleSave = async () => {
         if (!formData.title || !formData.date) {
             showToast('Title and Date are required', 'warning');
@@ -516,23 +505,13 @@ export default function ScheduleManager({ date = null, schedule = null, onClose 
                                 transition={{ delay: 0.3 }}
                             >
                                 <InputGroup label="Description" icon={AlignLeft} hint="Optional">
-                                    <div className="relative">
-                                        <textarea
-                                            rows={5}
-                                            value={formData.description}
-                                            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                                            placeholder="Add session agenda, key topics, or special instructions..."
-                                            className="w-full p-4 bg-slate-50 border-2 border-slate-200 rounded-2xl font-medium outline-none focus:ring-2 focus:ring-[#D6FF59]/50 focus:border-[#D6FF59] resize-none transition-all"
-                                        />
-                                        <motion.button
-                                            whileHover={{ scale: 1.05 }}
-                                            whileTap={{ scale: 0.95 }}
-                                            onClick={handleGenerateAI}
-                                            className="absolute bottom-3 right-3 flex items-center gap-1 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-all"
-                                        >
-                                            <Sparkles size={14} /> AI Writer
-                                        </motion.button>
-                                    </div>
+                                    <textarea
+                                        rows={5}
+                                        value={formData.description}
+                                        onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                                        placeholder="Add session agenda, key topics, or special instructions..."
+                                        className="w-full p-4 bg-slate-50 border-2 border-slate-200 rounded-2xl font-medium outline-none focus:ring-2 focus:ring-[#D6FF59]/50 focus:border-[#D6FF59] resize-none transition-all"
+                                    />
                                 </InputGroup>
                             </motion.div>
                         </div>

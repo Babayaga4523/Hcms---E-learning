@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Bell, X, Check, Clock, AlertCircle, CheckCircle, Info, XCircle } from 'lucide-react';
+import { Bell, X, Check, Clock, AlertCircle, CheckCircle, Info, XCircle, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Link, router } from '@inertiajs/react';
 
 const NotificationDropdown = ({ user }) => {
     const [isOpen, setIsOpen] = useState(false);
@@ -45,6 +46,21 @@ const NotificationDropdown = ({ user }) => {
             setLoading(false);
         }
     };
+
+    // Polling: Fetch notifikasi baru setiap 30 detik ketika dropdown dibuka
+    useEffect(() => {
+        let interval;
+        
+        if (isOpen) {
+            interval = setInterval(() => {
+                fetchNotifications();
+            }, 30000); // 30 seconds
+        }
+        
+        return () => {
+            if (interval) clearInterval(interval);
+        };
+    }, [isOpen, user]);
 
     const markAsRead = async (notificationId) => {
         try {
@@ -152,7 +168,11 @@ const NotificationDropdown = ({ user }) => {
                                                     className={`p-4 hover:bg-gray-50 cursor-pointer transition-colors ${
                                                         !notification.is_read ? 'bg-blue-50 border-l-4 border-blue-500' : ''
                                                     }`}
-                                                    onClick={() => !notification.is_read && markAsRead(notification.id)}
+                                                    onClick={() => {
+                                                        if (!notification.is_read) {
+                                                            markAsRead(notification.id);
+                                                        }
+                                                    }}
                                                 >
                                                     <div className="flex items-start space-x-3">
                                                         <div className={`flex-shrink-0 w-8 h-8 rounded-full ${config.bgColor} flex items-center justify-center`}>
@@ -186,13 +206,15 @@ const NotificationDropdown = ({ user }) => {
 
                             {/* Footer */}
                             {notifications.length > 0 && (
-                                <div className="p-3 border-t border-gray-100 bg-gray-50 rounded-b-lg">
-                                    <button
+                                <div className="p-3 border-t border-gray-100 bg-gray-50 rounded-b-lg flex gap-2">
+                                    <Link
+                                        href="/notifications"
+                                        className="flex-1 text-sm text-blue-600 hover:text-blue-700 font-medium py-2 px-4 rounded hover:bg-white transition-colors text-center flex items-center justify-center gap-2"
                                         onClick={() => setIsOpen(false)}
-                                        className="w-full text-sm text-blue-600 hover:text-blue-700 font-medium py-2 px-4 rounded hover:bg-white transition-colors"
                                     >
-                                        Lihat Semua Notifikasi
-                                    </button>
+                                        Lihat Semua
+                                        <ArrowRight size={14} />
+                                    </Link>
                                 </div>
                             )}
                         </motion.div>

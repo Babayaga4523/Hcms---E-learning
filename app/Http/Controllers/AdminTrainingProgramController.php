@@ -10,6 +10,8 @@ use App\Models\ModuleAssignment;
 use App\Models\TrainingDiscussion;
 use App\Models\User;
 use App\Models\UserTraining;
+use App\Services\ImageUploadHandler;
+use App\Services\MaterialUploadHandler;
 use App\Services\PdfConverterService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -243,6 +245,8 @@ class AdminTrainingProgramController extends Controller
             'allow_retake' => 'boolean',
             'max_retake_attempts' => 'nullable|integer|min:1',
             'expiry_date' => 'nullable|date',
+            'start_date' => 'nullable|date_format:Y-m-d\TH:i',
+            'end_date' => 'nullable|date_format:Y-m-d\TH:i|after_or_equal:start_date',
             'prerequisite_module_id' => 'nullable|exists:modules,id',
             'instructor_id' => 'nullable|exists:users,id',
             'certificate_template' => 'nullable|string',
@@ -296,16 +300,30 @@ class AdminTrainingProgramController extends Controller
 
         try {
             // A. Simpan Module / Program Utama
+            // For drafts, if title is empty, generate a default title with timestamp
+            $titleValue = $request->title;
+            if (empty($titleValue)) {
+                if ($isDraft) {
+                    $titleValue = 'Draft Program - ' . date('d M Y H:i');
+                } else {
+                    // This should not happen due to validation, but as a safety check
+                    $titleValue = 'Untitled Program';
+                }
+            }
+
             $module = Module::create([
-                'title' => $request->title,
+                'title' => $titleValue,
                 'description' => $request->description,
                 'duration_minutes' => $request->duration_minutes,
                 'passing_grade' => $request->passing_grade ?? 0,
                 'category' => $request->category ?? null,
+                'difficulty' => $request->difficulty ?? 'intermediate',
                 'is_active' => filter_var($request->is_active ?? false, FILTER_VALIDATE_BOOLEAN),
                 'allow_retake' => filter_var($request->allow_retake ?? false, FILTER_VALIDATE_BOOLEAN),
                 'max_retake_attempts' => $request->allow_retake ? ($request->max_retake_attempts ?? 3) : 0,
                 'expiry_date' => $request->expiry_date ?? null,
+                'start_date' => $request->start_date ?? null,
+                'end_date' => $request->end_date ?? null,
                 'prerequisite_module_id' => $request->prerequisite_module_id ?? null,
                 'instructor_id' => $request->instructor_id ?? null,
                 'certificate_template' => $request->certificate_template ?? null,
@@ -563,103 +581,37 @@ class AdminTrainingProgramController extends Controller
                     // Handle Image Upload untuk Question - IMPROVED: Support both direct upload and temp file move
                     $imageUrl = null;
 
-                    // Check for uploaded file in the request using Laravel's file handling
-                    if (isset($qData['image_url'])) {
-                        Log::info('Image upload data received', [
-                            'image_url_type' => gettype($qData['image_url']),
-                            'image_url_value' => is_object($qData['image_url']) ? get_class($qData['image_url']) : $qData['image_url'],
-                            'is_uploaded_file' => $qData['image_url'] instanceof \Illuminate\Http\UploadedFile,
-                            'question_index' => $index
-                        ]);
-
-                        if ($qData['image_url'] instanceof \Illuminate\Http\UploadedFile && $qData['image_url']->isValid()) {
-                            // Direct upload (legacy support)
-                            try {
-                                Log::info("LEGACY-UPLOAD-RECEIVED: " . get_class($qData['image_url']) . " name=" . (method_exists($qData['image_url'], 'getClientOriginalName') ? $qData['image_url']->getClientOriginalName() : 'unknown'));
-                                $extension = method_exists($qData['image_url'], 'getClientOriginalExtension') ? $qData['image_url']->getClientOriginalExtension() : pathinfo($qData['image_url']->getFilename(), PATHINFO_EXTENSION);
-                                $imageFilename = 'quiz_' . $module->id . '_' . time() . '_' . uniqid() . '.' . $extension;
-                                // Use storeAs if available, otherwise move the temp file manually
-                                if (method_exists($qData['image_url'], 'storeAs')) {
-                                    $path = $qData['image_url']->storeAs('public/questions', $imageFilename);
-                                    Log::info("STORED USING storeAs, path=" . $path);
-                                } else {
-                                    // Fallback: move the underlying file into storage
-                                    $tmpPath = $qData['image_url']->getPathname();
-                                    $target = storage_path('app/public/questions/' . $imageFilename);
-                                    if (!is_dir(dirname($target))) {
-                                        mkdir(dirname($target), 0755, true);
-                                    }
-                                    $copied = copy($tmpPath, $target);
-                                    Log::info("FALLBACK copy tmpPath=" . $tmpPath . " to " . $target . " result=" . ($copied ? '1' : '0'));
-                                    $path = 'public/questions/' . $imageFilename;
-                                }
-                                $uploadedFiles[] = 'public/questions/' . $imageFilename;
-                                $publicPath = 'questions/' . $imageFilename;
-                                /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
-                                $disk = Storage::disk('public');
-                                $imageUrl = $disk->url($publicPath);
-                                Log::info("IMAGE_URL_GENERATED: " . $imageUrl);
-                                if (!$disk->exists($publicPath)) {
-                                    Log::warning('Uploaded question image not found on public disk (but URL generated)', ['path' => $publicPath]);
-                                }
-                                Log::info('Question image uploaded directly (legacy)', ['filename' => $imageFilename, 'path' => $path]);
-                            } catch (\Exception $e) {
-                                Log::error('Direct question image upload failed', ['error' => $e->getMessage(), 'filename' => $imageFilename ?? 'unknown']);
+                    // Use centralized ImageUploadHandler service for robust image handling
+                    if (isset($qData['image_url']) && !empty($qData['image_url'])) {
+                        try {
+                            $handler = new ImageUploadHandler();
+                            $imageUrl = $handler->handle($qData['image_url'], [
+                                'module_id' => $module->id,
+                                'question_index' => $index
+                            ]);
+                            
+                            if ($imageUrl) {
+                                Log::info('Question image processed via ImageUploadHandler', [
+                                    'url' => $imageUrl,
+                                    'module_id' => $module->id,
+                                    'question_index' => $index
+                                ]);
+                            } else {
+                                Log::warning('ImageUploadHandler returned null for image data', [
+                                    'module_id' => $module->id,
+                                    'question_index' => $index,
+                                    'data_type' => gettype($qData['image_url'])
+                                ]);
                             }
-                        } elseif (is_string($qData['image_url']) && str_starts_with($qData['image_url'], 'private/temp_questions/')) {
-                            // Move from temp storage to permanent
-                            try {
-                                $tempPath = $qData['image_url'];
-                                $filename = basename($tempPath);
-                                $permanentPath = 'public/questions/' . $filename;
-
-                                if (Storage::exists($tempPath)) {
-                                    // Move file from temp to permanent location
-                                    Storage::move($tempPath, $permanentPath);
-                                    $uploadedFiles[] = $permanentPath;
-                                    $publicPath = 'questions/' . $filename;
-                                    /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
-                                    $disk = Storage::disk('public');
-                                    if ($disk->exists($publicPath)) {
-                                        $imageUrl = $disk->url($publicPath);
-                                    } else {
-                                        // fallback to Storage URL generation even if file not found, keeping URL generation consistent
-                                        $imageUrl = $disk->url($publicPath);
-                                        Log::warning('Moved file not found on public disk; generating URL anyway', ['public_path' => $publicPath]);
-                                    }
-                                    Log::info('Question image moved from temp to permanent', ['filename' => $filename]);
-                                } else {
-                                    Log::warning('Temp image file not found', ['temp_path' => $tempPath]);
-                                }
-                            } catch (\Exception $e) {
-                                Log::error('Temp to permanent image move failed', ['error' => $e->getMessage()]);
-                            }
-                        } elseif (is_string($qData['image_url']) && str_starts_with($qData['image_url'], 'data:image/')) {
-                            // Handle base64 image
-                            try {
-                                $data = explode(',', $qData['image_url']);
-                                $imageData = base64_decode($data[1]);
-                                $mime = explode(';', $data[0])[0];
-                                $extension = explode('/', $mime)[1];
-                                $imageFilename = 'quiz_' . $module->id . '_' . time() . '_' . uniqid() . '.' . $extension;
-                                $path = 'questions/' . $imageFilename;
-                                /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
-                                $disk = Storage::disk('public');
-                                $disk->put($path, $imageData);
-                                $uploadedFiles[] = 'public/' . $path;
-                                $imageUrl = $disk->url($path);
-                                Log::info('Question image uploaded from base64', ['filename' => $imageFilename]);
-                            } catch (\Exception $e) {
-                                Log::error('Base64 image upload failed', ['error' => $e->getMessage()]);
-                            }
-                        } else {
-                            Log::warning('Image data received but not in expected format', [
-                                'type' => gettype($qData['image_url']),
-                                'value' => is_object($qData['image_url']) ? get_class($qData['image_url']) : substr($qData['image_url'], 0, 100)
+                        } catch (\Exception $e) {
+                            Log::error('Image upload via ImageUploadHandler failed', [
+                                'error' => $e->getMessage(),
+                                'module_id' => $module->id,
+                                'question_index' => $index
                             ]);
                         }
                     } else {
-                        Log::info('No image_url field in question data', ['question_index' => $index, 'qType' => $qType]);
+                        Log::debug('No image data for question', ['question_index' => $index]);
                     }
 
                     // Build normalized options array and also keep legacy fields for compatibility
@@ -901,16 +853,42 @@ class AdminTrainingProgramController extends Controller
                 'Onboarding'
             ];
 
-            $validated = $request->validate([
-                'title' => 'required|string|max:255',
-                'description' => 'required|string',
-                'duration_minutes' => 'required|integer|min:1',
-                'passing_grade' => 'required|integer|min:0',
-                'category' => ['required', 'string', \Illuminate\Validation\Rule::in($allowedCategories)],
-                'is_active' => 'boolean',
-                'allow_retake' => 'boolean',
-                'max_retake_attempts' => 'nullable|integer|min:1',
-                'expiry_date' => 'nullable|date',
+            // Check if program is being published (is_active = true)
+            $isPublishing = $request->input('is_active') === true || $request->input('is_active') === 'true';
+            
+            // Build validation rules based on draft vs published status
+            if ($isPublishing) {
+                // For published programs: all fields are required
+                $rules = [
+                    'title' => 'required|string|max:255',
+                    'description' => 'required|string',
+                    'duration_minutes' => 'required|integer|min:1',
+                    'passing_grade' => 'required|integer|min:0|max:100',
+                    'category' => ['required', 'string', \Illuminate\Validation\Rule::in($allowedCategories)],
+                    'is_active' => 'boolean',
+                    'allow_retake' => 'boolean',
+                    'max_retake_attempts' => 'nullable|integer|min:1',
+                    'expiry_date' => 'nullable|date',
+                ];
+            } else {
+                // For draft programs: only title & description are required, others optional
+                $rules = [
+                    'title' => 'required|string|max:255',
+                    'description' => 'required|string',
+                    'duration_minutes' => 'nullable|integer|min:1',
+                    'passing_grade' => 'nullable|integer|min:0|max:100',
+                    'category' => ['nullable', 'string', \Illuminate\Validation\Rule::in($allowedCategories)],
+                    'is_active' => 'boolean',
+                    'allow_retake' => 'nullable|boolean',
+                    'max_retake_attempts' => 'nullable|integer|min:1',
+                    'expiry_date' => 'nullable|date',
+                ];
+            }
+            
+            // Add optional fields that can be in both draft and published
+            $rules = array_merge($rules, [
+                'start_date' => 'nullable|date_format:Y-m-d\TH:i',
+                'end_date' => 'nullable|date_format:Y-m-d\TH:i|after_or_equal:start_date',
                 'prerequisite_module_id' => 'nullable|exists:modules,id',
                 'instructor_id' => 'nullable|exists:users,id',
                 'certificate_template' => 'nullable|string',
@@ -918,11 +896,18 @@ class AdminTrainingProgramController extends Controller
                 'cover_image' => 'sometimes|nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
                 'pretest_duration' => 'nullable|integer|min:1',
                 'posttest_duration' => 'nullable|integer|min:1',
+                'pretest_duration_minutes' => 'nullable|integer|min:1',
+                'posttest_duration_minutes' => 'nullable|integer|min:1',
             ]);
 
-            $module->update([
-                ...$validated,
-            ]);
+            $validated = $request->validate($rules);
+
+            // Only update module fields that are present
+            $updateData = collect($validated)->filter(function($value, $key) {
+                return !in_array($key, ['pretest_duration', 'posttest_duration', 'pretest_duration_minutes', 'posttest_duration_minutes']);
+            })->toArray();
+
+            $module->update($updateData);
 
             // Handle optional cover image update (replace old one)
             if ($request->hasFile('cover_image') && $request->file('cover_image')->isValid()) {
@@ -1020,7 +1005,7 @@ class AdminTrainingProgramController extends Controller
     }
 
     /**
-     * Duplicate training program
+     * Duplicate training program with all related data (materials, quizzes, questions)
      */
     public function duplicate($id)
     {
@@ -1031,49 +1016,62 @@ class AdminTrainingProgramController extends Controller
         }
 
         try {
-            $original = Module::with('questions', 'quizzes')->findOrFail($id);
+            $original = Module::with('questions', 'quizzes', 'trainingMaterials')->findOrFail($id);
 
-            // Create duplicate
+            // Create duplicate program
             $duplicate = $original->replicate();
             $duplicate->title = $original->title . ' (Copy)';
             $duplicate->is_active = false;
             $duplicate->save();
 
+            // Copy training materials
+            if ($original->trainingMaterials && count($original->trainingMaterials) > 0) {
+                foreach ($original->trainingMaterials as $material) {
+                    $duplicateMaterial = $material->replicate();
+                    $duplicateMaterial->module_id = $duplicate->id;
+                    $duplicateMaterial->save();
+                }
+            }
+
             // Copy quizzes
-            foreach ($original->quizzes as $quiz) {
-                $duplicateQuiz = $quiz->replicate();
-                $duplicateQuiz->module_id = $duplicate->id;
-                $duplicateQuiz->save();
+            if ($original->quizzes && count($original->quizzes) > 0) {
+                foreach ($original->quizzes as $quiz) {
+                    $duplicateQuiz = $quiz->replicate();
+                    $duplicateQuiz->module_id = $duplicate->id;
+                    $duplicateQuiz->save();
+                }
             }
 
             // Copy questions
-            foreach ($original->questions as $question) {
-                $duplicateQuestion = $question->replicate();
-                $duplicateQuestion->module_id = $duplicate->id;
-                // Update quiz_id if it references original quiz
-                if ($question->quiz_id) {
-                    // Find corresponding duplicate quiz
-                    $originalQuiz = $original->quizzes->where('id', $question->quiz_id)->first();
-                    if ($originalQuiz) {
-                        $duplicateQuiz = $duplicate->quizzes->where('type', $originalQuiz->type)->first();
-                        if ($duplicateQuiz) {
-                            $duplicateQuestion->quiz_id = $duplicateQuiz->id;
+            if ($original->questions && count($original->questions) > 0) {
+                foreach ($original->questions as $question) {
+                    $duplicateQuestion = $question->replicate();
+                    $duplicateQuestion->module_id = $duplicate->id;
+                    // Update quiz_id if it references original quiz
+                    if ($question->quiz_id) {
+                        // Find corresponding duplicate quiz
+                        $originalQuiz = $original->quizzes->where('id', $question->quiz_id)->first();
+                        if ($originalQuiz) {
+                            $duplicateQuiz = $duplicate->quizzes->where('type', $originalQuiz->type)->first();
+                            if ($duplicateQuiz) {
+                                $duplicateQuestion->quiz_id = $duplicateQuiz->id;
+                            }
                         }
                     }
+                    $duplicateQuestion->save();
                 }
-                $duplicateQuestion->save();
             }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Program berhasil diduplikasi',
+                'message' => 'Program berhasil diduplikasi dengan semua materi, kuis, dan soal',
                 'data' => $duplicate,
             ]);
         } catch (\Exception $e) {
             Log::error('Duplicate Training Program Error: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => 'Error menduplikasi program',
+                'message' => 'Error menduplikasi program: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -1204,95 +1202,81 @@ class AdminTrainingProgramController extends Controller
         }
 
         try {
-            Module::findOrFail($id);
+            $module = Module::findOrFail($id);
 
             $request->validate([
-                'file' => 'required|file|max:102400',
+                'file' => 'required|file|max:524288', // 512MB max
                 'title' => 'required|string|max:255',
-                'material_type' => 'sometimes|string',
-                'description' => 'sometimes|string',
+                'material_type' => 'required|in:document,video,presentation,image',
+                'description' => 'nullable|string',
                 'duration_minutes' => 'nullable|integer|min:0',
             ]);
 
+            // Use MaterialUploadHandler for robust file handling
             $file = $request->file('file');
-            $extension = strtolower($file->getClientOriginalExtension());
-            $filename = time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '_', $file->getClientOriginalName());
+            $materialType = $request->material_type;
             
-            // Store original file
-            $filepath = $file->storeAs('training-materials', $filename, 'public');
+            $handler = new MaterialUploadHandler();
+            $fileUrl = $handler->handle($file, [
+                'material_type' => $materialType,
+                'module_id' => $module->id
+            ]);
             
-            // Convert to PDF if Excel/Office file
-            $pdfPath = null;
-            $excelExtensions = ['xlsx', 'xls', 'xlsm', 'csv'];
-            
-            if (in_array($extension, $excelExtensions)) {
-                // Use new ExcelToPdfService for conversion
-                $pdfFileName = time() . '_' . preg_replace('/\.[^.]+$/', '', basename($filename)) . '.pdf';
-                $pdfStoragePath = 'training-materials/pdf/' . $pdfFileName;
-                
-                $fullExcelPath = storage_path('app/public/' . $filepath);
-                $fullPdfPath = storage_path('app/public/' . $pdfStoragePath);
-                
-                Log::info("Converting Excel to PDF", ['input' => $fullExcelPath, 'output' => $fullPdfPath]);
-                
-                // Create PDF directory if not exists
-                $pdfDir = dirname($fullPdfPath);
-                if (!is_dir($pdfDir)) {
-                    mkdir($pdfDir, 0755, true);
-                }
-                
-                // Convert using service
-                if (\App\Services\ExcelToPdfService::convert($fullExcelPath, $fullPdfPath)) {
-                    $pdfPath = $pdfStoragePath;
-                    Log::info("Excel to PDF conversion successful", ['pdf_path' => $pdfPath]);
-                } else {
-                    Log::warning("Excel to PDF conversion failed, will serve original file");
-                }
-            }
-
-            // Map material_type to file_type
-            $fileType = $request->material_type ?? 'document';
-            
-            // If PDF was created, display as pdf type
-            if ($pdfPath) {
-                $fileType = 'pdf';
+            if (!$fileUrl) {
+                return response()->json([
+                    'error' => 'File upload failed. Please check file type and size.',
+                    'details' => 'Supported formats for ' . $materialType . ' have size limits.'
+                ], 422);
             }
             
+            // Create material record
             $material = TrainingMaterial::create([
-                'module_id' => $id,
+                'module_id' => $module->id,
                 'title' => $request->title,
                 'description' => $request->description ?? '',
-                'file_type' => $fileType,
-                'file_path' => $filepath,
-                'pdf_path' => $pdfPath,
+                'file_type' => $materialType,
+                'file_path' => $fileUrl,
+                'pdf_path' => null, // Can be populated later for PDF conversion
                 'file_name' => $file->getClientOriginalName(),
                 'file_size' => $file->getSize(),
                 'duration_minutes' => $request->duration_minutes ?? 0,
-                'order' => TrainingMaterial::where('module_id', $id)->max('order') + 1 ?? 0,
+                'order' => TrainingMaterial::where('module_id', $module->id)->max('order') + 1 ?? 1,
                 'uploaded_by' => $user->id,
+            ]);
+
+            Log::info('Material uploaded successfully', [
+                'module_id' => $module->id,
+                'material_id' => $material->id,
+                'type' => $materialType,
+                'url' => $fileUrl
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Materi berhasil diunggah' . ($pdfPath ? ' dan dikonversi ke PDF' : ''),
+                'message' => 'Materi berhasil diunggah',
                 'data' => [
                     'id' => $material->id,
                     'title' => $material->title,
                     'description' => $material->description,
                     'file_type' => $material->file_type,
                     'file_path' => $material->file_path,
-                    'pdf_path' => $material->pdf_path,
                     'file_name' => $material->file_name,
                     'file_size' => $material->file_size,
                     'duration_minutes' => $material->duration_minutes,
                     'material_type' => $material->file_type,
+                    'created_at' => $material->created_at,
                 ],
             ]);
         } catch (\Exception $e) {
-            Log::error('Material Upload Error: ' . $e->getMessage() . ' Trace: ' . $e->getTraceAsString());
+            Log::error('Material Upload Error', [
+                'error' => $e->getMessage(),
+                'file' => $request->file('file')?->getClientOriginalName() ?? 'unknown',
+                'module_id' => $id
+            ]);
+            
             return response()->json([
-                'success' => false,
-                'message' => 'Error mengunggah materi: ' . $e->getMessage(),
+                'error' => 'Failed to upload material',
+                'message' => $e->getMessage()
             ], 500);
         }
     }

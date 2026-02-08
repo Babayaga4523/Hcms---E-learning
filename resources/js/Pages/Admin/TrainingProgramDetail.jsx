@@ -479,21 +479,6 @@ export default function TrainingProgramDetail({ program: initialProgram, materia
                                         <MoreHorizontal className="w-4 h-4" /> Opsi Lainnya
                                     </button>
                                 </div>
-
-                                <div className="mt-8 pt-6 border-t border-slate-100">
-                                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">AI Insights</h4>
-                                    <div className="p-4 bg-purple-50 rounded-2xl border border-purple-100">
-                                        <div className="flex gap-3">
-                                            <Sparkles className="w-5 h-5 text-purple-600 shrink-0" />
-                                            <div>
-                                                <p className="text-xs font-bold text-purple-800 mb-1">Rekomendasi</p>
-                                                <p className="text-xs text-purple-700 leading-relaxed">
-                                                    Tingkat kelulusan kuis "Pre-Test" rendah (45%). Pertimbangkan menyederhanakan soal #4 dan #8.
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
                             </div>
 
                             {/* Info List */}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Head, usePage, Link, router } from '@inertiajs/react';
 import AdminLayout from '@/Layouts/AdminLayout';
+import DOMPurify from 'dompurify';
 import {
     Save, X, Plus, Trash2, Copy, Eye, ArrowLeft, 
     AlertCircle, Check, ChevronDown, Sparkles, Image as ImageIcon,
@@ -93,14 +94,26 @@ const DifficultyCard = ({ level, active, onClick }) => {
 
 // --- MAIN COMPONENT ---
 
-export default function QuestionManagement({ question = null, module_id = null, question_type = null, returnUrl = null }) {
+export default function QuestionManagement({ question = null, module_id = null, quiz_id = null, question_type = null, returnUrl = null }) {
     const page = usePage();
     const auth = page?.props?.auth || {};
     const user = auth?.user;
     
+    // Get query parameters
+    const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+    const queryType = urlParams.get('type'); // pretest or posttest
+    const queryModuleId = urlParams.get('module_id');
+    
+    // Determine test type from query params first, then from question_type param, then default
+    const initialTestType = queryType || question_type === 'pretest' || question_type === 'posttest' 
+        ? queryType || question_type 
+        : (question?.question_type === 'pretest' || question?.type === 'pretest' ? 'pretest' : 'posttest');
+    
     // Default return URL
     const getBackUrl = () => {
         if (returnUrl) return returnUrl;
+        if (queryModuleId || module_id) return `/admin/training-programs/${queryModuleId || module_id}/content-manager`;
+        if (quiz_id) return `/admin/quizzes/${quiz_id}`;
         return '/admin/questions';
     };
     
@@ -120,8 +133,18 @@ export default function QuestionManagement({ question = null, module_id = null, 
         points: question.points || 10,
         explanation: question.explanation || '',
         module_id: question.module_id || null,
+        quiz_id: question.quiz_id || null,
         id: question.id || null,
     } : null;
+    
+    // Sanitize HTML from contenteditable (remove dangerous tags but keep formatting)
+    const sanitizeQuestionText = (html) => {
+        return DOMPurify.sanitize(html, { 
+            ALLOWED_TAGS: ['b', 'i', 'u', 's', 'em', 'strong', 'ul', 'ol', 'li', 'br', 'p', 'pre', 'code'],
+            ALLOWED_ATTR: ['style'],
+            KEEP_CONTENT: true
+        });
+    };
     
     // Debug log - show loaded question data
     if (questionData) {
@@ -135,10 +158,11 @@ export default function QuestionManagement({ question = null, module_id = null, 
     }
     
     const [loading, setLoading] = useState(false);
+    const [testType, setTestType] = useState(initialTestType);
     const editorRef = React.useRef(null);
     const initialFormData = {
         question_text: questionData?.question_text || '',
-        question_type: questionData?.question_type || question_type || 'multiple_choice',
+        question_type: questionData?.question_type || 'multiple_choice',
         category: questionData?.category || 'general',
         difficulty: questionData?.difficulty || 'medium',
         options: questionData?.options || ['', '', '', ''],
@@ -149,7 +173,8 @@ export default function QuestionManagement({ question = null, module_id = null, 
         image_file: null,
         tags: [],
         tagInput: '',
-        module_id: questionData?.module_id || module_id || null,
+        module_id: questionData?.module_id || queryModuleId || module_id || null,
+        quiz_id: questionData?.quiz_id || quiz_id || null,
     };
     
     console.log('Initial formData:', {
@@ -171,13 +196,29 @@ export default function QuestionManagement({ question = null, module_id = null, 
     ];
 
     const types = [
-        { id: 'multiple_choice', name: 'Pilihan Ganda' },
-        { id: 'true_false', name: 'Benar/Salah' },
-        { id: 'short_answer', name: 'Jawaban Singkat' },
-        { id: 'essay', name: 'Essay' },
-        { id: 'pretest', name: 'Pre-Test' },
-        { id: 'posttest', name: 'Post-Test' }
+        { id: 'multiple_choice', name: 'Pilihan Ganda', icon: '🔘' },
+        { id: 'true_false', name: 'Benar/Salah', icon: '✓' },
+        { id: 'short_answer', name: 'Jawaban Singkat', icon: '📝' },
     ];
+
+    // Get theme colors based on test type
+    const themeColors = testType === 'pretest' ? {
+        primary: 'from-blue-500 to-blue-600',
+        primaryLight: 'from-blue-50 to-blue-100',
+        primaryBorder: 'border-blue-200',
+        primaryRing: 'focus:ring-blue-200/50',
+        primaryAccent: 'text-blue-600',
+        badge: 'bg-blue-100 text-blue-700',
+        button: 'from-blue-400 to-blue-500 hover:from-blue-500 hover:to-blue-600',
+    } : {
+        primary: 'from-orange-500 to-orange-600',
+        primaryLight: 'from-orange-50 to-orange-100',
+        primaryBorder: 'border-orange-200',
+        primaryRing: 'focus:ring-orange-200/50',
+        primaryAccent: 'text-orange-600',
+        badge: 'bg-orange-100 text-orange-700',
+        button: 'from-orange-400 to-orange-500 hover:from-orange-500 hover:to-orange-600',
+    };
 
     const difficulties = [
         { id: 'easy', name: 'Easy' },
@@ -386,10 +427,11 @@ export default function QuestionManagement({ question = null, module_id = null, 
             
             if (editorRef.current) {
                 editorContent = editorRef.current.innerHTML ? editorRef.current.innerHTML.trim() : '';
-                console.log('Editor ref found, content:', {
+                // Sanitize HTML content
+                editorContent = sanitizeQuestionText(editorContent);
+                console.log('Editor ref found, sanitized content:', {
                     innerHTML: editorRef.current.innerHTML,
-                    textContent: editorRef.current.textContent,
-                    trimmed: editorContent,
+                    sanitized: editorContent,
                     isEmpty: !editorContent
                 });
             } else {
@@ -399,6 +441,7 @@ export default function QuestionManagement({ question = null, module_id = null, 
             // Also get from state as fallback
             if (!editorContent && formData.question_text) {
                 editorContent = formData.question_text.trim();
+                editorContent = sanitizeQuestionText(editorContent);
                 console.log('Using formData.question_text as fallback:', editorContent);
             }
 
@@ -425,7 +468,7 @@ export default function QuestionManagement({ question = null, module_id = null, 
             const method = isUpdate ? 'POST' : 'POST'; // Always POST for FormData
             const url = isUpdate ? `/api/questions/${questionData.id}` : '/api/questions';
 
-            // Use FormData dengan content yang fresh
+            // Use FormData dengan content yang fresh dan sanitized
             const formDataToSend = new FormData();
             
             // Add _method untuk Laravel PUT spoofing jika update
@@ -434,7 +477,7 @@ export default function QuestionManagement({ question = null, module_id = null, 
             }
             
             formDataToSend.append('question_text', editorContent);
-            formDataToSend.append('question_type', formData.question_type);
+            formDataToSend.append('question_type', testType === 'pretest' || testType === 'posttest' ? testType : formData.question_type);
             formDataToSend.append('category', formData.category);
             formDataToSend.append('difficulty', formData.difficulty);
             formDataToSend.append('option_a', formData.options[0] || '');
@@ -445,6 +488,7 @@ export default function QuestionManagement({ question = null, module_id = null, 
             formDataToSend.append('explanation', formData.explanation);
             formDataToSend.append('points', parseInt(formData.points));
             formDataToSend.append('module_id', formData.module_id || '');
+            formDataToSend.append('quiz_id', formData.quiz_id || '');
             
             // Add image file jika ada
             if (formData.image_file) {
@@ -458,17 +502,11 @@ export default function QuestionManagement({ question = null, module_id = null, 
                 url,
                 question_text: editorContent,
                 question_type: formData.question_type,
-                question_type_type: typeof formData.question_type,
                 difficulty: formData.difficulty,
-                difficulty_type: typeof formData.difficulty,
+                module_id: formData.module_id,
+                quiz_id: formData.quiz_id,
                 hasImage: !!formData.image_file,
                 formDataEntries: entries
-            });
-            
-            // Log each field specifically
-            console.log('FormData fields:');
-            entries.forEach(([key, value]) => {
-                console.log(`  ${key}: "${value}" (${typeof value})`);
             });
 
             const response = await fetch(url, {
@@ -484,14 +522,17 @@ export default function QuestionManagement({ question = null, module_id = null, 
             console.log('Response status:', response.status, 'Data:', responseData);
 
             if (response.ok) {
-                router.push('/admin/questions');
+                showToast('Soal berhasil disimpan!', 'success');
+                router.push(getBackUrl());
             } else {
                 console.error('Validation errors:', responseData.errors);
                 setErrors(responseData.errors || {});
+                showToast('Gagal menyimpan soal', 'error');
             }
         } catch (error) {
             console.error('Error saving question:', error);
             setErrors({ general: 'Terjadi kesalahan saat menyimpan: ' + error.message });
+            showToast('Terjadi kesalahan: ' + error.message, 'error');
         } finally {
             setLoading(false);
         }
@@ -528,7 +569,7 @@ export default function QuestionManagement({ question = null, module_id = null, 
                 {/* Header with Gradient */}
                 <div className="sticky top-0 z-40 bg-white/80 backdrop-blur-xl border-b border-slate-100/50">
                     <div className="max-w-7xl mx-auto px-6 py-4">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center gap-4">
                                 <Link
                                     href={getBackUrl()}
@@ -538,7 +579,7 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                 </Link>
                                 <div>
                                     <h1 className="text-2xl font-black text-slate-900">
-                                        Wondr Editor Studio
+                                        {testType === 'pretest' ? '🔵 Pre-Test' : '🟠 Post-Test'} Editor
                                     </h1>
                                     <p className="text-xs text-slate-600 uppercase tracking-wider font-bold mt-0.5">
                                         {question ? '✏️ Edit Mode' : '✨ Create Mode'}
@@ -549,16 +590,63 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                 type="submit"
                                 form="question-form"
                                 disabled={loading}
-                                className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-lime-400 to-lime-500 hover:from-lime-500 hover:to-lime-600 text-slate-900 font-bold rounded-xl transition-all shadow-lg hover:shadow-xl disabled:opacity-50"
+                                className={`flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r ${themeColors.button} text-white font-bold rounded-xl transition-all shadow-lg hover:shadow-xl disabled:opacity-50`}
                             >
                                 <Save size={18} />
                                 {loading ? 'Menyimpan...' : 'Publikasikan'}
                             </button>
                         </div>
+
+                        {/* Test Type Toggle */}
+                        <div className="flex items-center gap-3 bg-gradient-to-r from-slate-50 to-slate-100 p-3 rounded-xl border border-slate-200">
+                            <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Pilih Jenis Tes:</span>
+                            <div className="flex gap-2">
+                                {['pretest', 'posttest'].map((type) => (
+                                    <button
+                                        key={type}
+                                        onClick={() => setTestType(type)}
+                                        disabled={question !== null}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all ${
+                                            testType === type
+                                                ? type === 'pretest'
+                                                    ? 'bg-blue-100 text-blue-700 border-2 border-blue-400 shadow-md'
+                                                    : 'bg-orange-100 text-orange-700 border-2 border-orange-400 shadow-md'
+                                                : 'bg-white text-slate-600 border-2 border-slate-200 hover:border-slate-300'
+                                        }`}
+                                        title={question ? 'Tidak bisa mengubah tipe tes saat mengedit' : ''}
+                                    >
+                                        {type === 'pretest' ? '🔵 Pre-Test' : '🟠 Post-Test'}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
                     </div>
                 </div>
 
                 <form id="question-form" onSubmit={handleSubmit} className="max-w-7xl mx-auto px-6 py-8">
+                    {/* Test Type Info Banner */}
+                    <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className={`mb-8 p-4 rounded-xl border-2 bg-gradient-to-r ${themeColors.primaryLight} ${themeColors.primaryBorder}`}
+                    >
+                        <div className="flex items-start gap-3">
+                            <div className="text-2xl">{testType === 'pretest' ? '🔵' : '🟠'}</div>
+                            <div>
+                                <h2 className={`font-bold text-sm ${themeColors.primaryAccent} uppercase tracking-wider`}>
+                                    {testType === 'pretest' 
+                                        ? 'Membuat Soal Pre-Test' 
+                                        : 'Membuat Soal Post-Test'}
+                                </h2>
+                                <p className="text-xs text-slate-600 mt-1">
+                                    {testType === 'pretest' 
+                                        ? 'Pre-test digunakan untuk mengukur pengetahuan awal peserta sebelum mengikuti pelatihan.'
+                                        : 'Post-test digunakan untuk mengukur pemahaman dan pencapaian peserta setelah menyelesaikan pelatihan.'}
+                                </p>
+                            </div>
+                        </div>
+                    </motion.div>
+
                     <motion.div
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -575,7 +663,7 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                 className="bg-white rounded-[32px] shadow-lg p-8 border border-slate-100"
                             >
                                 <div className="flex items-center gap-2 mb-4">
-                                    <Type size={18} className="text-slate-600" />
+                                    <Type size={18} className={testType === 'pretest' ? 'text-blue-600' : 'text-orange-600'} />
                                     <label className="text-xs font-black text-slate-900 uppercase tracking-wider">
                                         Pertanyaan Utama
                                     </label>
@@ -638,7 +726,11 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                     onBlur={handleEditorInput}
                                     suppressContentEditableWarning
                                     placeholder="Tulis pertanyaan yang hebat..."
-                                    className="w-full min-h-[180px] p-4 text-lg font-semibold text-slate-900 bg-slate-50 rounded-xl border border-slate-200 focus:border-lime-400 focus:ring-2 focus:ring-lime-200/50 outline-none transition-all overflow-y-auto"
+                                    className={`w-full min-h-[180px] p-4 text-lg font-semibold text-slate-900 bg-slate-50 rounded-xl border-2 transition-all overflow-y-auto ${
+                                        testType === 'pretest' 
+                                            ? 'border-blue-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-200/50' 
+                                            : 'border-orange-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-200/50'
+                                    }`}
                                     style={{
                                         lineHeight: '1.6',
                                     }}
@@ -718,16 +810,16 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                 >
                                     <div className="flex items-center justify-between mb-6">
                                         <div className="flex items-center gap-2">
-                                            <Check size={18} className="text-emerald-600" />
+                                            <Check size={18} className={themeColors.primaryAccent} />
                                             <label className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                                                Visual Option Selection
+                                                Pilihan Jawaban
                                             </label>
                                         </div>
                                         {formData.question_type === 'multiple_choice' && (
                                             <button
                                                 type="button"
                                                 onClick={handleAddOption}
-                                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-lime-600 hover:bg-lime-50 rounded-lg transition-colors uppercase tracking-wider"
+                                                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold ${themeColors.primaryAccent} hover:bg-slate-100 rounded-lg transition-colors uppercase tracking-wider`}
                                             >
                                                 <Plus size={14} /> Tambah Opsi
                                             </button>
@@ -745,7 +837,9 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                                     transition={{ duration: 0.2 }}
                                                     className={`flex items-center gap-3 p-4 rounded-xl border-2 transition-all cursor-pointer group ${
                                                         ['a', 'b', 'c', 'd'][index] === formData.correct_answer
-                                                            ? 'border-emerald-400 bg-emerald-50/50'
+                                                            ? testType === 'pretest'
+                                                                ? 'border-blue-400 bg-blue-50/50'
+                                                                : 'border-orange-400 bg-orange-50/50'
                                                             : 'border-slate-200 bg-slate-50 hover:border-slate-300'
                                                     }`}
                                                 >
@@ -761,7 +855,9 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                                         }))}
                                                         className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${
                                                             ['a', 'b', 'c', 'd'][index] === formData.correct_answer
-                                                                ? 'border-emerald-400 bg-emerald-400'
+                                                                ? testType === 'pretest'
+                                                                    ? 'border-blue-400 bg-blue-400'
+                                                                    : 'border-orange-400 bg-orange-400'
                                                                 : 'border-slate-300 hover:border-slate-400'
                                                         }`}
                                                     >
@@ -776,7 +872,7 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                                         value={option}
                                                         onChange={(e) => handleOptionChange(index, e.target.value)}
                                                         placeholder={`Opsi ${String.fromCharCode(65 + index)}`}
-                                                        className="flex-1 px-3 py-2 bg-white rounded-lg border border-slate-200 text-slate-900 font-semibold focus:border-lime-400 focus:ring-2 focus:ring-lime-200/50 outline-none transition-all"
+                                                        className="flex-1 px-3 py-2 bg-white rounded-lg border border-slate-200 text-slate-900 font-semibold focus:border-slate-400 focus:ring-2 focus:ring-slate-200/50 outline-none transition-all"
                                                     />
 
                                                     {/* Delete Button */}
@@ -814,7 +910,7 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                 className="bg-white rounded-[32px] shadow-lg p-8 border border-slate-100"
                             >
                                 <div className="flex items-center gap-2 mb-4">
-                                    <HelpCircle size={18} className="text-indigo-600" />
+                                    <HelpCircle size={18} className={testType === 'pretest' ? 'text-blue-600' : 'text-orange-600'} />
                                     <label className="text-xs font-black text-slate-900 uppercase tracking-wider">
                                         Penjelasan & Jawaban
                                     </label>
@@ -825,7 +921,11 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                     value={formData.explanation}
                                     onChange={handleInputChange}
                                     placeholder="Jelaskan mengapa jawaban ini benar..."
-                                    className="w-full p-4 text-slate-900 bg-slate-50 rounded-xl border border-slate-200 focus:border-lime-400 focus:ring-2 focus:ring-lime-200/50 resize-none outline-none transition-all"
+                                    className={`w-full p-4 text-slate-900 bg-slate-50 rounded-xl border-2 resize-none outline-none transition-all ${
+                                        testType === 'pretest'
+                                            ? 'border-blue-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-200/50'
+                                            : 'border-orange-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-200/50'
+                                    }`}
                                     rows="4"
                                 />
                             </motion.div>
@@ -838,26 +938,44 @@ export default function QuestionManagement({ question = null, module_id = null, 
                             transition={{ duration: 0.4, delay: 0.1 }}
                             className="space-y-6"
                         >
+                            {/* Test Type Context Card */}
+                            <div className={`bg-gradient-to-br ${themeColors.primaryLight} rounded-[32px] shadow-lg p-6 border-2 ${themeColors.primaryBorder} sticky top-32`}>
+                                <h3 className={`text-xs font-black ${themeColors.primaryAccent} uppercase tracking-wider mb-3`}>
+                                    {testType === 'pretest' ? '🔵 Informasi Pre-Test' : '🟠 Informasi Post-Test'}
+                                </h3>
+                                <p className="text-xs leading-relaxed text-slate-700 mb-3">
+                                    {testType === 'pretest' 
+                                        ? 'Soal ini akan ditampilkan kepada peserta sebelum mereka memulai pelatihan untuk mengevaluasi pengetahuan awal mereka.'
+                                        : 'Soal ini akan ditampilkan kepada peserta setelah menyelesaikan pelatihan untuk mengukur pemahaman dan kompetensi mereka.'}
+                                </p>
+                                <div className={`flex items-center gap-2 p-3 rounded-lg ${themeColors.badge}`}>
+                                    <span className="text-lg">{testType === 'pretest' ? '📊' : '🎯'}</span>
+                                    <span className="text-xs font-bold uppercase tracking-wider">
+                                        {testType === 'pretest' ? 'Penilaian Awal' : 'Penilaian Akhir'}
+                                    </span>
+                                </div>
+                            </div>
+
                             {/* Configuration Card */}
-                            <div className="bg-white rounded-[32px] shadow-lg p-6 border border-slate-100 sticky top-32">
+                            <div className="bg-white rounded-[32px] shadow-lg p-6 border border-slate-100 sticky top-80">
                                 <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider mb-4">
-                                    ⚙️ Konfigurasi
+                                    ⚙️ Konfigurasi Soal
                                 </h3>
 
                                 <div className="space-y-4">
                                     {/* Type Select */}
                                     <div>
                                         <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                                            Tipe Soal
+                                            Format Soal
                                         </label>
                                         <select
                                             name="question_type"
                                             value={formData.question_type}
                                             onChange={handleInputChange}
-                                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-semibold focus:border-lime-400 focus:ring-2 focus:ring-lime-200/50 outline-none transition-all"
+                                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-semibold focus:border-slate-400 focus:ring-2 focus:ring-slate-200/50 outline-none transition-all"
                                         >
                                             {types.map(t => (
-                                                <option key={t.id} value={t.id}>{t.name}</option>
+                                                <option key={t.id} value={t.id}>{t.icon} {t.name}</option>
                                             ))}
                                         </select>
                                     </div>
@@ -869,15 +987,24 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                         </label>
                                         <div className="grid grid-cols-3 gap-2">
                                             {difficulties.map(diff => (
-                                                <DifficultyCard
+                                                <button
                                                     key={diff.id}
-                                                    level={diff.id === 'easy' ? 'easy' : diff.id === 'medium' ? 'medium' : 'hard'}
-                                                    active={formData.difficulty === diff.id}
                                                     onClick={() => setFormData(prev => ({
                                                         ...prev,
                                                         difficulty: diff.id
                                                     }))}
-                                                />
+                                                    className={`flex-1 py-3 px-2 rounded-xl border-2 text-xs font-bold uppercase tracking-wider transition-all ${
+                                                        formData.difficulty === diff.id 
+                                                        ? diff.id === 'easy'
+                                                            ? 'bg-emerald-100 text-emerald-700 border-emerald-400 shadow-sm scale-105' 
+                                                            : diff.id === 'medium'
+                                                            ? 'bg-amber-100 text-amber-700 border-amber-400 shadow-sm scale-105'
+                                                            : 'bg-red-100 text-red-700 border-red-400 shadow-sm scale-105'
+                                                        : 'bg-white border-slate-100 text-slate-400 hover:border-slate-300'
+                                                    }`}
+                                                >
+                                                    {diff.id === 'easy' ? '🟢 Easy' : diff.id === 'medium' ? '🟡 Medium' : '🔴 Hard'}
+                                                </button>
                                             ))}
                                         </div>
                                     </div>
@@ -891,7 +1018,7 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                             name="category"
                                             value={formData.category}
                                             onChange={handleInputChange}
-                                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-semibold focus:border-lime-400 focus:ring-2 focus:ring-lime-200/50 outline-none transition-all"
+                                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-semibold focus:border-slate-400 focus:ring-2 focus:ring-slate-200/50 outline-none transition-all"
                                         >
                                             {categories.map(cat => (
                                                 <option key={cat.id} value={cat.id}>{cat.name}</option>
@@ -903,9 +1030,9 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                     <div>
                                         <div className="flex items-center justify-between mb-2">
                                             <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                                                Poin XP
+                                                Poin
                                             </label>
-                                            <span className="text-lg font-black text-lime-500">
+                                            <span className={`text-lg font-black ${themeColors.primaryAccent}`}>
                                                 {formData.points}
                                             </span>
                                         </div>
@@ -916,7 +1043,10 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                             onChange={handleInputChange}
                                             min="1"
                                             max="100"
-                                            className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-lime-400"
+                                            className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                                            style={{
+                                                accentColor: testType === 'pretest' ? '#3b82f6' : '#f97316'
+                                            }}
                                         />
                                     </div>
                                 </div>
@@ -925,7 +1055,7 @@ export default function QuestionManagement({ question = null, module_id = null, 
                             {/* Tags Card */}
                             <div className="bg-white rounded-[32px] shadow-lg p-6 border border-slate-100">
                                 <div className="flex items-center gap-2 mb-4">
-                                    <Hash size={18} className="text-indigo-600" />
+                                    <Hash size={18} className={themeColors.primaryAccent} />
                                     <label className="text-xs font-black text-slate-900 uppercase tracking-wider">
                                         Smart Tags
                                     </label>
@@ -954,28 +1084,28 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                     }))}
                                     onKeyDown={handleAddTag}
                                     placeholder="Ketik & tekan Enter..."
-                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-semibold focus:border-lime-400 focus:ring-2 focus:ring-lime-200/50 outline-none transition-all text-sm"
+                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-semibold focus:border-slate-400 focus:ring-2 focus:ring-slate-200/50 outline-none transition-all text-sm"
                                 />
                             </div>
 
                             {/* Statistics Card (Edit Mode) */}
                             {question && (
-                                <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-[32px] shadow-lg p-6 border border-indigo-200">
-                                    <h3 className="text-xs font-black text-indigo-900 uppercase tracking-wider mb-4">
+                                <div className={`bg-gradient-to-br ${themeColors.primaryLight} rounded-[32px] shadow-lg p-6 border-2 ${themeColors.primaryBorder}`}>
+                                    <h3 className={`text-xs font-black ${themeColors.primaryAccent} uppercase tracking-wider mb-4`}>
                                         📊 Statistik Soal
                                     </h3>
                                     <div className="space-y-3">
                                         <div className="bg-white/60 backdrop-blur rounded-xl p-3">
-                                            <p className="text-xs text-indigo-700 font-bold uppercase tracking-wider">Digunakan</p>
-                                            <p className="text-2xl font-black text-indigo-900">{question.used_count || 0}x</p>
+                                            <p className="text-xs text-slate-700 font-bold uppercase tracking-wider">Digunakan</p>
+                                            <p className="text-2xl font-black text-slate-900">{question.used_count || 0}x</p>
                                         </div>
                                         <div className="bg-white/60 backdrop-blur rounded-xl p-3">
-                                            <p className="text-xs text-indigo-700 font-bold uppercase tracking-wider">Dijawab Benar</p>
+                                            <p className="text-xs text-slate-700 font-bold uppercase tracking-wider">Dijawab Benar</p>
                                             <p className="text-2xl font-black text-emerald-600">{question.correct_count || 0}x</p>
                                         </div>
                                         <div className="bg-white/60 backdrop-blur rounded-xl p-3">
-                                            <p className="text-xs text-indigo-700 font-bold uppercase tracking-wider">Success Rate</p>
-                                            <p className="text-2xl font-black text-lime-500">
+                                            <p className="text-xs text-slate-700 font-bold uppercase tracking-wider">Success Rate</p>
+                                            <p className="text-2xl font-black text-slate-900">
                                                 {question.used_count > 0
                                                     ? Math.round((question.correct_count / question.used_count) * 100)
                                                     : 0}%

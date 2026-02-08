@@ -83,8 +83,6 @@ const MaterialCard = ({ material, onView, onDelete, onComplete }) => (
 export default function TrainingMaterialsManager({ program, auth }) {
     const { user } = usePage().props.auth || {};
     const [materials, setMaterials] = useState(program?.materials || program?.training_materials || []);
-    const [pretestQuestions, setPretestQuestions] = useState(program?.pretest_questions || []);
-    const [posttestQuestions, setPosttestQuestions] = useState(program?.posttest_questions || []);
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState('');
     const [messageType, setMessageType] = useState('');
@@ -94,9 +92,8 @@ export default function TrainingMaterialsManager({ program, auth }) {
     const [viewMode, setViewMode] = useState('grid');
     const [filter, setFilter] = useState('all');
     const [previewFile, setPreviewFile] = useState(null);
-    const [aiAnalysis, setAiAnalysis] = useState(null);
+    
     const [searchQuery, setSearchQuery] = useState('');
-    const [activeTab, setActiveTab] = useState('materials');
 
     const [uploadData, setUploadData] = useState({
         title: '',
@@ -248,43 +245,7 @@ export default function TrainingMaterialsManager({ program, auth }) {
                     </div>
                 </div>
 
-                {/* --- TABS --- */}
-                <div className="flex gap-2 mb-6 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm">
-                    <button
-                        onClick={() => setActiveTab('materials')}
-                        className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition ${
-                            activeTab === 'materials' 
-                                ? 'bg-slate-900 text-white' 
-                                : 'text-slate-500 hover:bg-slate-100'
-                        }`}
-                    >
-                        📁 Materi ({materials.length})
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('pretest')}
-                        className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition ${
-                            activeTab === 'pretest' 
-                                ? 'bg-blue-600 text-white' 
-                                : 'text-slate-500 hover:bg-slate-100'
-                        }`}
-                    >
-                        📝 Pre-Test ({pretestQuestions.length})
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('posttest')}
-                        className={`flex-1 px-4 py-3 rounded-xl font-bold text-sm transition ${
-                            activeTab === 'posttest' 
-                                ? 'bg-green-600 text-white' 
-                                : 'text-slate-500 hover:bg-slate-100'
-                        }`}
-                    >
-                        ✅ Post-Test ({posttestQuestions.length})
-                    </button>
-                </div>
-
-                {/* --- MATERIALS TAB --- */}
-                {activeTab === 'materials' && (
-                    <>
+                {/* --- UPLOAD ZONE (HERO) --- */}
                         {/* --- UPLOAD ZONE (HERO) --- */}
                 {!showUploadForm ? (
                     <div className="bg-gradient-to-r from-indigo-600 to-purple-700 rounded-[32px] p-1 shadow-2xl shadow-indigo-200 mb-10 overflow-hidden relative group">
@@ -441,7 +402,7 @@ export default function TrainingMaterialsManager({ program, auth }) {
                                 <MaterialCard
                                     key={item.id}
                                     material={item}
-                                    onView={() => { setPreviewFile(item); setAiAnalysis(null); }}
+                                    onView={() => { setPreviewFile(item); }}
                                     onDelete={handleDelete}
                                     onComplete={async (material) => {
                                         try {
@@ -465,166 +426,6 @@ export default function TrainingMaterialsManager({ program, auth }) {
                         <File className="w-16 h-16 text-slate-300 mx-auto mb-4" />
                         <p className="text-slate-600 font-bold">Belum ada material pembelajaran</p>
                         <p className="text-slate-400 text-sm">Upload file untuk menambahkan materi pembelajaran</p>
-                    </div>
-                )}
-                </>
-                )}
-
-                {/* --- PRE-TEST TAB --- */}
-                {activeTab === 'pretest' && (
-                    <div className="space-y-4">
-                        <div className="flex justify-between items-center mb-6">
-                            <h2 className="text-xl font-bold text-slate-900">Pre-Test Questions</h2>
-                            <button
-                                onClick={() => window.location.href = `/admin/training-programs/${program.id}/questions?type=pretest`}
-                                className="px-4 py-2 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 transition"
-                            >
-                                + Tambah Soal
-                            </button>
-                        </div>
-                        
-                        {pretestQuestions.length > 0 ? (
-                            pretestQuestions.map((question, index) => (
-                                <div key={question.id || index} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-                                    <div className="flex items-start gap-4">
-                                        <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center font-bold text-sm flex-shrink-0">
-                                            {index + 1}
-                                        </div>
-                                        <div className="flex-1">
-                                            <p className="font-semibold text-slate-900 mb-3" dangerouslySetInnerHTML={{ __html: question.question_text }}></p>
-                                            
-                                            {/* Display question image if exists */}
-                                            {question.image_url && (
-                                                <div className="mb-4">
-                                                    <img 
-                                                        src={question.image_url}
-                                                        alt="Question visual"
-                                                        className="max-w-full h-auto rounded-lg border border-slate-200 shadow-sm"
-                                                        style={{ maxHeight: '300px' }}
-                                                    />
-                                                </div>
-                                            )}
-                                            
-                                            <div className="grid grid-cols-2 gap-2">
-                                                {(() => {
-                                                    // Normalize options into an array of {label, text}
-                                                    let optsRaw = [];
-                                                    if (question.options) {
-                                                        try { optsRaw = typeof question.options === 'string' ? JSON.parse(question.options) : question.options; } catch (e) { optsRaw = []; }
-                                                    }
-
-                                                    let opts = [];
-                                                    if (Array.isArray(optsRaw)) {
-                                                        opts = optsRaw.map(o => {
-                                                            if (!o) return null;
-                                                            if (typeof o === 'string') return { label: '', text: o };
-                                                            return { label: (o.label ?? o.key ?? o.value ?? '').toString(), text: (o.text ?? o.value ?? '') };
-                                                        }).filter(Boolean);
-                                                    } else if (optsRaw && typeof optsRaw === 'object') {
-                                                        opts = Object.entries(optsRaw).map(([k, v]) => ({ label: k, text: (v && typeof v === 'object') ? (v.text ?? v.value ?? '') : v })).filter(o => o.text);
-                                                    }
-
-                                                    if (!opts || opts.length === 0) {
-                                                        opts = ['a','b','c','d'].map(o => ({ label: o, text: question[`option_${o}`] }));
-                                                    }
-
-                                                    return opts.map(o => (
-                                                        <div key={o.label} className={`px-3 py-2 rounded-lg text-sm ${question.correct_answer === o.label ? 'bg-green-100 text-green-800 font-semibold border border-green-200' : 'bg-slate-50 text-slate-600'}`}>
-                                                            <span className="font-bold uppercase mr-2">{o.label}.</span>
-                                                            {o.text}
-                                                        </div>
-                                                    ));
-                                                })()}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))
-                        ) : (
-                            <div className="text-center py-12 bg-white rounded-[24px] shadow-sm border border-dashed border-slate-300">
-                                <p className="text-slate-600 font-bold">Belum ada soal Pre-Test</p>
-                                <p className="text-slate-400 text-sm">Klik tombol "Tambah Soal" untuk membuat soal Pre-Test</p>
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {/* --- POST-TEST TAB --- */}
-                {activeTab === 'posttest' && (
-                    <div className="space-y-4">
-                        <div className="flex justify-between items-center mb-6">
-                            <h2 className="text-xl font-bold text-slate-900">Post-Test Questions</h2>
-                            <button
-                                onClick={() => window.location.href = `/admin/training-programs/${program.id}/questions?type=posttest`}
-                                className="px-4 py-2 bg-green-600 text-white rounded-xl font-bold text-sm hover:bg-green-700 transition"
-                            >
-                                + Tambah Soal
-                            </button>
-                        </div>
-                        
-                        {posttestQuestions.length > 0 ? (
-                            posttestQuestions.map((question, index) => (
-                                <div key={question.id || index} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-                                    <div className="flex items-start gap-4">
-                                        <div className="w-10 h-10 bg-green-100 text-green-600 rounded-xl flex items-center justify-center font-bold text-sm flex-shrink-0">
-                                            {index + 1}
-                                        </div>
-                                        <div className="flex-1">
-                                            <p className="font-semibold text-slate-900 mb-3" dangerouslySetInnerHTML={{ __html: question.question_text }}></p>
-                                            
-                                            {/* Display question image if exists */}
-                                            {question.image_url && (
-                                                <div className="mb-4">
-                                                    <img 
-                                                        src={question.image_url}
-                                                        alt="Question visual"
-                                                        className="max-w-full h-auto rounded-lg border border-slate-200 shadow-sm"
-                                                        style={{ maxHeight: '300px' }}
-                                                    />
-                                                </div>
-                                            )}
-                                            
-                                            <div className="grid grid-cols-2 gap-2">
-                                                {(() => {
-                                                    // Normalize options into an array of {label, text}
-                                                    let optsRaw = [];
-                                                    if (question.options) {
-                                                        try { optsRaw = typeof question.options === 'string' ? JSON.parse(question.options) : question.options; } catch (e) { optsRaw = []; }
-                                                    }
-
-                                                    let opts = [];
-                                                    if (Array.isArray(optsRaw)) {
-                                                        opts = optsRaw.map(o => {
-                                                            if (!o) return null;
-                                                            if (typeof o === 'string') return { label: '', text: o };
-                                                            return { label: (o.label ?? o.key ?? o.value ?? '').toString(), text: (o.text ?? o.value ?? '') };
-                                                        }).filter(Boolean);
-                                                    } else if (optsRaw && typeof optsRaw === 'object') {
-                                                        opts = Object.entries(optsRaw).map(([k, v]) => ({ label: k, text: (v && typeof v === 'object') ? (v.text ?? v.value ?? '') : v })).filter(o => o.text);
-                                                    }
-
-                                                    if (!opts || opts.length === 0) {
-                                                        opts = ['a','b','c','d'].map(o => ({ label: o, text: question[`option_${o}`] }));
-                                                    }
-
-                                                    return opts.map(o => (
-                                                        <div key={o.label} className={`px-3 py-2 rounded-lg text-sm ${question.correct_answer === o.label ? 'bg-green-100 text-green-800 font-semibold border border-green-200' : 'bg-slate-50 text-slate-600'}`}>
-                                                            <span className="font-bold uppercase mr-2">{o.label}.</span>
-                                                            {o.text}
-                                                        </div>
-                                                    ));
-                                                })()}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))
-                        ) : (
-                            <div className="text-center py-12 bg-white rounded-[24px] shadow-sm border border-dashed border-slate-300">
-                                <p className="text-slate-600 font-bold">Belum ada soal Post-Test</p>
-                                <p className="text-slate-400 text-sm">Klik tombol "Tambah Soal" untuk membuat soal Post-Test</p>
-                            </div>
-                        )}
                     </div>
                 )}
 
@@ -827,45 +628,6 @@ export default function TrainingMaterialsManager({ program, auth }) {
                                     </div>
 
                                     <div className="flex-1 p-6 overflow-y-auto space-y-6">
-                                        {/* AI Analysis Section */}
-                                        <div className="bg-indigo-50 rounded-2xl p-5 border border-indigo-100">
-                                            <div className="flex items-center justify-between mb-3">
-                                                <h4 className="text-xs font-black text-indigo-900 uppercase tracking-wider flex items-center gap-1">
-                                                    <Sparkles size={12} /> AI Insight
-                                                </h4>
-                                                {!aiAnalysis && (
-                                                    <button
-                                                        onClick={runAIAnalysis}
-                                                        className="text-[10px] bg-white px-2 py-1 rounded border border-indigo-200 font-bold text-indigo-600 hover:bg-indigo-100 transition"
-                                                    >
-                                                        Analyze
-                                                    </button>
-                                                )}
-                                            </div>
-
-                                            {aiAnalysis === 'Analysing...' ? (
-                                                <div className="flex items-center gap-2 text-xs text-indigo-600 font-bold">
-                                                    <Loader className="animate-spin" size={14} /> Reading document...
-                                                </div>
-                                            ) : aiAnalysis ? (
-                                                <div className="space-y-3">
-                                                    <p className="text-xs text-indigo-800 leading-relaxed">
-                                                        {aiAnalysis.summary}
-                                                    </p>
-                                                    <div className="flex flex-wrap gap-1">
-                                                        {aiAnalysis.tags.map(tag => (
-                                                            <span key={tag} className="px-2 py-0.5 bg-white rounded text-[10px] font-bold text-indigo-500 border border-indigo-100">#{tag}</span>
-                                                        ))}
-                                                    </div>
-                                                    <div className="flex items-center gap-1 text-[10px] font-bold text-indigo-400 mt-2">
-                                                        <Clock size={10} /> Est. Reading: {aiAnalysis.readingTime}
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <p className="text-xs text-indigo-400">Click analyze to generate summary, key points, and tags automatically.</p>
-                                            )}
-                                        </div>
-
                                         <div>
                                             <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">File Properties</h4>
                                             <div className="space-y-2">

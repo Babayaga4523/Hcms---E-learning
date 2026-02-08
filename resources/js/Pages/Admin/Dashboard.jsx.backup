@@ -139,11 +139,11 @@ const WondrHighlight = ({ title, value, icon: Icon, colorClass }) => (
 // ========== ANALYTICS CHARTS SECTION ==========
 
 // Comprehensive Analytics Panel
-const AnalyticsPanel = ({ data, statistics, compliance_trend }) => {
+const AnalyticsPanel = ({ data, statistics, compliance_trend, moduleData, learnerStatusData }) => {
     const trendData = (data || compliance_trend || []).map((d) => ({ name: d.month, completed: d.completed, enrolled: d.enrolled || Math.floor(Math.random() * 100) + 60 }));
     
-    // Mock module performance data
-    const moduleData = [
+    // Use real module performance data or fallback to defaults
+    const modulePerformance = moduleData && moduleData.length > 0 ? moduleData : [
         { name: 'Banking Compliance', value: 92, learners: 156 },
         { name: 'Risk Management', value: 85, learners: 142 },
         { name: 'Customer Service', value: 78, learners: 128 },
@@ -151,8 +151,8 @@ const AnalyticsPanel = ({ data, statistics, compliance_trend }) => {
         { name: 'Fraud Detection', value: 81, learners: 119 },
     ];
 
-    // Mock learner status
-    const learnerStatus = [
+    // Use real learner status or fallback to defaults
+    const learnerStatus = learnerStatusData && learnerStatusData.length > 0 ? learnerStatusData : [
         { name: 'Completed', value: 245, color: '#10b981' },
         { name: 'In Progress', value: 189, color: '#3b82f6' },
         { name: 'Pending', value: 67, color: '#f59e0b' },
@@ -208,7 +208,7 @@ const AnalyticsPanel = ({ data, statistics, compliance_trend }) => {
                     <h3 className="text-lg font-bold text-slate-800 mb-4">Module Performance</h3>
                     <div className="h-64">
                         <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={moduleData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                            <BarChart data={modulePerformance} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="#e6eaf0" />
                                 <XAxis dataKey="name" width={50} />
                                 <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
@@ -263,16 +263,16 @@ const AnalyticsPanel = ({ data, statistics, compliance_trend }) => {
                             </tr>
                         </thead>
                         <tbody>
-                            {moduleData.map((mod, i) => (
+                            {modulePerformance && modulePerformance.map((mod, i) => (
                                 <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition">
                                     <td className="py-3 px-4">{mod.name}</td>
-                                    <td className="text-right py-3 px-4 text-slate-600">{mod.learners}</td>
+                                    <td className="text-right py-3 px-4 text-slate-600">{mod.learners || 0}</td>
                                     <td className="text-right py-3 px-4">
                                         <div className="w-16 h-2 bg-slate-200 rounded-full mx-auto overflow-hidden">
                                             <div className="h-full bg-gradient-to-r from-teal-500 to-teal-600" style={{ width: `${mod.value}%` }}></div>
                                         </div>
                                     </td>
-                                    <td className="text-right py-3 px-4 font-semibold">{78 + Math.random() * 15 |0}</td>
+                                    <td className="text-right py-3 px-4 font-semibold">{mod.avg_score || 78}</td>
                                     <td className="text-right py-3 px-4 text-emerald-600 font-semibold">{mod.value}%</td>
                                 </tr>
                             ))}
@@ -287,7 +287,7 @@ const AnalyticsPanel = ({ data, statistics, compliance_trend }) => {
 // ========== REPORTS CHARTS SECTION ==========
 
 // Comprehensive Reports Panel
-const ReportsPanel = ({ data, pending_actions }) => {
+const ReportsPanel = ({ data, pending_actions, reportsData }) => {
     const reportsByType = data?.reports_by_type || [
         { name: 'Compliance', value: 34, color: '#ef4444' },
         { name: 'Audit', value: 28, color: '#f59e0b' },
@@ -295,13 +295,13 @@ const ReportsPanel = ({ data, pending_actions }) => {
         { name: 'Training', value: 22, color: '#10b981' },
     ];
 
-    const reportsByStatus = [
+    const reportsByStatus = data?.reports_by_status || [
         { name: 'Generated', value: 89 },
         { name: 'Pending', value: 12 },
         { name: 'Review', value: 6 },
     ];
 
-    const recentReports = data?.recent_reports || [
+    const recentReports = (reportsData && reportsData.length > 0) ? reportsData : [
         { id: 1, title: 'Q4 Compliance Report', type: 'Compliance', date: '2025-12-20', status: 'Completed', size: '2.4 MB' },
         { id: 2, title: 'Monthly Audit - Dec', type: 'Audit', date: '2025-12-18', status: 'Completed', size: '1.8 MB' },
         { id: 3, title: 'Learner Performance Summary', type: 'Performance', date: '2025-12-15', status: 'Review', size: '3.2 MB' },
@@ -420,6 +420,9 @@ export default function AdminDashboard({
     const [loading, setLoading] = useState(false);
     const [showExportMenu, setShowExportMenu] = useState(false);
     const [dashboardData, setDashboardData] = useState(null);
+    const [moduleData, setModuleData] = useState([]);
+    const [reportsData, setReportsData] = useState([]);
+    const [learnerStatusData, setLearnerStatusData] = useState([]);
 
     // Analytics-specific state (fall back to incoming prop if available)
     const [analyticsData, setAnalyticsData] = useState(compliance_trend && compliance_trend.length ? compliance_trend : null);
@@ -428,6 +431,9 @@ export default function AdminDashboard({
 
     useEffect(() => {
         loadDashboardData();
+        fetchModuleData();
+        fetchReportsData();
+        fetchLearnerStatus();
 
         // If no analytics data passed from server, fetch it
         if ((!compliance_trend || !compliance_trend.length) && !analyticsData) {
@@ -447,6 +453,42 @@ export default function AdminDashboard({
             console.error('Error loading dashboard data:', error);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchModuleData = async () => {
+        try {
+            const response = await fetch('/api/admin/modules/performance');
+            if (response.ok) {
+                const data = await response.json();
+                setModuleData(data);
+            }
+        } catch (error) {
+            console.error('Error loading module data:', error);
+        }
+    };
+
+    const fetchReportsData = async () => {
+        try {
+            const response = await fetch('/api/admin/reports/recent');
+            if (response.ok) {
+                const data = await response.json();
+                setReportsData(data);
+            }
+        } catch (error) {
+            console.error('Error loading reports data:', error);
+        }
+    };
+
+    const fetchLearnerStatus = async () => {
+        try {
+            const response = await fetch('/api/admin/learners/status-distribution');
+            if (response.ok) {
+                const data = await response.json();
+                setLearnerStatusData(data);
+            }
+        } catch (error) {
+            console.error('Error loading learner status:', error);
         }
     };
 
@@ -858,7 +900,7 @@ export default function AdminDashboard({
                                         <p className="text-slate-500">{analyticsError}</p>
                                     </div>
                                 ) : (
-                                    <AnalyticsPanel data={analyticsData || compliance_trend} statistics={statistics} compliance_trend={compliance_trend} />
+                                    <AnalyticsPanel data={analyticsData || compliance_trend} statistics={statistics} compliance_trend={compliance_trend} moduleData={moduleData} learnerStatusData={learnerStatusData} />
                                 )}
                             </motion.div>
                         )}
@@ -879,7 +921,7 @@ export default function AdminDashboard({
                                         <p className="text-slate-500">Loading reports data...</p>
                                     </div>
                                 ) : (
-                                    <ReportsPanel data={dashboardData} pending_actions={pending_actions} />
+                                    <ReportsPanel data={dashboardData} pending_actions={pending_actions} reportsData={reportsData} />
                                 )}
                             </motion.div>
                         )}

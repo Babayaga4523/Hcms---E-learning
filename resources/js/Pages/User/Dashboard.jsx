@@ -238,9 +238,139 @@ const RecentActivity = ({ activities = [], loading = false, error = null, onRefr
                 </div>
             )}
         </div>
-        {!loading && <Link href="/activity" className="block mt-3 text-xs text-[#005E54] font-bold hover:underline">Lihat Semua Aktivitas</Link>}
     </div>
 );
+
+const UnifiedUpdates = ({ updates = [], tab = 'semua', onTabChange = null, loading = false, error = null, unreadCount = 0 }) => {
+    const filterUpdates = () => {
+        if (tab === 'pengumuman') return updates.filter(u => u.type === 'announcement');
+        if (tab === 'notifikasi') return updates.filter(u => u.type === 'notification');
+        return updates;
+    };
+
+    const filtered = filterUpdates();
+    const announcementCount = updates.filter(u => u.type === 'announcement').length;
+    const notificationCount = updates.filter(u => u.type === 'notification').length;
+
+    const getTabColor = (tabName) => {
+        const bgMap = {
+            'semua': 'bg-slate-100 text-slate-900',
+            'pengumuman': 'bg-blue-100 text-blue-900',
+            'notifikasi': 'bg-orange-100 text-orange-900',
+        };
+        return bgMap[tabName] || bgMap['semua'];
+    };
+
+    const getTypeColor = (updateType, category) => {
+        if (updateType === 'announcement') {
+            const colors = {
+                'urgent': 'bg-red-50 border-red-200',
+                'maintenance': 'bg-orange-50 border-orange-200',
+                'event': 'bg-green-50 border-green-200',
+                'general': 'bg-blue-50 border-blue-200',
+            };
+            return colors[category] || colors.general;
+        } else {
+            const colors = {
+                'success': 'bg-green-50 border-green-200',
+                'warning': 'bg-orange-50 border-orange-200',
+                'error': 'bg-red-50 border-red-200',
+                'info': 'bg-blue-50 border-blue-200',
+            };
+            return colors[category] || colors.info;
+        }
+    };
+
+    return (
+        <div className="glass-card rounded-[24px] p-5">
+            <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                    <Bell className="w-5 h-5" />
+                    Updates & Pengumuman
+                    {unreadCount > 0 && (
+                        <span className="inline-flex items-center justify-center w-6 h-6 bg-red-500 text-white text-xs font-bold rounded-full">
+                            {unreadCount}
+                        </span>
+                    )}
+                </h3>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex gap-2 mb-4 border-b border-slate-200 pb-3">
+                {[
+                    { key: 'semua', label: 'Semua', count: updates.length },
+                    { key: 'pengumuman', label: '📢 Pengumuman', count: announcementCount },
+                    { key: 'notifikasi', label: '🔔 Notifikasi', count: notificationCount },
+                ].map(t => (
+                    <button
+                        key={t.key}
+                        onClick={() => onTabChange?.(t.key)}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                            tab === t.key
+                                ? 'bg-[#D6F84C] text-[#002824]'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                    >
+                        {t.label} {t.count > 0 && `(${t.count})`}
+                    </button>
+                ))}
+            </div>
+
+            {/* Content */}
+            {loading ? (
+                <div className="space-y-3">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                        <div key={i} className="p-3 bg-slate-100 rounded-lg animate-pulse h-20" />
+                    ))}
+                </div>
+            ) : error ? (
+                <div className="text-center py-6 text-slate-500">
+                    <p className="text-sm">{error}</p>
+                </div>
+            ) : filtered.length === 0 ? (
+                <div className="text-center py-8 text-slate-400">
+                    <Bell className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                    <p className="text-sm">
+                        {tab === 'semua' ? 'Tidak ada update' : `Tidak ada ${tab === 'pengumuman' ? 'pengumuman' : 'notifikasi'}`}
+                    </p>
+                </div>
+            ) : (
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {filtered.map(update => (
+                        <div
+                            key={`${update.type}-${update.id}`}
+                            className={`p-3 rounded-lg border ${getTypeColor(update.type, update.category)} transition hover:shadow-md cursor-pointer`}
+                        >
+                            <div className="flex items-start gap-3">
+                                <div className="text-lg mt-0.5">{update.icon}</div>
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-start justify-between gap-2">
+                                        <h4 className="font-semibold text-sm text-slate-900 line-clamp-1">
+                                            {update.title}
+                                        </h4>
+                                        <span className={`px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${
+                                            update.type === 'announcement'
+                                                ? 'bg-blue-100 text-blue-700'
+                                                : 'bg-orange-100 text-orange-700'
+                                        }`}>
+                                            {update.type === 'announcement' ? '📢' : '🔔'}
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-slate-600 line-clamp-2 mt-1">
+                                        {update.content || update.body}
+                                    </p>
+                                    <div className="text-xs text-slate-400 mt-2">
+                                        {new Date(update.created_at).toLocaleString('id-ID')}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
 
 // --- Main Layout ---
 
@@ -253,38 +383,70 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
     const [isSearching, setIsSearching] = useState(false);
     const [searchError, setSearchError] = useState(null);
 
-    // Announcements state (fetch from API /api/announcements/active)
-    const [announcementsData, setAnnouncementsData] = useState(Array.isArray(announcements) ? announcements : []);
-    const [announcementsLoading, setAnnouncementsLoading] = useState(false);
-    const [announcementsError, setAnnouncementsError] = useState(null);
+    // Unified Updates (combined announcements + notifications) with tabs
+    const [unifiedUpdates, setUnifiedUpdates] = useState([]);
+    const [unifiedLoading, setUnifiedLoading] = useState(false);
+    const [unifiedError, setUnifiedError] = useState(null);
+    const [updatesTab, setUpdatesTab] = useState('semua'); // 'semua', 'pengumuman', 'notifikasi'
+    const [unreadCount, setUnreadCount] = useState(0);
 
     // Recent activity (initialize from server prop, allow refresh)
     const [recentActivities, setRecentActivities] = useState(Array.isArray(recentActivity) ? recentActivity : []);
     const [recentLoading, setRecentLoading] = useState(false);
     const [recentError, setRecentError] = useState(null);
 
-    // Upcoming trainings (from server prop, allow refresh)
-    const [upcomingData, setUpcomingData] = useState(Array.isArray(upcomingTrainings) ? upcomingTrainings : []);
-    const [upcomingLoading, setUpcomingLoading] = useState(false);
-    const [upcomingError, setUpcomingError] = useState(null);
+    // Training Schedules (events from server)
+    const [schedules, setSchedules] = useState([]);
+    const [schedulesLoading, setSchedulesLoading] = useState(false);
+    const [schedulesError, setSchedulesError] = useState(null);
+
+    // Training Recommendations (courses from server prop, allow refresh)
+    const [recommendations, setRecommendations] = useState([]);
+    const [recommendationsLoading, setRecommendationsLoading] = useState(false);
+    const [recommendationsError, setRecommendationsError] = useState(null);
 
     // Dashboard statistics (use /api/dashboard/statistics)
     const [stats, setStats] = useState(null);
     const [statsLoading, setStatsLoading] = useState(false);
     const [statsError, setStatsError] = useState(null);
 
-    const fetchUpcoming = async () => {
-        setUpcomingLoading(true);
-        setUpcomingError(null);
+    const fetchSchedules = async () => {
+        setSchedulesLoading(true);
+        setSchedulesError(null);
         try {
-            const res = await fetch('/api/dashboard/upcoming', { headers: { Accept: 'application/json' }});
+            const res = await fetch('/api/user/training-schedules', { headers: { Accept: 'application/json' }});
             if (!res.ok) throw new Error('Network response was not ok');
             const data = await res.json();
-            setUpcomingData(Array.isArray(data) ? data : []);
+            console.log('Training schedules data:', data);
+            
+            // Handle both direct array and nested response (data.data)
+            const events = Array.isArray(data.data) ? data.data : Array.isArray(data) ? data : [];
+            setSchedules(events);
         } catch (err) {
-            setUpcomingError('Gagal memuat jadwal mendatang');
+            console.error('Error fetching schedules:', err);
+            setSchedulesError('Gagal memuat jadwal pelatihan');
         } finally {
-            setUpcomingLoading(false);
+            setSchedulesLoading(false);
+        }
+    };
+
+    const fetchRecommendations = async () => {
+        setRecommendationsLoading(true);
+        setRecommendationsError(null);
+        try {
+            const res = await fetch('/api/user/training-recommendations', { headers: { Accept: 'application/json' }});
+            if (!res.ok) throw new Error('Network response was not ok');
+            const data = await res.json();
+            console.log('Training recommendations data:', data);
+            
+            // Handle both direct array and nested response (data.data)
+            const recos = Array.isArray(data.data) ? data.data : Array.isArray(data) ? data : [];
+            setRecommendations(recos);
+        } catch (err) {
+            console.error('Error fetching recommendations:', err);
+            setRecommendationsError('Gagal memuat rekomendasi pelatihan');
+        } finally {
+            setRecommendationsLoading(false);
         }
     };
 
@@ -304,17 +466,20 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
     };
 
     const fetchAnnouncements = async () => {
-        setAnnouncementsLoading(true);
-        setAnnouncementsError(null);
+        setUnifiedLoading(true);
+        setUnifiedError(null);
         try {
-            const res = await fetch('/api/announcements/active', { headers: { Accept: 'application/json' }});
+            const res = await fetch('/api/dashboard/unified-updates', { headers: { Accept: 'application/json' }});
             if (!res.ok) throw new Error('Network response was not ok');
             const data = await res.json();
-            setAnnouncementsData(Array.isArray(data) ? data : []);
+            console.log('Unified updates:', data);
+            setUnifiedUpdates(data.data || []);
+            setUnreadCount(data.unread_count || 0);
         } catch (err) {
-            setAnnouncementsError('Gagal memuat pengumuman');
+            console.error('Error fetching unified updates:', err);
+            setUnifiedError('Gagal memuat update');
         } finally {
-            setAnnouncementsLoading(false);
+            setUnifiedLoading(false);
         }
     };
 
@@ -337,7 +502,8 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
         // Fetch both on mount to keep UI live (server props provide initial state)
         fetchAnnouncements();
         fetchRecent();
-        fetchUpcoming();
+        fetchSchedules();
+        fetchRecommendations();
         fetchStats();
     }, []);
 
@@ -373,7 +539,6 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
     // Ensure trainings is always an array
     const trainingsArray = Array.isArray(trainings) ? trainings : Object.values(trainings || {});
     const completedArray = Array.isArray(completedTrainings) ? completedTrainings : Object.values(completedTrainings || {});
-    const upcomingArray = Array.isArray(upcomingData) ? upcomingData : Object.values(upcomingData || {});
 
     // Calculate statistics
     const totalTrainings = trainingsArray.length || 0;
@@ -387,16 +552,11 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
         // Sort so in-progress & higher progress items show first
         .sort((a, b) => (b.progress || 0) - (a.progress || 0));
 
-    // Build assigned list from both trainings marked as assigned and upcomingTrainings passed from the server
-    const assignedFromTrainings = trainingsArray.filter(t => t?.status === 'assigned' || t?.status === 'not_started' || t?.status === 'enrolled');
-    // Merge and dedupe by id
-    const assignedMap = {};
-    assignedFromTrainings.forEach(t => { if (t && t.id) assignedMap[t.id] = t; });
-    (upcomingArray || []).forEach(t => { if (t && t.id) assignedMap[t.id] = { ...t, status: 'assigned' }; });
-    const assignedList = Object.values(assignedMap);
+    // Build assigned list from recommendations
+    const assignedList = recommendations || [];
 
     // Get first active course for "Continue Learning"
-    const continueCourse = activeCourses[0] || trainingsArray[0] || assignedList[0] || upcomingArray[0];
+    const continueCourse = activeCourses[0] || trainingsArray[0] || assignedList[0];
     // Calculate total learning hours
     const totalHours = trainingsArray.reduce((acc, t) => acc + (t?.duration_hours || 0), 0);
 
@@ -570,11 +730,11 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
                             </div>
 
                             {/* 3. Recommended For You */}
-                            {upcomingArray.length > 0 && (
+                            {recommendations.length > 0 && (
                                 <div>
                                     <h3 className="text-xl font-bold text-slate-900 mb-4">Rekomendasi Untuk Anda</h3>
                                     <div className="space-y-4 animate-enter" style={{ animationDelay: '400ms' }}>
-                                        {upcomingArray.slice(0, 3).map(course => (
+                                        {recommendations.slice(0, 3).map(course => (
                                             <CourseCard key={course.id} course={course} type="list" />
                                         ))}
                                     </div>
@@ -586,8 +746,15 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
                         {/* Right Column (Sidebar) - 4 cols */}
                         <div className="lg:col-span-4 space-y-6">
                             
-                            {/* Announcement Widget */}
-                            <AnnouncementWidget announcements={announcementsData} loading={announcementsLoading} error={announcementsError} />
+                            {/* Unified Updates & Announcements (Tabbed) */}
+                            <UnifiedUpdates 
+                                updates={unifiedUpdates} 
+                                tab={updatesTab}
+                                onTabChange={setUpdatesTab}
+                                loading={unifiedLoading}
+                                error={unifiedError}
+                                unreadCount={unreadCount}
+                            />
 
                             {/* Recent Activity */}
                             <RecentActivity activities={recentActivities} loading={recentLoading} error={recentError} onRefresh={fetchRecent} />
@@ -598,7 +765,7 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
                                     <Calendar className="w-5 h-5 text-[#005E54]" /> Jadwal Mendatang
                                 </h3>
                                 <div className="space-y-4">
-                                    {upcomingLoading ? (
+                                    {schedulesLoading ? (
                                         Array.from({ length: 2 }).map((_, i) => (
                                             <div key={i} className="flex gap-4 items-center animate-pulse">
                                                 <div className="bg-slate-200 rounded-xl p-2 text-center min-w-[3.5rem] h-16" />
@@ -608,32 +775,38 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
                                                 </div>
                                             </div>
                                         ))
-                                    ) : upcomingError ? (
-                                        <p className="text-sm text-red-500 text-center py-4">{upcomingError}</p>
-                                    ) : upcomingArray.length > 0 ? (
-                                        upcomingArray.slice(0, 2).map((event, idx) => (
-                                            <div key={idx} className="flex gap-4 items-center">
-                                                <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 text-center min-w-[3.5rem]">
-                                                    <span className="block text-xs font-bold text-slate-400 uppercase">
-                                                        {new Date(event.start_date || Date.now()).toLocaleDateString('id-ID', { month: 'short' })}
-                                                    </span>
-                                                    <span className="block text-xl font-extrabold text-[#002824]">
-                                                        {new Date(event.start_date || Date.now()).getDate()}
-                                                    </span>
+                                    ) : schedulesError ? (
+                                        <p className="text-sm text-red-500 text-center py-4">{schedulesError}</p>
+                                    ) : schedules.length > 0 ? (
+                                        schedules.slice(0, 2).map((event, idx) => {
+                                            // Support both 'start' (ISO format from backend) and 'start_date'
+                                            const eventDate = event.start ? new Date(event.start) : (event.start_date ? new Date(event.start_date) : new Date());
+                                            return (
+                                                <div key={idx} className="flex gap-4 items-center">
+                                                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 text-center min-w-[3.5rem]">
+                                                        <span className="block text-xs font-bold text-slate-400 uppercase">
+                                                            {eventDate.toLocaleDateString('id-ID', { month: 'short' })}
+                                                        </span>
+                                                        <span className="block text-xl font-extrabold text-[#002824]">
+                                                            {eventDate.getDate()}
+                                                        </span>
+                                                    </div>
+                                                    <div>
+                                                        <h5 className="font-bold text-slate-800 text-sm line-clamp-1">{event.title}</h5>
+                                                        <p className="text-xs text-slate-500 font-medium mt-0.5">
+                                                            {event.type === 'deadline' ? 'Deadline' : event.program ? 'Training' : 'Jadwal'}
+                                                        </p>
+                                                    </div>
                                                 </div>
-                                                <div>
-                                                    <h5 className="font-bold text-slate-800 text-sm line-clamp-1">{event.title}</h5>
-                                                    <p className="text-xs text-slate-500 font-medium mt-0.5">Deadline</p>
-                                                </div>
-                                            </div>
-                                        ))
+                                            );
+                                        })
                                     ) : (
                                         <p className="text-sm text-slate-400 text-center py-4">Tidak ada jadwal mendatang</p>
                                     )}
                                 </div>
                                 <div className="flex gap-2 mt-4">
                                     <Link href="/training-calendar" className="flex-1 py-2.5 text-sm font-bold text-slate-600 bg-slate-50 rounded-xl hover:bg-slate-100 transition text-center">Buka Kalender</Link>
-                                    <button onClick={fetchUpcoming} className="px-3 py-2 rounded-xl bg-[#D6F84C] text-[#002824] font-bold">Segarkan</button>
+                                    <button onClick={fetchSchedules} className="px-3 py-2 rounded-xl bg-[#D6F84C] text-[#002824] font-bold">Segarkan</button>
                                 </div>
                             </div>
 

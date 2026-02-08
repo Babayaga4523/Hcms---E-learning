@@ -7,7 +7,7 @@ import axios from 'axios';
 import { 
     Award, Download, Share2, Printer, ArrowLeft,
     Calendar, User, BookOpen, CheckCircle2, Star,
-    Shield, QrCode, Copy, Sparkles, X, Loader2
+    Shield, QrCode
 } from 'lucide-react';
 
 // --- Wondr & Certificate Styles ---
@@ -170,12 +170,6 @@ const CertificateStyles = () => (
 export default function Certificate({ auth, trainingId, training, certificate, eligible = false, requirements = {} }) {
     const user = auth?.user || {};
     const certificateRef = useRef(null);
-    const [showAIModal, setShowAIModal] = useState(false);
-    const [aiContent, setAiContent] = useState('');
-    const [isGeneratingAI, setIsGeneratingAI] = useState(false);
-
-    // Gemini API Key - should be from environment variable in production
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
 
     const handlePrint = () => {
         window.print();
@@ -312,51 +306,6 @@ export default function Certificate({ auth, trainingId, training, certificate, e
         try { return new Date(iso).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }); } catch (e) { return iso; }
     };
 
-
-    // --- GEMINI API FUNCTION ---
-    const generateAICaption = async () => {
-        if (!apiKey) {
-            showToast('API Key Gemini belum dikonfigurasi. Hubungi administrator.', 'warning');
-            return;
-        }
-
-        setIsGeneratingAI(true);
-        setShowAIModal(true);
-        setAiContent('');
-
-        const prompt = `Buatkan caption LinkedIn profesional, inspiratif, dan antusias dalam Bahasa Indonesia untuk ${displayName} yang baru saja menyelesaikan pelatihan "${displayTrainingTitle}". Pelatihnya adalah ${displayInstructor}. Tambahkan emoji yang relevan dan hashtag seperti #BNIFinance #WondrLearning #ProfessionalDevelopment. Jangan terlalu panjang, cukup 2-3 paragraf.`;
-
-        try {
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${apiKey}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }]
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error('Gagal menghubungi AI');
-            }
-            
-            const data = await response.json();
-            const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "Maaf, gagal membuat caption.";
-            setAiContent(text);
-        } catch (error) {
-            console.error("AI Error:", error);
-            setAiContent("Terjadi kesalahan saat membuat caption. Silakan coba lagi nanti.");
-        } finally {
-            setIsGeneratingAI(false);
-        }
-    };
-
-    const copyAIContent = () => {
-        navigator.clipboard.writeText(aiContent);
-        showToast("Caption berhasil disalin ke clipboard!", 'success');
-    };
-
     return (
         <AppLayout user={user}>
             <CertificateStyles />
@@ -377,16 +326,6 @@ export default function Certificate({ auth, trainingId, training, certificate, e
                     </Link>
 
                     <div className="flex gap-3 bg-white p-2 rounded-2xl shadow-sm border border-slate-200">
-                        {/* AI Smart Caption Button */}
-                        <button 
-                            onClick={() => { if (!eligible) return showToast('Sertifikat belum tersedia. Lengkapi persyaratan terlebih dahulu.', 'warning'); generateAICaption(); }}
-                            className={`flex items-center gap-2 px-4 py-2 ${eligible ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white hover:opacity-90' : 'bg-slate-100 text-slate-400 cursor-not-allowed'} rounded-xl transition font-bold text-sm shadow-md`}
-                        >
-                            <Sparkles size={16} /> Buat Caption AI
-                        </button>
-                        
-                        <div className="w-[1px] h-8 bg-slate-200 mx-1"></div>
-
                         <button 
                             onClick={() => { if (!eligible) return showToast('Sertifikat belum tersedia. Lengkapi persyaratan terlebih dahulu.', 'warning'); handleShare(); }}
                             className={`flex items-center gap-2 px-4 py-2 ${eligible ? 'text-slate-600 hover:bg-slate-50' : 'text-slate-400 cursor-not-allowed'} rounded-xl transition font-medium text-sm`}
@@ -622,69 +561,6 @@ export default function Certificate({ auth, trainingId, training, certificate, e
                         </div>
                     </motion.div>
                 </div>
-
-                {/* --- AI Generation Modal --- */}
-                <AnimatePresence>
-                    {showAIModal && (
-                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm no-print">
-                            <motion.div 
-                                initial={{ opacity: 0, scale: 0.9, y: 20 }}
-                                animate={{ opacity: 1, scale: 1, y: 0 }}
-                                exit={{ opacity: 0, scale: 0.9 }}
-                                className="glass-modal w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl"
-                            >
-                                <div className="bg-gradient-to-r from-indigo-600 to-purple-700 p-6 flex justify-between items-center text-white">
-                                    <div className="flex items-center gap-3">
-                                        <div className="p-2 bg-white/20 rounded-lg">
-                                            <Sparkles size={20} />
-                                        </div>
-                                        <div>
-                                            <h3 className="font-bold text-lg">AI Smart Caption</h3>
-                                            <p className="text-xs text-indigo-100">Powered by Gemini</p>
-                                        </div>
-                                    </div>
-                                    <button 
-                                        onClick={() => setShowAIModal(false)}
-                                        className="p-2 hover:bg-white/10 rounded-full transition"
-                                    >
-                                        <X size={20} />
-                                    </button>
-                                </div>
-                                
-                                <div className="p-6">
-                                    {isGeneratingAI ? (
-                                        <div className="flex flex-col items-center justify-center py-8">
-                                            <Loader2 size={40} className="text-indigo-600 animate-spin mb-4" />
-                                            <p className="text-slate-600 font-medium">Sedang merangkai kata-kata terbaik untukmu...</p>
-                                        </div>
-                                    ) : (
-                                        <div className="space-y-4">
-                                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-slate-700 text-sm leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto">
-                                                {aiContent || 'Caption akan muncul di sini...'}
-                                            </div>
-                                            
-                                            <div className="flex gap-3">
-                                                <button 
-                                                    onClick={generateAICaption}
-                                                    className="flex-1 py-3 px-4 border border-slate-300 text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-50 transition"
-                                                >
-                                                    Regenerate
-                                                </button>
-                                                <button 
-                                                    onClick={copyAIContent}
-                                                    disabled={!aiContent}
-                                                    className="flex-1 py-3 px-4 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                >
-                                                    <Copy size={16} /> Salin Teks
-                                                </button>
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            </motion.div>
-                        </div>
-                    )}
-                </AnimatePresence>
 
             </div>
         </AppLayout>

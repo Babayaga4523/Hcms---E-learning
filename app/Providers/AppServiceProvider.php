@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use Illuminate\Support\Facades\Vite;
 use Illuminate\Support\ServiceProvider;
+use App\Services\StorageStructureService;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -24,5 +25,8 @@ class AppServiceProvider extends ServiceProvider
 
         // Register PDF facade alias
         \Illuminate\Support\Facades\Facade::clearResolvedInstance('pdf');
+        
+        // Ensure storage structure is initialized
+        StorageStructureService::initialize();
     }
 }
