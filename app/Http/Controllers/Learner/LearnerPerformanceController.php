@@ -39,7 +39,7 @@ class LearnerPerformanceController extends Controller
         $completionRate = $totalPrograms > 0 ? round(($completedPrograms / $totalPrograms) * 100, 2) : 0;
 
         // Get certifications
-        $certifications = $trainings->where('is_certified', true)->count();
+        $certifications = $trainings->where('is_certified', 1)->count();
 
         // Calculate total hours spent
         $hoursSpent = $this->calculateHoursSpent($userId);
@@ -116,23 +116,46 @@ class LearnerPerformanceController extends Controller
     }
 
     /**
+     * Get detailed learning time statistics
+     * Endpoint: GET /api/learner/learning-stats
+     */
+    public function getLearningStats()
+    {
+        $userId = Auth::id();
+        $learningTimeService = app(\App\Services\LearningTimeService::class);
+
+        return response()->json([
+            'stats' => $learningTimeService->getUserLearningStats($userId),
+            'daily_activity' => $learningTimeService->getDailyActivity($userId),
+            'by_module' => $learningTimeService->getHoursByModule($userId),
+            'by_activity_type' => $learningTimeService->getHoursByActivityType($userId),
+            'learning_streak' => $learningTimeService->getLearningStreak($userId),
+            'peak_hours' => $learningTimeService->getPeakLearningHours($userId),
+        ]);
+    }
+
+    /**
      * Get time spent analytics
      */
     public function getTimeAnalytics()
     {
         $userId = Auth::id();
+        $learningTimeService = app(\App\Services\LearningTimeService::class);
 
-        // Get time spent per program
-        $timeByProgram = UserTraining::where('user_id', $userId)
-            ->with('module:id,title')
-            ->get()
-            ->map(function ($training) {
-                $hours = $this->calculateProgramHours($training->module_id, $training->user_id);
-                return [
-                    'programName' => $training->module->title ?? 'Unknown',
-                    'hours' => $hours,
-                ];
-            });
+        // Get time spent per program (ACCURATE using LearningTimeService)
+        $timeByProgram = $learningTimeService->getHoursByModule($userId);
+        
+        // Get daily time analytics
+        $dailyTime = $learningTimeService->getDailyActivity($userId);
+
+        // Get weekly time trend
+        $weeklyTrend = $dailyTime->map(fn($item) => [
+            'day' => $item['day'],
+            'hours' => $item['hours'],
+        ]);
+
+        // Get total hours
+        $totalHours = $learningTimeService->calculateTotalLearningHours($userId);
 
         // Get daily time analytics
         $dailyTime = $this->getDailyTimeAnalytics($userId);
@@ -149,14 +172,32 @@ class LearnerPerformanceController extends Controller
     }
 
     /**
-     * Helper method: Calculate hours spent
+     * Helper method: Calculate hours spent (ACCURATE - based on actual learning sessions)
+     * 
+     * Logic:
+     * 1. If learning_sessions table has data, use actual tracked time
+     * 2. Otherwise fall back to progress-based estimation
      */
     private function calculateHoursSpent($userId)
     {
-        $totalMinutes = ModuleProgress::where('user_id', $userId)
+        // Method 1: Use actual learning sessions if available
+        $learningTimeService = app(\App\Services\LearningTimeService::class);
+        $actualHours = $learningTimeService->calculateTotalLearningHours($userId);
+        
+        if ($actualHours > 0) {
+            return round($actualHours, 1);
+        }
+
+        // Method 2: Fallback to progress-based estimation
+        // Calculate based on module durations and progress percentage
+        $totalMinutes = \App\Models\UserTraining::where('user_trainings.user_id', $userId)
             ->whereHas('module')
-            ->join('modules', 'module_progress.module_id', '=', 'modules.id')
-            ->selectRaw('COALESCE(SUM(modules.duration_minutes), 0) as total_minutes')
+            ->join('modules', 'user_trainings.module_id', '=', 'modules.id')
+            ->join('module_progress', function($join) use ($userId) {
+                $join->on('modules.id', '=', 'module_progress.module_id')
+                    ->where('module_progress.user_id', '=', $userId);
+            })
+            ->selectRaw('COALESCE(SUM(modules.duration_minutes * module_progress.progress_percentage / 100), 0) as total_minutes')
             ->first()
             ->total_minutes ?? 0;
         
@@ -347,7 +388,7 @@ class LearnerPerformanceController extends Controller
 
         // Get recent certifications
         $certifications = UserTraining::where('user_id', $userId)
-            ->where('is_certified', true)
+            ->where('is_certified', 1)
             ->with('module:id,title')
             ->orderBy('completed_at', 'desc')
             ->take(2)
@@ -461,31 +502,25 @@ class LearnerPerformanceController extends Controller
 
     /**
      * Helper method: Get learning activity data for heatmap/activity chart
+     * 
+     * Logic SEMPURNA:
+     * 1. Ambil data dari LearningSession (actual tracking)
+     * 2. Fallback ke ModuleProgress updates
+     * 3. Tampilkan jam belajar real per hari
      */
     private function getLearningActivityData($userId)
     {
-        $activities = [];
+        $learningTimeService = app(\App\Services\LearningTimeService::class);
         
-        // Get activity for last 7 days
-        for ($i = 6; $i >= 0; $i--) {
-            $date = now()->subDays($i)->format('Y-m-d');
-            $dayName = now()->subDays($i)->format('D');
-            
-            $activityCount = ModuleProgress::where('user_id', $userId)
-                ->whereDate('updated_at', $date)
-                ->count();
-            
-            // Convert to hours by multiplying by approximate study time
-            $hoursSpent = round($activityCount * 0.5, 1);
-            
-            $activities[] = [
-                'date' => $date,
-                'day' => $dayName,
-                'hours' => $hoursSpent,
-                'activities' => $activityCount,
-            ];
-        }
-
-        return $activities;
+        // Get daily activity from actual learning sessions
+        $dailyActivity = $learningTimeService->getDailyActivity($userId);
+        
+        return $dailyActivity->map(fn($item) => [
+            'date' => $item['date'],
+            'day' => $item['day'],
+            'hours' => $item['hours'],
+            'minutes' => $item['minutes'],
+            'sessions' => $item['sessions'],
+        ])->toArray();
     }
 }

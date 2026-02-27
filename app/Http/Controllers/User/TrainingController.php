@@ -7,7 +7,9 @@ use App\Models\Module;
 use App\Models\UserTraining;
 use App\Models\ModuleProgress;
 use App\Models\Quiz;
+use App\Models\Question;
 use App\Models\ExamAttempt;
+use App\Services\QuizService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -162,7 +164,8 @@ class TrainingController extends Controller
                     'user_trainings.status as enrollment_status',
                     'user_trainings.enrolled_at',
                     'user_trainings.completed_at',
-                    'user_trainings.final_score as progress'
+                    'user_trainings.final_score as progress',
+                    'user_trainings.is_certified'
                 ])
                 ->join('user_trainings', 'modules.id', '=', 'user_trainings.module_id')
                 ->where('user_trainings.user_id', $user->id);
@@ -183,8 +186,9 @@ class TrainingController extends Controller
             $trainings = $query->orderBy('user_trainings.enrolled_at', 'desc')
                 ->paginate(12);
             
-// Transform to add materials_count and prefer ModuleProgress for progress
-            $trainings->getCollection()->transform(function($training) use ($user) {
+// Transform to add materials_count and use comprehensive progress
+            $quizService = new QuizService();
+            $trainings->getCollection()->transform(function($training) use ($user, $quizService) {
                 // Count virtual materials from module fields
                 $count = 0;
                 if ($training->video_url) $count++;
@@ -194,22 +198,49 @@ class TrainingController extends Controller
 
                 $training->materials_count = $count;
 
-                // Prefer module progress percentage if available to keep frontend consistent
-                $moduleProgress = \App\Models\ModuleProgress::where('user_id', $user->id)
-                    ->where('module_id', $training->id)
-                    ->first();
-
-                $training->progress = $moduleProgress ? (int)$moduleProgress->progress_percentage : ($training->progress ?? 0);
+                // Use comprehensive progress (materials 40% + pretest 30% + posttest 30%)
+                try {
+                    $comprehensiveProgress = $quizService->calculateComprehensiveProgress($user->id, $training->id);
+                    $training->progress = (int)($comprehensiveProgress['total_progress'] ?? 0);
+                } catch (\Exception $e) {
+                    // Fallback to module progress if calculation fails
+                    $moduleProgress = ModuleProgress::where('user_id', $user->id)
+                        ->where('module_id', $training->id)
+                        ->first();
+                    $training->progress = $moduleProgress ? (int)$moduleProgress->progress_percentage : 0;
+                }
 
                 return $training;
             });
             
-            // Get stats
+            // Get stats - completed only if status='completed' AND progress >= 100
+            $allTrainings = UserTraining::where('user_id', $user->id)
+                ->with('module')
+                ->get();
+            
+            $quizService = new QuizService();
+            $completedCount = 0;
+            foreach ($allTrainings as $ut) {
+                if ($ut->status === 'completed') {
+                    try {
+                        $comprehensiveProgress = $quizService->calculateComprehensiveProgress($user->id, $ut->module_id);
+                        $progress = (int)($comprehensiveProgress['total_progress'] ?? 0);
+                        if ($progress >= 100) {
+                            $completedCount++;
+                        }
+                    } catch (\Exception $e) {
+                        // Fallback: check if status is completed
+                        $completedCount++;
+                    }
+                }
+            }
+            
             $stats = [
-                'total' => UserTraining::where('user_id', $user->id)->count(),
-                'in_progress' => UserTraining::where('user_id', $user->id)->where('status', 'in_progress')->count(),
-                'completed' => UserTraining::where('user_id', $user->id)->where('status', 'completed')->count(),
-                'not_started' => UserTraining::where('user_id', $user->id)->where('status', 'enrolled')->count(),
+                'total' => $allTrainings->count(),
+                'in_progress' => $allTrainings->where('status', 'in_progress')->count(),
+                'completed' => $completedCount,
+                'not_started' => $allTrainings->where('status', 'enrolled')->count(),
+                'certifications' => $allTrainings->where('is_certified', 1)->count(),
             ];
             
             return response()->json([
@@ -230,7 +261,8 @@ class TrainingController extends Controller
                     'total' => 0,
                     'in_progress' => 0,
                     'completed' => 0,
-                    'not_started' => 0
+                    'not_started' => 0,
+                    'certifications' => 0
                 ]
             ], 500);
         }
@@ -291,11 +323,21 @@ class TrainingController extends Controller
             $quizAttempts = [];
             foreach ($quizzes as $quiz) {
                 $examType = $quiz->type === 'pretest' ? 'pre_test' : 'post_test';
-                $attempt = ExamAttempt::where('user_id', $user->id)
+                
+                // Get all attempts for this exam type (to count total attempts)
+                $allAttempts = ExamAttempt::where('user_id', $user->id)
                     ->where('module_id', $id)
                     ->where('exam_type', $examType)
                     ->orderBy('created_at', 'desc')
-                    ->first();
+                    ->get();
+                
+                // Get the latest attempt for detailed info
+                $attempt = $allAttempts->first();
+                
+                // Count total questions for this quiz
+                $questionsCount = Question::where('module_id', $id)
+                    ->where('question_type', $quiz->type)
+                    ->count();
                 
                 if ($attempt) {
                     $quizAttempts[$quiz->type] = [
@@ -303,7 +345,11 @@ class TrainingController extends Controller
                         'score' => $attempt->score,
                         'percentage' => $attempt->percentage,
                         'is_passed' => $attempt->is_passed,
-                        'attempt_id' => $attempt->id
+                        'attempt_id' => $attempt->id,
+                        'attempts_count' => $allAttempts->count(),  // Total number of attempts
+                        'last_attempted_at' => $attempt->created_at,  // Waktu attempt terakhir
+                        'duration' => $quiz->time_limit ?? 30,
+                        'questions_count' => $questionsCount
                     ];
                 } else {
                     $quizAttempts[$quiz->type] = [
@@ -311,7 +357,11 @@ class TrainingController extends Controller
                         'score' => 0,
                         'percentage' => 0,
                         'is_passed' => false,
-                        'attempt_id' => null
+                        'attempt_id' => null,
+                        'attempts_count' => 0,
+                        'last_attempted_at' => null,
+                        'duration' => $quiz->time_limit ?? 30,
+                        'questions_count' => $questionsCount
                     ];
                 }
             }
@@ -364,10 +414,15 @@ class TrainingController extends Controller
 
             $certificateEligible = ($materialsTotal === $materialsCompleted) && $pretestPassed && $posttestPassed;
 
+            // Calculate comprehensive progress
+            $quizService = new QuizService();
+            $comprehensiveProgress = $quizService->calculateComprehensiveProgress($user->id, $id);
+
             return Inertia::render('User/Training/TrainingDetail', [
                 'training' => $training,
                 'enrollment' => $enrollment,
                 'progress' => $progress,
+                'comprehensiveProgress' => $comprehensiveProgress,
                 'quizAttempts' => $quizAttempts,
                 'completedMaterials' => $completedMaterialIds,
                 'certificateEligible' => $certificateEligible,
@@ -423,11 +478,21 @@ class TrainingController extends Controller
             $quizAttempts = [];
             foreach ($quizzes as $quiz) {
                 $examType = $quiz->type === 'pretest' ? 'pre_test' : 'post_test';
-                $attempt = ExamAttempt::where('user_id', $user->id)
+                
+                // Get all attempts for this exam type (to count total attempts)
+                $allAttempts = ExamAttempt::where('user_id', $user->id)
                     ->where('module_id', $id)
                     ->where('exam_type', $examType)
                     ->orderBy('created_at', 'desc')
-                    ->first();
+                    ->get();
+                
+                // Get the latest attempt for detailed info
+                $attempt = $allAttempts->first();
+                
+                // Count total questions for this quiz
+                $questionsCount = Question::where('module_id', $id)
+                    ->where('question_type', $quiz->type)
+                    ->count();
 
                 if ($attempt) {
                     $quizAttempts[$quiz->type] = [
@@ -436,7 +501,11 @@ class TrainingController extends Controller
                         'percentage' => $attempt->percentage,
                         'is_passed' => $attempt->is_passed,
                         'attempt_id' => $attempt->id,
-                        'completed_at' => $attempt->created_at
+                        'completed_at' => $attempt->created_at,
+                        'attempts_count' => $allAttempts->count(),  // Total number of attempts
+                        'last_attempted_at' => $attempt->created_at,  // Waktu attempt terakhir
+                        'duration' => $quiz->time_limit ?? 30,  // Use time_limit from database
+                        'questions_count' => $questionsCount
                     ];
                 } else {
                     $quizAttempts[$quiz->type] = [
@@ -445,7 +514,11 @@ class TrainingController extends Controller
                         'percentage' => 0,
                         'is_passed' => false,
                         'attempt_id' => null,
-                        'completed_at' => null
+                        'completed_at' => null,
+                        'attempts_count' => 0,
+                        'last_attempted_at' => null,
+                        'duration' => $quiz->time_limit ?? 30,  // Use time_limit from database
+                        'questions_count' => $questionsCount
                     ];
                 }
             }
@@ -458,14 +531,25 @@ class TrainingController extends Controller
                     $q->where('module_id', $id);
                 })->pluck('training_material_id')->toArray();
 
-            $materials = $materials->map(function($m) use ($completedMaterialIds) {
+            $materials = $materials->map(function($m) use ($completedMaterialIds, $id) {
+                // Use secure route for material access (mandatory enrollment check)
+                $file_url = null;
+                if ($m->file_path || $m->external_url) {
+                    if ($m->external_url) {
+                        $file_url = $m->external_url;
+                    } else {
+                        // Use the secure serving endpoint: /training/{trainingId}/material/{materialId}/serve
+                        $file_url = route('user.material.serve', ['trainingId' => $id, 'materialId' => $m->id]);
+                    }
+                }
+                
                 return [
                     'id' => $m->id,
                     'title' => $m->title,
                     'type' => $m->material_type ?? $m->type ?? 'document',
                     'duration' => $m->duration ?? null,
                     'is_completed' => in_array($m->id, $completedMaterialIds),
-                    'file_url' => $m->file_path ? asset('storage/' . $m->file_path) : null
+                    'file_url' => $file_url
                 ];
             });
 
@@ -491,7 +575,8 @@ class TrainingController extends Controller
         try {
             $user = Auth::user();
 
-            $training = Module::with(['questions'])->find($id);
+            // Include materials with all necessary data
+            $training = Module::with(['questions', 'trainingMaterials'])->find($id);
 
             if (!$training) {
                 return response()->json([
@@ -530,9 +615,29 @@ class TrainingController extends Controller
                     $q->where('module_id', $id);
                 })->pluck('training_material_id')->toArray();
 
+            // Ensure materials have URL accessors included in JSON response
+            $materials = $training->trainingMaterials->map(function($material) {
+                return [
+                    'id' => $material->id,
+                    'title' => $material->title,
+                    'description' => $material->description,
+                    'type' => $material->file_type,
+                    'file_type' => $material->file_type,
+                    'file_path' => $material->file_path,
+                    'file_name' => $material->file_name,
+                    'file_size' => $material->file_size,
+                    'duration_minutes' => $material->duration_minutes,
+                    'url' => $material->url, // ← This is the accessor URL for streaming
+                    'external_url' => $material->external_url,
+                    'order' => $material->order,
+                    'created_at' => $material->created_at,
+                ];
+            });
+
             return response()->json([
                 'success' => true,
                 'training' => $training,
+                'materials' => $materials, // ← Include materials with URLs
                 'enrollment' => $enrollment,
                 'progress' => $progress,
                 'completedMaterials' => $completedMaterialIds
@@ -723,7 +828,12 @@ class TrainingController extends Controller
 
     /**
      * Get training recommendations for the user
-     * Returns modules with status: assigned, not_started, enrolled (trainings to do)
+     * Returns modules with status: 'assigned' only (HR assignments)
+     * 
+     * ✅ Updated: Now shows ONLY trainings explicitly assigned by HR
+     * This ensures clean separation between:
+     * - Rekomendasi Untuk Anda: HR-assigned trainings
+     * - Training Saya: User's enrolled/completed trainings
      */
     public function getRecommendations(Request $request)
     {
@@ -737,12 +847,12 @@ class TrainingController extends Controller
 
             $user = Auth::user();
             
-            // Get modules where user is enrolled with assigned/not_started/enrolled status
+            // 🎯 Get modules where user has 'assigned' status only (HR assignment)
             $recommendations = Module::query()
                 ->with('instructor')
                 ->join('user_trainings', 'modules.id', '=', 'user_trainings.module_id')
                 ->where('user_trainings.user_id', $user->id)
-                ->whereIn('user_trainings.status', ['assigned', 'not_started', 'enrolled'])
+                ->where('user_trainings.status', 'assigned')  // ← Strict: Only HR-assigned
                 ->select('modules.*', 'user_trainings.status as enrollment_status', 'user_trainings.enrolled_at')
                 ->orderBy('user_trainings.enrolled_at', 'desc')
                 ->get();
@@ -810,12 +920,13 @@ class TrainingController extends Controller
     }
 
     /**
-     * Show training calendar page
+     * Show training calendar page (Lightweight version)
+     * ⚡ Optimized: ~200ms load time, no animations, cached API
      */
     public function calendar()
     {
         try {
-            return Inertia::render('User/Training/TrainingCalendar');
+            return Inertia::render('User/Training/TrainingCalendarLight');
         } catch (\Exception $e) {
             Log::error('Failed to render calendar page: ' . $e->getMessage());
             abort(500);

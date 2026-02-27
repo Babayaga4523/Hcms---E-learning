@@ -5,6 +5,7 @@ import {
     AlertTriangle, CheckCircle2, Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { validatePassword, validatePasswordConfirmation, getPasswordStrengthLabel, getPasswordRequirements } from '@/Utils/formValidation';
 
 // --- Wondr Style System ---
 const WondrStyles = () => (
@@ -93,27 +94,66 @@ export default function UpdatePasswordForm({ className = '' }) {
         password_confirmation: '',
     });
 
-    // Password Strength Logic
-    const getStrength = (pass) => {
-        let strength = 0;
-        if (pass.length > 5) strength += 1;
-        if (pass.length > 7) strength += 1;
-        if (/[A-Z]/.test(pass)) strength += 1;
-        if (/[0-9]/.test(pass)) strength += 1;
-        if (/[^A-Za-z0-9]/.test(pass)) strength += 1;
-        return strength; // 0 - 5
+    // Validation state
+    const [validationErrors, setValidationErrors] = useState({});
+
+    // Get password strength label
+    const strengthData = getPasswordStrengthLabel(data.password);
+    const passwordReqs = getPasswordRequirements(data.password);
+
+    // Real-time validation handler
+    const handlePasswordChange = (field, value) => {
+        setData(field, value);
+        
+        // Clear error when user starts typing
+        if (validationErrors[field]) {
+            setValidationErrors(prev => {
+                const newErrors = { ...prev };
+                delete newErrors[field];
+                return newErrors;
+            });
+        }
     };
 
-    const strength = getStrength(data.password);
-    const strengthColor = strength < 2 ? 'bg-red-500' : strength < 4 ? 'bg-amber-500' : 'bg-emerald-500';
-    const strengthLabel = strength < 2 ? 'Lemah' : strength < 4 ? 'Sedang' : 'Kuat';
+    // Validate form before submit
+    const validateForm = () => {
+        const newErrors = {};
+
+        // Current password validation
+        if (!data.current_password) {
+            newErrors.current_password = 'Password saat ini wajib diisi';
+        }
+
+        // New password validation
+        const passwordErrors = validatePassword(data.password);
+        if (passwordErrors) {
+            newErrors.password = passwordErrors[0]; // Show first error
+        }
+
+        // Password confirmation validation
+        const confirmError = validatePasswordConfirmation(data.password, data.password_confirmation);
+        if (confirmError) {
+            newErrors.password_confirmation = confirmError;
+        }
+
+        setValidationErrors(newErrors);
+        return Object.keys(newErrors).length === 0;
+    };
 
     const updatePassword = (e) => {
         e.preventDefault();
 
+        // Validate before submit
+        if (!validateForm()) {
+            return;
+        }
+
         put(route('password.update'), {
             preserveScroll: true,
-            onSuccess: () => reset(),
+            onSuccess: () => {
+                reset();
+                setValidationErrors({});
+            },
             onError: (errors) => {
                 if (errors.password) {
                     reset('password', 'password_confirmation');
@@ -144,8 +184,8 @@ export default function UpdatePasswordForm({ className = '' }) {
                             ref={currentPasswordInput}
                             label="Password Saat Ini"
                             value={data.current_password}
-                            onChange={(e) => setData('current_password', e.target.value)}
-                            error={errors.current_password}
+                            onChange={(e) => handlePasswordChange('current_password', e.target.value)}
+                            error={validationErrors.current_password || errors.current_password}
                             autoComplete="current-password"
                             placeholder="Masukkan password lama Anda"
                         />
@@ -156,8 +196,8 @@ export default function UpdatePasswordForm({ className = '' }) {
                                 ref={passwordInput}
                                 label="Password Baru"
                                 value={data.password}
-                                onChange={(e) => setData('password', e.target.value)}
-                                error={errors.password}
+                                onChange={(e) => handlePasswordChange('password', e.target.value)}
+                                error={validationErrors.password || errors.password}
                                 autoComplete="new-password"
                                 placeholder="Minimal 8 karakter"
                             />
@@ -169,27 +209,48 @@ export default function UpdatePasswordForm({ className = '' }) {
                                         initial={{ opacity: 0, height: 0 }} 
                                         animate={{ opacity: 1, height: 'auto' }}
                                         exit={{ opacity: 0, height: 0 }}
-                                        className="bg-slate-50 p-3 rounded-xl border border-slate-100"
+                                        className="bg-slate-50 p-4 rounded-xl border border-slate-100"
                                     >
-                                        <div className="flex justify-between text-xs font-bold text-slate-500 mb-1.5">
-                                            <span>Kekuatan Password</span>
-                                            <span className={`${strength < 2 ? 'text-red-500' : strength < 4 ? 'text-amber-500' : 'text-emerald-500'}`}>
-                                                {strengthLabel}
+                                        <div className="flex justify-between text-xs font-bold text-slate-500 mb-2">
+                                            <span>Kekuatan Password:</span>
+                                            <span className={strengthData.color.replace('bg-', 'text-')}>
+                                                {strengthData.label}
                                             </span>
                                         </div>
-                                        <div className="flex gap-1 h-1.5 w-full">
+
+                                        {/* Strength Bar */}
+                                        <div className="flex gap-1 h-2 w-full mb-3">
                                             {[1, 2, 3, 4, 5].map((step) => (
                                                 <div key={step} className="h-full flex-1 bg-slate-200 rounded-full overflow-hidden">
-                                                    <div 
-                                                        className={`h-full strength-bar ${strength >= step ? strengthColor : 'bg-transparent'}`} 
-                                                        style={{ width: strength >= step ? '100%' : '0%' }}
+                                                    <motion.div 
+                                                        className={`h-full strength-bar ${strengthData.score >= step ? strengthData.color : 'bg-transparent'}`}
+                                                        initial={{ width: 0 }}
+                                                        animate={{ width: strengthData.score >= step ? '100%' : '0%' }}
+                                                        transition={{ duration: 0.3, delay: step * 0.05 }}
                                                     />
                                                 </div>
                                             ))}
                                         </div>
-                                        <p className="text-[10px] text-slate-400 mt-2">
-                                            Tips: Gunakan kombinasi huruf besar, kecil, angka, dan simbol.
-                                        </p>
+
+                                        {/* Requirements Checklist */}
+                                        <div className="space-y-1 text-[11px]">
+                                            <div className={`flex items-center gap-2 ${passwordReqs.minLength ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                                {passwordReqs.minLength ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+                                                <span>Minimal 8 karakter</span>
+                                            </div>
+                                            <div className={`flex items-center gap-2 ${passwordReqs.hasUpperCase ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                                {passwordReqs.hasUpperCase ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+                                                <span>Minimal 1 huruf besar (A-Z)</span>
+                                            </div>
+                                            <div className={`flex items-center gap-2 ${passwordReqs.hasLowerCase ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                                {passwordReqs.hasLowerCase ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+                                                <span>Minimal 1 huruf kecil (a-z)</span>
+                                            </div>
+                                            <div className={`flex items-center gap-2 ${passwordReqs.hasNumber ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                                {passwordReqs.hasNumber ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+                                                <span>Minimal 1 angka (0-9)</span>
+                                            </div>
+                                        </div>
                                     </motion.div>
                                 )}
                             </AnimatePresence>
@@ -199,8 +260,8 @@ export default function UpdatePasswordForm({ className = '' }) {
                             id="password_confirmation"
                             label="Konfirmasi Password"
                             value={data.password_confirmation}
-                            onChange={(e) => setData('password_confirmation', e.target.value)}
-                            error={errors.password_confirmation}
+                            onChange={(e) => handlePasswordChange('password_confirmation', e.target.value)}
+                            error={validationErrors.password_confirmation || errors.password_confirmation}
                             autoComplete="new-password"
                             placeholder="Ulangi password baru"
                         />

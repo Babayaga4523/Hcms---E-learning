@@ -7,7 +7,7 @@ import {
     Clock, MapPin, Video, Filter, Search, Download, MoreHorizontal
 } from 'lucide-react';
 import AdminLayout from '@/Layouts/AdminLayout';
-import ScheduleManager from './ScheduleManager';
+import ScheduleManagerLight from './ScheduleManagerLight';
 
 // --- HELPER FUNCTIONS ---
 
@@ -71,15 +71,33 @@ export default function TrainingCalendar() {
     const [editingSchedule, setEditingSchedule] = useState(null);
     const [filters, setFilters] = useState({ online: true, onsite: true });
     const [searchQuery, setSearchQuery] = useState('');
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
+    const [showDateFilter, setShowDateFilter] = useState(false);
 
     useEffect(() => {
         fetchSchedules();
-    }, []);
+    }, [currentMonth, dateFrom, dateTo]);
 
     const fetchSchedules = async () => {
         try {
             setLoading(true);
-            const res = await fetch('/api/admin/training-schedules', { headers: { 'Accept': 'application/json' } });
+            let url = '/api/admin/training-schedules';
+            const params = new URLSearchParams();
+            
+            // Add date filters if provided
+            if (dateFrom) {
+                params.append('dateFrom', dateFrom);
+            }
+            if (dateTo) {
+                params.append('dateTo', dateTo);
+            }
+            
+            if (params.toString()) {
+                url += `?${params.toString()}`;
+            }
+            
+            const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
             if (res.ok) {
                 const data = await res.json();
                 console.log('Admin schedules data:', data);
@@ -374,21 +392,70 @@ export default function TrainingCalendar() {
                             <h3 className="text-sm font-bold uppercase text-slate-400 tracking-wider mb-4 flex items-center gap-2">
                                 <Filter size={14} /> View Filters
                             </h3>
-                            <div className="space-y-1">
-                                <FilterCheckbox
-                                    label="Online Training"
-                                    count={onlineCount}
-                                    color="bg-blue-500"
-                                    checked={filters.online}
-                                    onChange={() => setFilters(prev => ({ ...prev, online: !prev.online }))}
-                                />
-                                <FilterCheckbox
-                                    label="On-site Workshop"
-                                    count={onsiteCount}
-                                    color="bg-emerald-500"
-                                    checked={filters.onsite}
-                                    onChange={() => setFilters(prev => ({ ...prev, onsite: !prev.onsite }))}
-                                />
+                            <div className="space-y-4">
+                                {/* Type Filters */}
+                                <div className="space-y-2">
+                                    <FilterCheckbox
+                                        label="Online Training"
+                                        count={onlineCount}
+                                        color="bg-blue-500"
+                                        checked={filters.online}
+                                        onChange={() => setFilters(prev => ({ ...prev, online: !prev.online }))}
+                                    />
+                                    <FilterCheckbox
+                                        label="On-site Workshop"
+                                        count={onsiteCount}
+                                        color="bg-emerald-500"
+                                        checked={filters.onsite}
+                                        onChange={() => setFilters(prev => ({ ...prev, onsite: !prev.onsite }))}
+                                    />
+                                </div>
+
+                                {/* Date Range Filter */}
+                                <div className="pt-4 border-t border-slate-100">
+                                    <button
+                                        onClick={() => setShowDateFilter(!showDateFilter)}
+                                        className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 transition font-bold text-sm text-slate-700"
+                                    >
+                                        <span>📅 Date Range</span>
+                                        <span className={`transition transform ${showDateFilter ? 'rotate-180' : ''}`}>▼</span>
+                                    </button>
+                                    {showDateFilter && (
+                                        <motion.div 
+                                            initial={{ opacity: 0, height: 0 }}
+                                            animate={{ opacity: 1, height: 'auto' }}
+                                            exit={{ opacity: 0, height: 0 }}
+                                            className="mt-3 space-y-3"
+                                        >
+                                            <div>
+                                                <label className="block text-xs font-bold uppercase text-slate-500 mb-1">From</label>
+                                                <input
+                                                    type="date"
+                                                    value={dateFrom}
+                                                    onChange={(e) => setDateFrom(e.target.value)}
+                                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold focus:ring-2 focus:ring-[#D6FF59] outline-none"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-bold uppercase text-slate-500 mb-1">To</label>
+                                                <input
+                                                    type="date"
+                                                    value={dateTo}
+                                                    onChange={(e) => setDateTo(e.target.value)}
+                                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold focus:ring-2 focus:ring-[#D6FF59] outline-none"
+                                                />
+                                            </div>
+                                            {(dateFrom || dateTo) && (
+                                                <button
+                                                    onClick={() => { setDateFrom(''); setDateTo(''); }}
+                                                    className="w-full px-3 py-2 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-200 transition"
+                                                >
+                                                    Clear Filters
+                                                </button>
+                                            )}
+                                        </motion.div>
+                                    )}
+                                </div>
                             </div>
                         </div>
 
@@ -526,16 +593,14 @@ export default function TrainingCalendar() {
                 </div>
 
                 {/* --- SCHEDULE MANAGER (OVERLAY) --- */}
-                <AnimatePresence>
-                    {showManager && (
-                        <ScheduleManager
-                            date={selectedDate}
-                            schedule={editingSchedule}
-                            onClose={() => { setShowManager(false); setEditingSchedule(null); }}
-                            onSaved={handleSaved}
-                        />
-                    )}
-                </AnimatePresence>
+                {showManager && (
+                    <ScheduleManagerLight
+                        date={selectedDate}
+                        schedule={editingSchedule}
+                        onClose={() => { setShowManager(false); setEditingSchedule(null); }}
+                        onSaved={handleSaved}
+                    />
+                )}
 
             </div>
         </AdminLayout>

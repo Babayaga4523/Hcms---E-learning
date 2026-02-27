@@ -21,130 +21,161 @@ use Illuminate\Support\Facades\Log;
 class QuizService
 {
     /**
-     * Process quiz submission dan hitung skor dengan logic yang sempurna
+     * ============================================
+     * LOGIC SEMPURNA - ANTI CHEAT & AKURAT
+     * ============================================
      * 
-     * Logic Scoring Sempurna:
-     * 1. Jika hanya 1 soal dan jawaban BENAR → 100%
-     * 2. Jika hanya 1 soal dan jawaban SALAH → 0%
-     * 3. Jika multiple soal → (correct_answers / total_questions) * 100
-     * 4. Score berdasarkan points dari setiap soal (jika ada)
+     * Filosofi: Nilai didasarkan pada TOTAL SOAL DI DATABASE, bukan jawaban yang dikirim
      * 
-     * @param ExamAttempt $attempt
-     * @param array $answers - Format: [['question_id' => 1, 'answer' => 'A'], ...]
-     * @return array - ['success' => true, 'score' => 85, 'percentage' => 85, 'is_passed' => true, ...]
+     * Formula Sempurna:
+     * Nilai Akhir = (Jumlah Jawaban Benar / TOTAL SOAL DI DATABASE) × 100
+     * 
+     * Skenario Praktis:
+     * - Ada 10 soal di bank
+     * - User hanya menjawab 1 (benar) dan biarkan 9 kosong
+     * - Logic Lama: 1/1 × 100 = 100% (LULUS CURANG) ❌
+     * - Logic Baru: 1/10 × 100 = 10% (GAGAL TELAK) ✅
+     * 
+     * Keuntungan:
+     * ✓ Anti-cheat: Tidak bisa curang dengan hanya menjawab 1 soal
+     * ✓ Akurat: Soal kosong otomatis dihitung SALAH
+     * ✓ Fleksibel: Soal acak (random order) tetap adil
+     * ✓ Konsisten: Untuk semua user dan semua ujian
+     * 
+     * @param ExamAttempt $attempt - Database exam attempt record
+     * @param array $answers - Frontend answer format: [['question_id' => 1, 'answer' => 'A'], ...]
+     * @return array - ['success' => true, 'percentage' => 85, 'is_passed' => true, ...]
      */
     public function processSubmission(ExamAttempt $attempt, array $answers)
     {
         try {
-            // Validasi: pastikan ada jawaban yang dikirim
-            if (empty($answers)) {
+            // ============================================
+            // STEP 1: AMBIL TOTAL SOAL SEBENARNYA DARI DATABASE
+            // KUNCI UTAMA ANTI-CHEAT
+            // ============================================
+            // Normalize exam type: convert pre_test -> pretest, post_test -> posttest
+            $normalizedExamType = str_replace('_', '', $attempt->exam_type);
+            
+            $allModuleQuestions = Question::where('module_id', $attempt->module_id)
+                ->where('question_type', $normalizedExamType) // Pastikan tipe soal sama (pre/post)
+                ->get();
+            
+            $totalQuestionsReal = $allModuleQuestions->count();
+
+            // Validasi: Jika bank soal kosong (Edge Case)
+            if ($totalQuestionsReal === 0) {
                 return [
                     'success' => false,
-                    'error' => 'Tidak ada jawaban yang dikirim'
+                    'error' => 'Data soal tidak ditemukan di sistem.',
+                    'message' => "Module {$attempt->module_id} tidak memiliki soal jenis {$attempt->exam_type}. Hubungi admin untuk menambahkan soal."
                 ];
             }
 
-            // Ambil soal yang dijawab untuk grading
-            $questionIds = collect($answers)->pluck('question_id')->unique()->toArray();
-            $answeredQuestions = Question::whereIn('id', $questionIds)->get()->keyBy('id');
-            
-            // Get semua soal di module untuk konteks
-            $allQuestions = Question::where('module_id', $attempt->module_id)->get();
-            $totalQuestionsInModule = $allQuestions->count();
-
-            $totalScore = 0;
-            $correctCount = 0;
-            $totalPoints = 0;
-            $answeredCount = count($answers);
-
-            // Grade setiap jawaban yang dikirim user
-            foreach ($answers as $answerData) {
-                $question = $answeredQuestions->get($answerData['question_id']);
+            // Jika tidak ada jawaban yang dikirim, treat sebagai 0 jawaban benar
+            if (empty($answers)) {
+                $correctCount = 0;
+            } else {
+                // ============================================
+                // STEP 2: MAPPING JAWABAN (Ubah jadi Key-Value)
+                // Ini membuat pencarian jawaban lebih cepat O(1)
+                // ============================================
+                $userAnswersMap = collect($answers)->pluck('answer', 'question_id');
                 
-                if (!$question) continue;
+                $correctCount = 0;
 
-                $userAnswer = strtoupper($answerData['answer']);
-                $correctAnswer = strtoupper($question->correct_answer);
-                $isCorrect = $userAnswer === $correctAnswer;
-                
-                // Points per soal (default 10 jika tidak ditentukan)
-                $questionPoints = $question->points ?? 10;
-                $pointsEarned = $isCorrect ? $questionPoints : 0;
+                // ============================================
+                // STEP 3: LOOPING BERDASARKAN SOAL DI DATABASE
+                // BUKAN BERDASARKAN JAWABAN USER
+                // Ini memastikan soal yang TIDAK dijawab tetap terhitung SALAH
+                // ============================================
+                foreach ($allModuleQuestions as $question) {
+                    
+                    // Cek apakah user menjawab soal ini?
+                    $userAnswerChar = isset($userAnswersMap[$question->id]) 
+                        ? strtoupper($userAnswersMap[$question->id]) 
+                        : null; // Null jika tidak dijawab (skip)
 
-                // Simpan user answer
-                $attempt->answers()->create([
-                    'user_id' => $attempt->user_id,
-                    'question_id' => $question->id,
-                    'user_answer' => $userAnswer,
-                    'correct_answer' => $correctAnswer,
-                    'is_correct' => $isCorrect
-                ]);
+                    $correctAnswer = strtoupper($question->correct_answer);
+                    
+                    // Logic Penilaian Per Soal
+                    $isCorrect = ($userAnswerChar === $correctAnswer);
 
-                if ($isCorrect) {
-                    $correctCount++;
+                    if ($isCorrect) {
+                        $correctCount++;
+                    }
+
+                    // Simpan detail jawaban ke database (History)
+                    // Kita tetap simpan meskipun user tidak menjawab
+                    $attempt->answers()->updateOrCreate(
+                        ['question_id' => $question->id],
+                        [
+                            'user_id' => $attempt->user_id,
+                            'user_answer' => $userAnswerChar,
+                            'correct_answer' => $correctAnswer,
+                            'is_correct' => $isCorrect
+                        ]
+                    );
                 }
-                
-                $totalPoints += $questionPoints;
-                $totalScore += $pointsEarned;
             }
 
             // ============================================
-            // LOGIC SCORING SEMPURNA
+            // STEP 4: HITUNG SKOR AKHIR (THE PERFECT FORMULA)
             // ============================================
-            
-            // Hitung persentase berdasarkan jawaban yang dikirim (answered questions)
-            // BUKAN total semua soal di modul
-            if ($answeredCount === 1 && $correctCount === 1) {
-                // Jika hanya 1 soal dan BENAR → 100%
-                $percentage = 100;
-            } elseif ($answeredCount === 1 && $correctCount === 0) {
-                // Jika hanya 1 soal dan SALAH → 0%
-                $percentage = 0;
-            } elseif ($answeredCount > 1) {
-                // Jika multiple soal: (correct / total) * 100
-                $percentage = round(($correctCount / $answeredCount) * 100, 2);
-            } else {
-                // Edge case (seharusnya tidak terjadi)
-                $percentage = 0;
-            }
+            $percentage = round(($correctCount / $totalQuestionsReal) * 100, 2);
 
-            // Alternative calculation: berdasarkan points (jika points dari soal meaningful)
-            // Uncomment ini jika ingin scoring berbasis points
-            /*
-            if ($totalPoints > 0) {
-                $percentage = round(($totalScore / $totalPoints) * 100, 2);
-            } else {
-                $percentage = 0;
-            }
-            */
-
-            // Get passing score dari quiz
+            // ============================================
+            // STEP 5: TENTUKAN KELULUSAN
+            // Ambil dari: Quiz Setting -> Config Global -> Default 70
+            // ============================================
             $quiz = $this->getQuizForAttempt($attempt);
-            $passingScore = $quiz ? ($quiz->passing_score ?? 70) : 70;
+            
+            // Prioritas: Setting di Quiz DB -> Config Global -> Default 70
+            $passingScore = $quiz 
+                ? ($quiz->passing_score ?? config('quiz.passing_score', 70)) 
+                : config('quiz.passing_score', 70);
+            
             $isPassed = $percentage >= $passingScore;
 
-            // Hitung durasi
-            $durationMinutes = now()->diffInMinutes($attempt->started_at);
+            // ============================================
+            // STEP 6: HITUNG DURASI DENGAN AKURASI TINGGI
+            // ============================================
+            // Set finished_at explicitly saat ini jika belum ada
+            if (!$attempt->finished_at) {
+                $attempt->finished_at = now();
+            }
+            
+            // Hitung durasi dari started_at ke finished_at dengan akurasi seconds
+            // NOTE: Carbon diffInSeconds() menghitung dari argument ke current,
+            // jadi kita hitung: finished_timestamp - started_timestamp
+            $durationSeconds = max(0, $attempt->finished_at->getTimestamp() - $attempt->started_at->getTimestamp());
+            $durationMinutes = $durationSeconds / 60; // Simpan sebagai desimal untuk presisi
 
-            // Update attempt dengan hasil
+            // ============================================
+            // STEP 7: UPDATE DATA ATTEMPT
+            // ============================================
             $attempt->update([
                 'finished_at' => now(),
-                'score' => $totalScore,
+                'score' => $percentage, // Samakan score dan percentage agar konsisten
                 'percentage' => $percentage,
                 'is_passed' => $isPassed,
                 'duration_minutes' => $durationMinutes
             ]);
 
+            // ============================================
+            // STEP 8: RETURN HASIL DENGAN INFO LENGKAP
+            // ============================================
             return [
                 'success' => true,
                 'attempt_id' => $attempt->id,
-                'score' => $totalScore,
+                'score' => $percentage,
                 'percentage' => $percentage,
                 'is_passed' => $isPassed,
                 'correct_count' => $correctCount,
-                'total_questions' => $answeredCount,
+                'total_questions' => $totalQuestionsReal, // Info ke user: "Benar X dari Y soal"
                 'duration_minutes' => $durationMinutes,
-                'message' => "Quiz selesai. Anda menjawab {$correctCount} dari {$answeredCount} soal dengan benar. Nilai: {$percentage}%"
+                'message' => $isPassed 
+                    ? "Selamat! Anda berhasil menjawab {$correctCount} dari {$totalQuestionsReal} soal dengan benar. Nilai: {$percentage}%"
+                    : "Maaf, Anda menjawab {$correctCount} dari {$totalQuestionsReal} soal dengan benar. Nilai: {$percentage}% (Belum mencapai KKM {$passingScore}%)"
             ];
 
         } catch (\Exception $e) {
@@ -250,7 +281,7 @@ class QuizService
             if ($pretestCount > 0) {
                 $pretestPassed = ExamAttempt::where('user_id', $userId)
                     ->where('module_id', $moduleId)
-                    ->where('exam_type', 'pre_test')
+                    ->whereIn('exam_type', ['pre_test', 'pretest'])  // Support both formats
                     ->where('is_passed', true)
                     ->exists();
             }
@@ -367,4 +398,204 @@ class QuizService
             'started_at' => now()
         ]);
     }
+
+    /**
+     * =============================================
+     * COMPREHENSIVE PROGRESS CALCULATION
+     * =============================================
+     * 
+     * Menghitung progress SEMPURNA dengan 3 komponen:
+     * 1. Materials Completion (40% weight)
+     * 2. Pretest Score (30% weight)
+     * 3. Posttest Score (30% weight)
+     * 
+     * Formula:
+     * Total Progress = (Materials × 0.4) + (Pretest × 0.3) + (Posttest × 0.3)
+     * 
+     * @param int $userId
+     * @param int $moduleId
+     * @return array [
+     *     'total_progress' => 65,
+     *     'materials_progress' => 100,
+     *     'pretest_progress' => 60,
+     *     'posttest_progress' => 0,
+     *     'breakdown' => [...]
+     * ]
+     */
+    public function calculateComprehensiveProgress($userId, $moduleId)
+    {
+        try {
+            $module = Module::find($moduleId);
+            if (!$module) {
+                return [
+                    'total_progress' => 0,
+                    'materials_progress' => 0,
+                    'pretest_progress' => 0,
+                    'posttest_progress' => 0,
+                    'breakdown' => []
+                ];
+            }
+
+            // ==========================================
+            // 1. MATERIALS COMPLETION PROGRESS
+            // ==========================================
+            // Get all materials (legacy + training_materials)
+            $legacyMaterials = [];
+            $legacyId = 1;
+            if ($module->video_url) $legacyMaterials[] = $legacyId++;
+            if ($module->document_url) $legacyMaterials[] = $legacyId++;
+            if ($module->presentation_url) $legacyMaterials[] = $legacyId++;
+
+            $trainingMaterialIds = $module->trainingMaterials->pluck('id')->toArray();
+            $allMaterialIds = array_merge($legacyMaterials, $trainingMaterialIds);
+
+            $totalMaterials = count($allMaterialIds);
+            $completedMaterials = 0;
+
+            if ($totalMaterials > 0) {
+                $completedMaterials = UserMaterialProgress::where('user_id', $userId)
+                    ->whereIn('training_material_id', $allMaterialIds)
+                    ->where('is_completed', true)
+                    ->count();
+            }
+
+            $materialsProgress = $totalMaterials > 0 ? round(($completedMaterials / $totalMaterials) * 100) : 0;
+
+            // ==========================================
+            // 2. PRETEST PROGRESS
+            // ==========================================
+            $pretestAttempt = ExamAttempt::where('user_id', $userId)
+                ->where('module_id', $moduleId)
+                ->where(function($q) {
+                    $q->where('exam_type', 'pre_test')
+                      ->orWhere('exam_type', 'pretest');
+                })
+                ->where('finished_at', '!=', null)
+                ->orderBy('finished_at', 'desc')
+                ->first();
+
+            $pretestProgress = 0;
+            $pretestExists = false;
+            $pretestPassed = false;
+            $pretestScore = 0;
+
+            if ($pretestAttempt) {
+                $pretestExists = true;
+                $pretestProgress = (int)$pretestAttempt->percentage ?? 0;
+                $pretestPassed = $pretestAttempt->is_passed ?? false;
+                $pretestScore = $pretestAttempt->score ?? 0;
+            } else {
+                // Check if pretest exists in database
+                $pretestCount = Question::where('module_id', $moduleId)
+                    ->where('question_type', 'pretest')
+                    ->count();
+                $pretestExists = $pretestCount > 0;
+            }
+
+            // ==========================================
+            // 3. POSTTEST PROGRESS
+            // ==========================================
+            $posttestAttempt = ExamAttempt::where('user_id', $userId)
+                ->where('module_id', $moduleId)
+                ->where(function($q) {
+                    $q->where('exam_type', 'post_test')
+                      ->orWhere('exam_type', 'posttest');
+                })
+                ->where('finished_at', '!=', null)
+                ->orderBy('finished_at', 'desc')
+                ->first();
+
+            $posttestProgress = 0;
+            $posttestExists = false;
+            $posttestPassed = false;
+            $posttestScore = 0;
+
+            if ($posttestAttempt) {
+                $posttestExists = true;
+                $posttestProgress = (int)$posttestAttempt->percentage ?? 0;
+                $posttestPassed = $posttestAttempt->is_passed ?? false;
+                $posttestScore = $posttestAttempt->score ?? 0;
+            } else {
+                // Check if posttest exists in database
+                $posttestCount = Question::where('module_id', $moduleId)
+                    ->where('question_type', 'posttest')
+                    ->count();
+                $posttestExists = $posttestCount > 0;
+            }
+
+            // ==========================================
+            // 4. CALCULATE TOTAL PROGRESS
+            // ==========================================
+            // Weights: Materials 40%, Pretest 30%, Posttest 30%
+            $materialsWeight = 0.40;
+            $pretestWeight = 0.30;
+            $posttestWeight = 0.30;
+
+            $totalProgress = 0;
+
+            // Always include materials (always required)
+            $totalProgress += $materialsProgress * $materialsWeight;
+
+            // Include pretest if exists
+            if ($pretestExists) {
+                $totalProgress += $pretestProgress * $pretestWeight;
+            } else {
+                // If pretest doesn't exist, redistribute its weight to materials & posttest
+                $totalProgress += $materialsProgress * ($pretestWeight * 0.5);
+            }
+
+            // Include posttest if exists
+            if ($posttestExists) {
+                $totalProgress += $posttestProgress * $posttestWeight;
+            } else {
+                // If posttest doesn't exist, redistribute its weight to materials
+                $totalProgress += $materialsProgress * ($posttestWeight * 0.5);
+            }
+
+            $totalProgress = round($totalProgress);
+
+            return [
+                'total_progress' => $totalProgress,
+                'materials_progress' => $materialsProgress,
+                'pretest_progress' => $pretestProgress,
+                'posttest_progress' => $posttestProgress,
+                'breakdown' => [
+                    'materials' => [
+                        'progress' => $materialsProgress,
+                        'weight' => '40%',
+                        'completed' => $completedMaterials,
+                        'total' => $totalMaterials,
+                        'status' => $materialsProgress === 100 ? 'completed' : ($materialsProgress > 0 ? 'in_progress' : 'not_started')
+                    ],
+                    'pretest' => [
+                        'progress' => $pretestProgress,
+                        'weight' => '30%',
+                        'exists' => $pretestExists,
+                        'passed' => $pretestPassed,
+                        'score' => $pretestScore,
+                        'status' => !$pretestExists ? 'not_applicable' : ($pretestAttempt ? 'completed' : 'not_started')
+                    ],
+                    'posttest' => [
+                        'progress' => $posttestProgress,
+                        'weight' => '30%',
+                        'exists' => $posttestExists,
+                        'passed' => $posttestPassed,
+                        'score' => $posttestScore,
+                        'status' => !$posttestExists ? 'not_applicable' : ($posttestAttempt ? 'completed' : 'not_started')
+                    ]
+                ]
+            ];
+
+        } catch (\Exception $e) {
+            Log::error('Error calculating comprehensive progress: ' . $e->getMessage());
+            return [
+                'total_progress' => 0,
+                'materials_progress' => 0,
+                'pretest_progress' => 0,
+                'posttest_progress' => 0,
+                'breakdown' => []
+            ];
+        }
+    }
 }
+

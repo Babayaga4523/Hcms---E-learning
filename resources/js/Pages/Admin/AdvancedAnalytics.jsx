@@ -22,6 +22,17 @@ const InsightCard = ({ icon: Icon, title, value, trend, subtext, color = "lime" 
         slate: "bg-[#F8FAFC] text-[#334155] border-slate-200",
     };
 
+    // Trend Direction Legend:
+    // + = Positive (green) for: enrollments, completions, active_learners, engagement
+    // - = Negative (red) for: at_risk_users, dropout_rate
+    const getTrendColor = (trend) => {
+        if (!trend) return '';
+        // Check if it's an increase (+) or decrease (-)
+        if (trend.includes('+')) return 'text-green-600'; // Good: more enrollments, completions, etc.
+        if (trend.includes('-')) return 'text-red-600';   // Bad: more at-risk, dropouts, etc.
+        return 'text-slate-500';
+    };
+
     return (
         <motion.div 
             whileHover={{ y: -5 }}
@@ -36,7 +47,7 @@ const InsightCard = ({ icon: Icon, title, value, trend, subtext, color = "lime" 
                 </div>
                 {trend && (
                     <span className="flex items-center gap-1 text-xs font-bold bg-white border border-gray-100 px-2 py-1 rounded-full shadow-sm text-gray-700">
-                        <TrendingUp size={12} className={trend.includes('+') ? 'text-green-600' : 'text-red-600'} />
+                        <TrendingUp size={12} className={getTrendColor(trend)} />
                         {trend}
                     </span>
                 )}
@@ -100,6 +111,7 @@ export default function AdvancedAnalytics() {
     const [atRiskUsers, setAtRiskUsers] = useState([]);
     const [topPerformers, setTopPerformers] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
     // Use numeric ranges for clarity: 7, 30, 90, 365 (YTD)
     const [timeRange, setTimeRange] = useState(30);
     const [department, setDepartment] = useState('all');
@@ -237,6 +249,7 @@ export default function AdvancedAnalytics() {
     const loadData = async () => {
         try {
             setLoading(true);
+            setError(null); // Clear previous errors
             
             // Fetch all analytics data in parallel
             const [overviewRes, trendsRes, engagementRes, skillsRes, cohortRes, atRiskRes, topPerformersRes] = await Promise.all([
@@ -248,6 +261,23 @@ export default function AdvancedAnalytics() {
                 fetch(`/api/admin/analytics/at-risk`),
                 fetch(`/api/admin/analytics/top-performers?limit=4`)
             ]);
+            
+            // Check for API endpoint errors (404, 500, etc)
+            const allResponses = [
+                { res: overviewRes, name: 'overview' },
+                { res: trendsRes, name: 'trends' },
+                { res: engagementRes, name: 'engagement' },
+                { res: skillsRes, name: 'skills' },
+                { res: cohortRes, name: 'cohort' },
+                { res: atRiskRes, name: 'at-risk' },
+                { res: topPerformersRes, name: 'top-performers' }
+            ];
+            
+            const failedEndpoints = allResponses.filter(item => !item.res.ok).map(item => item.name);
+            if (failedEndpoints.length > 0) {
+                setError(`⚠️ Failed to load data from: ${failedEndpoints.join(', ')}. Verify API endpoints exist.`);
+                console.warn('Failed API endpoints:', failedEndpoints);
+            }
             
             if (overviewRes.ok) {
                 const data = await overviewRes.json();
@@ -309,6 +339,8 @@ export default function AdvancedAnalytics() {
                 console.log('Top performers data:', data);
             }
         } catch (err) {
+            const errorMsg = `Failed to load analytics: ${err.message}. Check your network connection.`;
+            setError(errorMsg);
             console.error('Error loading analytics data:', err);
         } finally {
             setLoading(false);
@@ -320,6 +352,23 @@ export default function AdvancedAnalytics() {
             <Head title="Advanced Analytics - Wondr Intelligence Hub" />
 
             <div className="pb-20 font-sans bg-[#FAFAFA]">
+                
+                {/* --- ERROR BOUNDARY --- */}
+                {error && (
+                    <div className="mx-8 mt-6 p-4 bg-red-50 border border-red-200 rounded-[16px] flex items-start gap-3">
+                        <AlertTriangle size={20} className="text-red-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                            <p className="text-sm font-bold text-red-900">Analytics Load Error</p>
+                            <p className="text-xs text-red-700 mt-1">{error}</p>
+                            <button 
+                                onClick={() => loadData()}
+                                className="text-xs font-bold text-red-600 hover:text-red-800 mt-2 underline"
+                            >
+                                Retry Loading Data
+                            </button>
+                        </div>
+                    </div>
+                )}
                 
                 {/* --- 1. SUPER HEADER --- */}
                 <div className="relative bg-white border-b border-slate-100 px-8 py-8 mb-8">

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Http\Controllers\Controller;
 use App\Models\ContentUpload;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -9,13 +10,14 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
-class ContentIngestionController
+class ContentIngestionController extends Controller
 {
     /**
      * Upload and convert content
      */
     public function upload(Request $request)
     {
+        $this->authorize('upload-content');
         try {
             $validated = $request->validate([
                 'file' => 'required|file|mimes:pptx,pdf,mp4,avi,mov,wmv|max:500000', // 500MB max

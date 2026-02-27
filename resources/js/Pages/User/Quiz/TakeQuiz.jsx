@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Head, router } from '@inertiajs/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -6,8 +6,10 @@ import {
     CheckCircle2, Flag, BookmarkPlus, RotateCcw,
     Send, HelpCircle, Timer, X, Menu, Settings, Check
 } from 'lucide-react';
-import axios from 'axios';
+import axiosInstance from '@/Services/axiosInstance';
+import { API_ENDPOINTS } from '@/Config/api';
 import showToast from '@/Utils/toast';
+import { handleAuthError } from '@/Utils/authGuard';
 
 // --- Wondr Style System ---
 const WondrStyles = () => (
@@ -70,21 +72,70 @@ const WondrStyles = () => (
     `}</style>
 );
 
-// Timer Component
-const TimerDisplay = ({ duration, onTimeUp }) => {
-    const [timeLeft, setTimeLeft] = useState(duration * 60);
+// Timer Component - Calculates based on elapsed time from exam start
+const TimerDisplay = ({ duration, onTimeUp, examAttemptId }) => {
+    const [timeLeft, setTimeLeft] = useState(null);
+    const [isInitialized, setIsInitialized] = useState(false);
+    
+    // Initialize timer from localStorage or create new one
+    useEffect(() => {
+        try {
+            const examStartKey = `exam_start_time_${examAttemptId}`;
+            let startTime = localStorage.getItem(examStartKey);
+            
+            if (!startTime) {
+                // First time - save current timestamp
+                startTime = Date.now().toString();
+                localStorage.setItem(examStartKey, startTime);
+            }
+            
+            // Calculate initial time left
+            const elapsed = (Date.now() - parseInt(startTime)) / 1000; // in seconds
+            const totalSeconds = duration * 60;
+            const remaining = Math.max(0, totalSeconds - elapsed);
+            
+            setTimeLeft(remaining);
+            setIsInitialized(true);
+            
+            // Force time up if already expired
+            if (remaining <= 0) {
+                onTimeUp();
+            }
+        } catch (error) {
+            console.error('Timer initialization error:', error);
+            // Fallback to full duration
+            setTimeLeft(duration * 60);
+            setIsInitialized(true);
+        }
+    }, [duration, examAttemptId, onTimeUp]);
     
     useEffect(() => {
-        if (timeLeft <= 0) {
-            onTimeUp();
-            return;
-        }
-        const timer = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
+        if (!isInitialized || timeLeft === null || timeLeft <= 0) return;
+        
+        const timer = setInterval(() => {
+            setTimeLeft(prev => {
+                if (prev <= 1) {
+                    onTimeUp();
+                    return 0;
+                }
+                return prev - 1;
+            });
+        }, 1000);
+        
         return () => clearInterval(timer);
-    }, [timeLeft, onTimeUp]);
+    }, [isInitialized, timeLeft, onTimeUp]);
+
+    if (timeLeft === null) {
+        return (
+            <div className="flex items-center gap-2 px-4 py-2 rounded-full font-mono font-bold border bg-slate-50 text-slate-400 border-slate-200">
+                <Clock size={16} />
+                <span>--:--</span>
+            </div>
+        );
+    }
 
     const mins = Math.floor(timeLeft / 60);
-    const secs = timeLeft % 60;
+    const secs = Math.round(timeLeft % 60);
     const isCritical = timeLeft <= 300; // 5 mins
 
     return (
@@ -180,6 +231,10 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
     const [loading, setLoading] = useState(false);
     const [zoomedImage, setZoomedImage] = useState(null);
     const [failedImages, setFailedImages] = useState(new Set()); // Track images that failed to load
+    const [storageError, setStorageError] = useState(false); // Track localStorage failures
+    
+    // Use ref to track if answers have been restored (prevents multiple restores across re-renders)
+    const hasRestoredRef = useRef(false);
     
     const totalQuestions = questions.length;
     const currentQuestion = questions[currentIndex];
@@ -190,38 +245,83 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
     const storageKey = `quiz_answers_${examAttempt.id}`;
     const flaggedStorageKey = `quiz_flagged_${examAttempt.id}`;
 
-    // Load answers from localStorage on mount
+    // Load answers from localStorage on mount (only once)
     useEffect(() => {
+        // Skip if already restored
+        if (hasRestoredRef.current) return;
+        
         try {
             const savedAnswers = localStorage.getItem(storageKey);
             const savedFlagged = localStorage.getItem(flaggedStorageKey);
             
             if (savedAnswers) {
-                setAnswers(JSON.parse(savedAnswers));
+                const parsed = JSON.parse(savedAnswers);
+                setAnswers(parsed);
+                console.log('✓ Restored answers from cache:', Object.keys(parsed).length, 'questions answered');
             }
             if (savedFlagged) {
-                setFlagged(JSON.parse(savedFlagged));
+                const parsed = JSON.parse(savedFlagged);
+                setFlagged(parsed);
+                console.log('✓ Restored flagged questions:', parsed.length);
             }
+            // Successfully loaded
+            setStorageError(false);
         } catch (error) {
             console.error('Error loading saved answers:', error);
+            // Set error state if load fails
+            setStorageError(true);
+            
+            // Show warning if localStorage access fails during load
+            if (error.name === 'SecurityError') {
+                console.warn('localStorage access denied - answers will not persist');
+            }
+        } finally {
+            // Mark as restored AFTER first attempt (success or failure)
+            hasRestoredRef.current = true;
         }
     }, [storageKey, flaggedStorageKey]);
 
     // Auto-save answers to localStorage whenever they change
+    // Wait until initial restore is complete before auto-saving
     useEffect(() => {
+        if (!hasRestoredRef.current) return; // Don't auto-save until restore is done
+        
         try {
             localStorage.setItem(storageKey, JSON.stringify(answers));
+            setStorageError(false);
         } catch (error) {
             console.error('Error saving answers:', error);
+            setStorageError(true);
+            
+            if (error.name === 'QuotaExceededError') {
+                showToast('⚠️ Penyimpanan browser penuh - jawaban mungkin tidak tersimpan', 'warning');
+            } else if (error.name === 'SecurityError') {
+                showToast('⚠️ localStorage dinonaktifkan - jawaban disimpan sementara dalam aplikasi', 'warning');
+            } else {
+                showToast('⚠️ Masalah penyimpanan - jawaban mungkin tidak tersimpan', 'warning');
+            }
         }
     }, [answers, storageKey]);
 
     // Auto-save flagged questions to localStorage
+    // Wait until initial restore is complete before auto-saving
     useEffect(() => {
+        if (!hasRestoredRef.current) return; // Don't auto-save until restore is done
+        
         try {
             localStorage.setItem(flaggedStorageKey, JSON.stringify(flagged));
+            setStorageError(false);
         } catch (error) {
             console.error('Error saving flagged questions:', error);
+            setStorageError(true);
+            
+            if (error.name === 'QuotaExceededError') {
+                showToast('⚠️ Penyimpanan browser penuh - penanda soal mungkin tidak tersimpan', 'warning');
+            } else if (error.name === 'SecurityError') {
+                showToast('⚠️ localStorage dinonaktifkan - penanda soal disimpan sementara dalam aplikasi', 'warning');
+            } else {
+                showToast('⚠️ Masalah penyimpanan - penanda soal mungkin tidak tersimpan', 'warning');
+            }
         }
     }, [flagged, flaggedStorageKey]);
 
@@ -357,19 +457,41 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
 
         const submitAttempt = async (attempt = 0) => {
             try {
-                const response = await axios.post(`/api/quiz/${examAttempt.id}/submit`, {
-                    answers: formattedAnswers
+                const response = await axiosInstance.post(API_ENDPOINTS.QUIZ_SUBMIT(examAttempt.id), {
+                    answers: formattedAnswers,
+                    cached: true // Flag indicating this submission includes cached answers
                 });
 
-                // Clear saved answers from localStorage after successful submit
+                // Clear saved answers from localStorage BEFORE redirect
+                // This ensures cache is cleared even if redirect is interrupted
+                let cacheCleared = true;
                 try {
                     localStorage.removeItem(storageKey);
                     localStorage.removeItem(flaggedStorageKey);
-                } catch (error) {
-                    console.error('Error clearing saved answers:', error);
+                    localStorage.removeItem(`exam_start_time_${examAttempt.id}`); // Also clear exam start time
+                } catch (storageError) {
+                    cacheCleared = false;
+                    console.error('Failed to clear submission cache:', storageError);
+                    
+                    // Warn user that cache might affect next submission
+                    showToast(
+                        '⚠️ Peringatan: Cache jawaban tidak berhasil dihapus. Submission berikutnya mungkin terpengaruh.',
+                        'warning'
+                    );
                 }
 
-                // Redirect to result page
+                // Log cache clearing status for debugging
+                if (cacheCleared) {
+                    console.log('✓ Submission cache cleared successfully for attempt:', examAttempt.id);
+                } else {
+                    console.warn('⚠️ Cache clear failed for quiz attempt:', examAttempt.id, {
+                        storageKey,
+                        flaggedStorageKey,
+                        examStartTimeKey: `exam_start_time_${examAttempt.id}`
+                    });
+                }
+
+                // Redirect to result page AFTER cache is cleared
                 router.visit(`/training/${training.id}/quiz/${quiz.type}/result/${response.data.attempt_id || examAttempt.id}`);
                 return true;
             } catch (error) {
@@ -377,16 +499,28 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
 
                 // If client error (4xx) other than 429, don't retry
                 const status = error?.response?.status;
-                const serverMsg = error?.response?.data?.message || 'Gagal mengirim jawaban.';
+                const errorData = error?.response?.data;
+                const serverMsg = errorData?.message || errorData?.error || 'Gagal mengirim jawaban.';
 
-                if (status === 401) {
-                    // Redirect to login
-                    window.location.href = '/login';
+                if (handleAuthError(error)) {
                     return false;
                 }
 
                 if (status && status >= 400 && status < 500 && status !== 429) {
-                    showToast(serverMsg + ' Silakan periksa jawaban Anda.', 'error');
+                    // Distinguish between different 400 errors
+                    let userMsg = serverMsg;
+                    
+                    if (status === 400) {
+                        // Check if it's a "no questions" error
+                        if (serverMsg.toLowerCase().includes('soal') || 
+                            serverMsg.toLowerCase().includes('quiz')) {
+                            userMsg = '⚠️ ' + serverMsg + ' Hubungi admin untuk bantuan.';
+                        } else {
+                            userMsg = serverMsg + ' Silakan periksa jawaban Anda.';
+                        }
+                    }
+                    
+                    showToast(userMsg, 'error');
                     return false;
                 }
 
@@ -429,12 +563,24 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
             <Head title={`${quiz.type === 'pretest' ? 'Pre-Test' : 'Post-Test'} - ${training.title}`} />
 
             {/* --- Auto-Save Notification --- */}
-            <div className="bg-green-50 border-b border-green-200 px-6 py-2">
-                <div className="max-w-[1400px] mx-auto flex items-center gap-2 text-xs text-green-700 font-medium">
-                    <CheckCircle2 size={14} />
-                    <span>Jawaban Anda disimpan otomatis 💾</span>
+            {storageError ? (
+                <div className="bg-yellow-50 border-b-2 border-yellow-400 px-6 py-3">
+                    <div className="max-w-[1400px] mx-auto flex items-start gap-3">
+                        <AlertCircle size={18} className="text-yellow-600 flex-shrink-0 mt-0.5" />
+                        <div className="flex-1">
+                            <p className="text-sm font-bold text-yellow-800">⚠️ Peringatan: Jawaban mungkin tidak tersimpan otomatis</p>
+                            <p className="text-xs text-yellow-700 mt-1">Penyimpanan browser Anda penuh atau dinonaktifkan. Jawaban disimpan sementara dalam aplikasi. Akan diminta untuk mengirim sebelum keluar.</p>
+                        </div>
+                    </div>
                 </div>
-            </div>
+            ) : (
+                <div className="bg-green-50 border-b border-green-200 px-6 py-2">
+                    <div className="max-w-[1400px] mx-auto flex items-center gap-2 text-xs text-green-700 font-medium">
+                        <CheckCircle2 size={14} />
+                        <span>Jawaban Anda disimpan otomatis 💾</span>
+                    </div>
+                </div>
+            )}
 
             {/* --- Top Bar (Sticky) --- */}
             <header className="glass-header sticky top-0 z-40 px-6 py-4">
@@ -466,7 +612,7 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
                     </div>
 
                     <div className="flex items-center gap-3">
-                        <TimerDisplay duration={quiz.duration || 30} onTimeUp={handleTimeUp} />
+                        <TimerDisplay duration={quiz.duration || 30} onTimeUp={handleTimeUp} examAttemptId={examAttempt.id} />
                         <button 
                             onClick={() => setShowSubmitModal(true)}
                             className="px-5 py-2 bg-[#005E54] hover:bg-[#00403a] text-white rounded-xl font-bold text-sm transition shadow-lg shadow-[#005E54]/20"
@@ -533,18 +679,18 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
                                 <h2 className="text-xl md:text-2xl font-bold text-slate-900 leading-relaxed">
                                     {currentQuestion.question_text}
                                 </h2>
-                                {currentQuestion.image_url && !failedImages.has(currentIndex) && (
+                                {currentQuestion.image_url_full && !failedImages.has(currentIndex) && (
                                     <div className="mt-6 group relative">
                                         <div className="absolute top-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                                             Klik untuk memperbesar
                                         </div>
                                         <img 
-                                            src={currentQuestion.image_url} 
+                                            src={currentQuestion.image_url_full} 
                                             alt="Question" 
                                             loading="lazy"
-                                            onClick={() => setZoomedImage(currentQuestion.image_url)}
+                                            onClick={() => setZoomedImage(currentQuestion.image_url_full)}
                                             onError={(e) => {
-                                                console.warn('Failed to load question image:', currentQuestion.image_url);
+                                                console.warn('Failed to load question image:', currentQuestion.image_url_full);
                                                 // Mark this image as failed
                                                 setFailedImages(prev => new Set([...prev, currentIndex]));
                                                 // Hide the image element gracefully
@@ -639,6 +785,8 @@ export default function TakeQuiz({ auth, training = {}, quiz = {}, questions = [
                                             setCurrentIndex(idx);
                                             setSidebarOpen(false);
                                         }}
+                                        aria-label={`Soal ${idx + 1}${isAnswered ? ', sudah dijawab' : ''}${isFlagged ? ', ditandai' : ''}`}
+                                        aria-current={isCurrent ? 'step' : undefined}
                                         className={`question-nav-btn w-10 h-10 rounded-xl font-bold text-sm flex items-center justify-center relative ${
                                             isCurrent ? 'active' : 
                                             isFlagged ? 'flagged bg-amber-50 text-amber-600' :

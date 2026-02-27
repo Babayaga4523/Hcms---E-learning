@@ -15,6 +15,7 @@ class EmailConfigurationController extends Controller
      */
     public function getConfiguration()
     {
+        $this->authorize('view-settings');
         $config = Cache::get('email_config', [
             'mail_driver' => config('mail.default', 'smtp'),
             'mail_host' => config('mail.mailers.smtp.host', 'smtp.mailtrap.io'),
@@ -34,18 +35,20 @@ class EmailConfigurationController extends Controller
      */
     public function saveConfiguration(Request $request)
     {
+        $this->authorize('manage-settings');
         try {
             $config = $request->all();
 
-            // Validate required fields
-            $request->validate([
-                'mail_driver' => 'required|string',
-                'mail_host' => 'required|string',
-                'mail_port' => 'required|integer',
-                'mail_username' => 'required|string',
-                'mail_encryption' => 'required|string',
+            // Validate required fields with strict rules
+            $validated = $request->validate([
+                'mail_driver' => 'required|string|in:smtp,mailgun,sendmail,ses',
+                'mail_host' => 'required|string|min:3',
+                'mail_port' => 'required|integer|between:1,65535',
+                'mail_username' => 'required|string|min:3',
+                'mail_password' => 'required|string|min:6',
+                'mail_encryption' => 'required|string|in:tls,ssl',
                 'mail_from_address' => 'required|email',
-                'mail_from_name' => 'required|string',
+                'mail_from_name' => 'required|string|min:3|max:100',
             ]);
 
             // Update .env file

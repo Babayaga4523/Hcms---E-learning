@@ -1,13 +1,84 @@
 import React, { useState, useEffect } from 'react';
 import { Head, usePage } from '@inertiajs/react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
-    Settings, Save, RefreshCw, Database, Shield, Globe,
-    Smartphone, Lock, Server, Clock, Activity, HardDrive,
-    CheckCircle2, AlertTriangle, Key, UploadCloud
+    Save, RefreshCw, Database, Shield, Globe,
+    Smartphone, Lock, Clock, HardDrive,
+    CheckCircle2
 } from 'lucide-react';
 import AdminLayout from '@/Layouts/AdminLayout';
 import axios from 'axios';
+import showToast from '@/Utils/toast';
+
+// --- TIMEZONE CONFIGURATION ---
+const TIMEZONES = [
+    // Asia
+    { value: 'Asia/Jakarta', label: 'Jakarta (UTC+7)' },
+    { value: 'Asia/Makassar', label: 'Makassar (UTC+8)' },
+    { value: 'Asia/Jayapura', label: 'Jayapura (UTC+9)' },
+    { value: 'Asia/Bangkok', label: 'Bangkok (UTC+7)' },
+    { value: 'Asia/Ho_Chi_Minh', label: 'Ho Chi Minh City (UTC+7)' },
+    { value: 'Asia/Singapore', label: 'Singapore (UTC+8)' },
+    { value: 'Asia/Hong_Kong', label: 'Hong Kong (UTC+8)' },
+    { value: 'Asia/Shanghai', label: 'Shanghai (UTC+8)' },
+    { value: 'Asia/Tokyo', label: 'Tokyo (UTC+9)' },
+    { value: 'Asia/Seoul', label: 'Seoul (UTC+9)' },
+    { value: 'Asia/Manila', label: 'Manila (UTC+8)' },
+    { value: 'Asia/Kolkata', label: 'India (UTC+5:30)' },
+    { value: 'Asia/Karachi', label: 'Karachi (UTC+5)' },
+    { value: 'Asia/Dubai', label: 'Dubai (UTC+4)' },
+    
+    // Americas
+    { value: 'America/New_York', label: 'New York (UTC-5)' },
+    { value: 'America/Chicago', label: 'Chicago (UTC-6)' },
+    { value: 'America/Denver', label: 'Denver (UTC-7)' },
+    { value: 'America/Los_Angeles', label: 'Los Angeles (UTC-8)' },
+    { value: 'America/Toronto', label: 'Toronto (UTC-5)' },
+    { value: 'America/Mexico_City', label: 'Mexico City (UTC-6)' },
+    { value: 'America/Bogota', label: 'Bogota (UTC-5)' },
+    { value: 'America/Sao_Paulo', label: 'São Paulo (UTC-3)' },
+    { value: 'America/Buenos_Aires', label: 'Buenos Aires (UTC-3)' },
+    
+    // Europe
+    { value: 'Europe/London', label: 'London (UTC+0)' },
+    { value: 'Europe/Paris', label: 'Paris (UTC+1)' },
+    { value: 'Europe/Berlin', label: 'Berlin (UTC+1)' },
+    { value: 'Europe/Amsterdam', label: 'Amsterdam (UTC+1)' },
+    { value: 'Europe/Brussels', label: 'Brussels (UTC+1)' },
+    { value: 'Europe/Vienna', label: 'Vienna (UTC+1)' },
+    { value: 'Europe/Istanbul', label: 'Istanbul (UTC+3)' },
+    { value: 'Europe/Moscow', label: 'Moscow (UTC+3)' },
+    
+    // Africa
+    { value: 'Africa/Cairo', label: 'Cairo (UTC+2)' },
+    { value: 'Africa/Johannesburg', label: 'Johannesburg (UTC+2)' },
+    { value: 'Africa/Lagos', label: 'Lagos (UTC+1)' },
+    
+    // Oceania
+    { value: 'Australia/Sydney', label: 'Sydney (UTC+10)' },
+    { value: 'Australia/Melbourne', label: 'Melbourne (UTC+10)' },
+    { value: 'Australia/Perth', label: 'Perth (UTC+8)' },
+    { value: 'Pacific/Auckland', label: 'Auckland (UTC+12)' },
+    { value: 'Pacific/Fiji', label: 'Fiji (UTC+12)' },
+];
+
+// --- BACKUP CONFIGURATION ---
+const getBackupDiskLocation = () => {
+    // Try to get from Vite environment variables
+    const backupDisk = import.meta.env.VITE_BACKUP_DISK;
+    if (backupDisk) {
+        return backupDisk === 's3' ? 'AWS S3 (Cloud)' : backupDisk;
+    }
+    return 'Local Storage';
+};
+
+const BACKUP_CONFIG = {
+    location: getBackupDiskLocation(),
+    max_backups: 7,
+    retention_days: 30,
+    size_limit_gb: 5,
+    auto_backup_enabled: true,
+};
 
 // --- REUSABLE COMPONENTS ---
 
@@ -75,30 +146,40 @@ export default function SystemSettings() {
     const [activeTab, setActiveTab] = useState('general');
     const [loading, setLoading] = useState(false);
     const [loadingData, setLoadingData] = useState(true);
+    const [loadingBackups, setLoadingBackups] = useState(false);
+    const [errors, setErrors] = useState({});
+    const [backups, setBackups] = useState([]);
     const [settings, setSettings] = useState({
         app_name: '',
         app_url: '',
         timezone: 'Asia/Jakarta',
-        locale: 'id',
         max_upload_size: 50,
         session_timeout: 30,
         enable_two_factor: false,
-        enable_api: false,
-        api_rate_limit: 1000,
-        maintenance_mode: false,
-        backup_enabled: false,
-        backup_frequency: 'daily',
     });
-
-    // Backup State
-    const [showBackupModal, setShowBackupModal] = useState(false);
-    const [backupProgress, setBackupProgress] = useState(0);
-    const [backupMessage, setBackupMessage] = useState('');
 
     // Load settings on mount
     useEffect(() => {
         loadSettings();
+        loadBackups();
     }, []);
+
+    // Session timeout warning
+    useEffect(() => {
+        if (!settings.session_timeout) return;
+        
+        const timeoutMinutes = parseInt(settings.session_timeout);
+        const warningAt = (timeoutMinutes - 5) * 60 * 1000; // 5 min before timeout
+        
+        if (warningAt <= 0) return; // Don't set warning if timeout is 5 minutes or less
+        
+        const timeoutId = setTimeout(() => {
+            showToast('⏳ Your session will expire in 5 minutes due to inactivity', 'warning');
+        }, warningAt);
+        
+        // Cleanup timeout when component unmounts or settings change
+        return () => clearTimeout(timeoutId);
+    }, [settings.session_timeout]);
 
     const loadSettings = async () => {
         try {
@@ -106,60 +187,112 @@ export default function SystemSettings() {
             const response = await axios.get('/api/admin/settings');
             setSettings(response.data);
         } catch (error) {
-            console.error('Failed to load settings:', error);
+            console.error('Gagal load settings:', error);
+            showToast('Gagal load settings', 'error');
         } finally {
             setLoadingData(false);
         }
     };
 
-    const handleChange = (key, value) => {
-        setSettings(prev => ({ ...prev, [key]: value }));
+    const loadBackups = async () => {
+        try {
+            setLoadingBackups(true);
+            const response = await axios.get('/api/admin/backups');
+            if (response.data.backups) {
+                setBackups(response.data.backups);
+            }
+        } catch (error) {
+            console.error('Gagal load backups:', error);
+        } finally {
+            setLoadingBackups(false);
+        }
     };
 
-    const handleSave = async () => {
+    const handleChange = (key, value) => {
+        setSettings(prev => ({ ...prev, [key]: value }));
+        // Clear error for this field when user starts typing
+        if (errors[key]) {
+            setErrors(prev => ({ ...prev, [key]: undefined }));
+        }
+        
+        // Add upload size validation warnings
+        if (key === 'max_upload_size') {
+            const sizeNum = parseInt(value);
+            if (sizeNum > 100) {
+                showToast('⚠️ Very large files may cause issues with browser performance', 'warning');
+            }
+            if (sizeNum > 500) {
+                showToast('❌ Warning: Maximum recommended size is 100-500 MB', 'error');
+            }
+        }
+    };
+
+    const testConnection = async () => {
+        if (!settings.app_url) {
+            showToast('⚠️ Please enter an App URL first', 'warning');
+            return;
+        }
+        
         try {
             setLoading(true);
-            const response = await axios.post('/api/admin/settings', settings);
+            const response = await fetch(settings.app_url, { 
+                method: 'HEAD',
+                mode: 'no-cors'
+            });
             
-            // Reload settings from database to reflect changes
-            await loadSettings();
-            
-            // Show success message
-            showToast('Settings saved successfully!', 'success');
-        } catch (error) {
-            console.error('Failed to save settings:', error);
-            showToast('Failed to save settings. Please try again.', 'error');
+            // For no-cors requests, we can't check status, so just check if it didn't error
+            showToast('✅ URL is reachable and responding', 'success');
+        } catch (err) {
+            showToast(`❌ Cannot reach ${settings.app_url} - Please verify the URL is correct and accessible`, 'error');
+            console.error('Connection test failed:', err);
         } finally {
             setLoading(false);
         }
     };
 
-    const startBackup = async () => {
+    const ErrorMessage = ({ fieldName }) => {
+        if (!errors[fieldName]) return null;
+        return (
+            <p className="text-red-500 text-sm mt-2 font-medium">
+                ⚠️ {Array.isArray(errors[fieldName]) ? errors[fieldName][0] : errors[fieldName]}
+            </p>
+        );
+    };
+
+    const handleSave = async () => {
         try {
-            setBackupProgress(10);
-            setBackupMessage('Initializing backup...');
+            setLoading(true);
+            setErrors({});
             
-            const response = await axios.post('/api/admin/backup');
+            const response = await axios.post('/api/admin/settings', settings);
             
-            setBackupProgress(50);
-            setBackupMessage('Creating database dump...');
+            // Reload settings dari database untuk verify
+            await loadSettings();
             
-            setTimeout(() => {
-                setBackupProgress(100);
-                setBackupMessage('Backup completed successfully!');
-                
-                setTimeout(() => {
-                    setShowBackupModal(false);
-                    setBackupProgress(0);
-                    setBackupMessage('');
-                }, 1500);
-            }, 1000);
+            // Show success message
+            showToast('Settings berhasil disimpan!', 'success');
         } catch (error) {
-            console.error('Backup failed:', error);
-            setBackupMessage('Backup failed. Please try again.');
-            setBackupProgress(0);
+            if (error.response?.status === 422) {
+                // Validation errors
+                const validationErrors = error.response.data.errors || {};
+                setErrors(validationErrors);
+                
+                const errorMessages = Object.entries(validationErrors)
+                    .map(([field, messages]) => `${field}: ${messages.join(', ')}`)
+                    .join(' | ');
+                
+                showToast(`Validation error: ${errorMessages}`, 'error');
+            } else {
+                console.error('Gagal simpan settings:', error);
+                const errorMsg = error.response?.data?.error || error.message || 'Unknown error';
+                showToast(`Gagal simpan settings: ${errorMsg}`, 'error');
+            }
+        } finally {
+            setLoading(false);
         }
     };
+
+
 
     return (
         <AdminLayout user={user}>
@@ -192,8 +325,7 @@ export default function SystemSettings() {
                 <div className="flex gap-4 mb-8 overflow-x-auto pb-2">
                     <TabButton active={activeTab === 'general'} label="General" icon={Globe} onClick={() => setActiveTab('general')} />
                     <TabButton active={activeTab === 'security'} label="Security & Access" icon={Shield} onClick={() => setActiveTab('security')} />
-                    <TabButton active={activeTab === 'data'} label="Data & Backup" icon={Database} onClick={() => setActiveTab('data')} />
-                    <TabButton active={activeTab === 'api'} label="API Integration" icon={Server} onClick={() => setActiveTab('api')} />
+                    <TabButton active={activeTab === 'data'} label="Storage" icon={Database} onClick={() => setActiveTab('data')} />
                 </div>
 
                 {/* --- CONTENT AREA --- */}
@@ -223,17 +355,31 @@ export default function SystemSettings() {
                                             type="text" 
                                             value={settings.app_name}
                                             onChange={(e) => handleChange('app_name', e.target.value)}
-                                            className="w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-slate-900 outline-none focus:ring-2 focus:ring-[#D6FF59]"
+                                            maxLength={255}
+                                            className={`w-full p-4 bg-slate-50 border-none rounded-xl font-bold text-slate-900 outline-none focus:ring-2 ${errors.app_name ? 'focus:ring-red-500' : 'focus:ring-[#D6FF59]'}`}
                                         />
+                                        <ErrorMessage fieldName="app_name" />
                                     </div>
                                     <div>
                                         <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">App URL</label>
-                                        <input 
-                                            type="text" 
-                                            value={settings.app_url}
-                                            onChange={(e) => handleChange('app_url', e.target.value)}
-                                            className="w-full p-4 bg-slate-50 border-none rounded-xl font-mono text-sm text-slate-700 outline-none focus:ring-2 focus:ring-[#D6FF59]"
-                                        />
+                                        <div className="flex gap-2">
+                                            <input 
+                                                type="text" 
+                                                value={settings.app_url}
+                                                onChange={(e) => handleChange('app_url', e.target.value)}
+                                                placeholder="https://example.com"
+                                                className={`flex-1 p-4 bg-slate-50 border-none rounded-xl font-mono text-sm text-slate-700 outline-none focus:ring-2 ${errors.app_url ? 'focus:ring-red-500' : 'focus:ring-[#D6FF59]'}`}
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={testConnection}
+                                                disabled={loading}
+                                                className="px-6 py-4 bg-blue-500 text-white rounded-xl font-bold hover:bg-blue-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                {loading ? '🔄' : '🔗'} Test
+                                            </button>
+                                        </div>
+                                        <ErrorMessage fieldName="app_url" />
                                     </div>
                                 </div>
                             </SettingCard>
@@ -242,58 +388,47 @@ export default function SystemSettings() {
                             <SettingCard 
                                 icon={Globe} 
                                 title="Localization" 
-                                description="Zona waktu dan bahasa default sistem."
+                                description="Zona waktu default sistem untuk timestamp."
                             >
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="grid grid-cols-1 gap-6">
                                     <div>
-                                        <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Timezone</label>
+                                        <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Timezone (UTC/GMT)</label>
                                         <select 
                                             value={settings.timezone}
                                             onChange={(e) => handleChange('timezone', e.target.value)}
-                                            className="w-full p-4 bg-slate-50 border-none rounded-xl font-medium text-slate-700 outline-none focus:ring-2 focus:ring-[#D6FF59]"
+                                            className={`w-full p-4 bg-slate-50 border-none rounded-xl font-medium text-slate-700 outline-none focus:ring-2 ${errors.timezone ? 'focus:ring-red-500' : 'focus:ring-[#D6FF59]'}`}
                                         >
-                                            <option value="Asia/Jakarta">Asia/Jakarta (WIB)</option>
-                                            <option value="Asia/Makassar">Asia/Makassar (WITA)</option>
-                                            <option value="Asia/Jayapura">Asia/Jayapura (WIT)</option>
+                                            <optgroup label="--- ASIA ---">
+                                                {TIMEZONES.filter(tz => tz.value.startsWith('Asia')).map(tz => (
+                                                    <option key={tz.value} value={tz.value}>{tz.label}</option>
+                                                ))}
+                                            </optgroup>
+                                            <optgroup label="--- AMERICAS ---">
+                                                {TIMEZONES.filter(tz => tz.value.startsWith('America')).map(tz => (
+                                                    <option key={tz.value} value={tz.value}>{tz.label}</option>
+                                                ))}
+                                            </optgroup>
+                                            <optgroup label="--- EUROPE ---">
+                                                {TIMEZONES.filter(tz => tz.value.startsWith('Europe')).map(tz => (
+                                                    <option key={tz.value} value={tz.value}>{tz.label}</option>
+                                                ))}
+                                            </optgroup>
+                                            <optgroup label="--- AFRICA ---">
+                                                {TIMEZONES.filter(tz => tz.value.startsWith('Africa')).map(tz => (
+                                                    <option key={tz.value} value={tz.value}>{tz.label}</option>
+                                                ))}
+                                            </optgroup>
+                                            <optgroup label="--- OCEANIA ---">
+                                                {TIMEZONES.filter(tz => tz.value.startsWith('Australia') || tz.value.startsWith('Pacific')).map(tz => (
+                                                    <option key={tz.value} value={tz.value}>{tz.label}</option>
+                                                ))}
+                                            </optgroup>
                                         </select>
+                                        <ErrorMessage fieldName="timezone" />
                                     </div>
-                                    <div>
-                                        <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Default Language</label>
-                                        <div className="flex bg-slate-50 p-1 rounded-xl">
-                                            {['id', 'en'].map(lang => (
-                                                <button
-                                                    key={lang}
-                                                    onClick={() => handleChange('locale', lang)}
-                                                    className={`flex-1 py-3 rounded-lg text-sm font-bold transition-all ${
-                                                        settings.locale === lang 
-                                                        ? 'bg-white shadow-sm text-slate-900' 
-                                                        : 'text-slate-400 hover:text-slate-600'
-                                                    }`}
-                                                >
-                                                    {lang === 'id' ? '🇮🇩 Indonesia' : '🇺🇸 English'}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
+
                                 </div>
                             </SettingCard>
-
-                            {/* Maintenance Toggle */}
-                            <div className="bg-slate-900 rounded-[24px] p-6 text-white flex items-center justify-between shadow-lg">
-                                <div className="flex gap-4 items-center">
-                                    <div className="p-3 bg-white/10 rounded-xl">
-                                        <AlertTriangle className="text-yellow-400" />
-                                    </div>
-                                    <div>
-                                        <h3 className="font-bold text-lg">Maintenance Mode</h3>
-                                        <p className="text-slate-400 text-sm">Hanya admin yang bisa mengakses sistem saat aktif.</p>
-                                    </div>
-                                </div>
-                                <ToggleSwitch 
-                                    checked={settings.maintenance_mode} 
-                                    onChange={(val) => handleChange('maintenance_mode', val)} 
-                                />
-                            </div>
                         </motion.div>
                     )}
 
@@ -316,6 +451,7 @@ export default function SystemSettings() {
                                             onChange={(val) => handleChange('enable_two_factor', val)} 
                                         />
                                     </div>
+                                    {errors.enable_two_factor && <ErrorMessage fieldName="enable_two_factor" />}
 
                                     <div>
                                         <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Session Timeout (Minutes)</label>
@@ -325,9 +461,13 @@ export default function SystemSettings() {
                                                 type="number" 
                                                 value={settings.session_timeout}
                                                 onChange={(e) => handleChange('session_timeout', e.target.value)}
-                                                className="w-full pl-12 pr-4 py-4 bg-slate-50 border-none rounded-xl font-bold text-slate-900 outline-none focus:ring-2 focus:ring-[#D6FF59]"
+                                                min={1}
+                                                max={1440}
+                                                className={`w-full pl-12 pr-4 py-4 bg-slate-50 border-none rounded-xl font-bold text-slate-900 outline-none focus:ring-2 ${errors.session_timeout ? 'focus:ring-red-500' : 'focus:ring-[#D6FF59]'}`}
                                             />
                                         </div>
+                                        <p className="text-xs text-slate-500 mt-2">⏰ Users will receive a warning 5 minutes before session expires</p>
+                                        <ErrorMessage fieldName="session_timeout" />
                                     </div>
                                 </div>
                             </SettingCard>
@@ -353,148 +493,118 @@ export default function SystemSettings() {
                                             step="10"
                                             value={settings.max_upload_size}
                                             onChange={(e) => handleChange('max_upload_size', e.target.value)}
-                                            className="flex-1 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-slate-900"
+                                            className={`flex-1 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-${errors.max_upload_size ? 'red' : 'slate'}-900`}
                                         />
                                         <span className="font-mono font-bold text-lg bg-slate-100 px-3 py-1 rounded-lg w-24 text-center">
                                             {settings.max_upload_size} MB
                                         </span>
                                     </div>
+                                    <ErrorMessage fieldName="max_upload_size" />
                                 </div>
                             </SettingCard>
-
-                            {/* Backup Center */}
-                            <div className="bg-slate-900 rounded-[32px] p-8 text-white relative overflow-hidden shadow-2xl">
-                                <div className="absolute top-0 right-0 w-64 h-64 bg-teal-500 rounded-full blur-[100px] opacity-20 pointer-events-none"></div>
-
-                                <div className="flex justify-between items-start mb-8 relative z-10">
-                                    <div>
-                                        <h3 className="text-2xl font-black mb-2 flex items-center gap-2">
-                                            <Database className="text-[#D6FF59]" /> Backup Center
-                                        </h3>
-                                        <p className="text-slate-400">Terakhir dibackup: <strong>Hari ini, 02:00 WIB</strong></p>
-                                    </div>
-                                    <button 
-                                        onClick={() => setShowBackupModal(true)}
-                                        className="bg-[#D6FF59] text-slate-900 px-6 py-3 rounded-xl font-bold text-sm hover:bg-[#cbf542] transition shadow-lg flex items-center gap-2"
-                                    >
-                                        <UploadCloud size={18} /> Backup Now
-                                    </button>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 relative z-10">
-                                    <div className="bg-white/10 rounded-2xl p-4 border border-white/5">
-                                        <p className="text-xs font-bold uppercase text-slate-400 mb-1">Frequency</p>
-                                        <p className="font-bold text-lg">Daily (Auto)</p>
-                                    </div>
-                                    <div className="bg-white/10 rounded-2xl p-4 border border-white/5">
-                                        <p className="text-xs font-bold uppercase text-slate-400 mb-1">Retention</p>
-                                        <p className="font-bold text-lg">30 Days</p>
-                                    </div>
-                                    <div className="bg-white/10 rounded-2xl p-4 border border-white/5">
-                                        <p className="text-xs font-bold uppercase text-slate-400 mb-1">Status</p>
-                                        <p className="font-bold text-lg text-emerald-400 flex items-center gap-2">
-                                            <CheckCircle2 size={16} /> Healthy
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-                        </motion.div>
-                    )}
-
-                    {/* API SETTINGS */}
-                    {activeTab === 'api' && (
-                        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+                            {/* Backup Configuration Info */}
                             <SettingCard 
-                                icon={Server} 
-                                title="API Access" 
-                                description="Kontrol akses API untuk integrasi pihak ketiga."
-                                action={
-                                    <ToggleSwitch 
-                                        checked={settings.enable_api} 
-                                        onChange={(val) => handleChange('enable_api', val)} 
-                                    />
-                                }
+                                icon={Database} 
+                                title="Backup Configuration" 
+                                description="Backup strategy and retention policy."
                             >
-                                <div className={`space-y-6 transition-opacity duration-300 ${settings.enable_api ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-                                    <div>
-                                        <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Rate Limit (Requests/Min)</label>
-                                        <input 
-                                            type="number" 
-                                            value={settings.api_rate_limit}
-                                            onChange={(e) => handleChange('api_rate_limit', e.target.value)}
-                                            className="w-full p-4 bg-slate-50 border-none rounded-xl font-mono font-bold text-slate-900 outline-none focus:ring-2 focus:ring-[#D6FF59]"
-                                        />
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                                        <p className="text-xs font-bold uppercase text-slate-500 mb-1">Storage Location</p>
+                                        <p className="font-bold text-slate-900">{BACKUP_CONFIG.location}</p>
                                     </div>
+                                    <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                                        <p className="text-xs font-bold uppercase text-slate-500 mb-1">Max Backups Kept</p>
+                                        <p className="font-bold text-slate-900">{BACKUP_CONFIG.max_backups} backups</p>
+                                    </div>
+                                    <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                                        <p className="text-xs font-bold uppercase text-slate-500 mb-1">Retention Period</p>
+                                        <p className="font-bold text-slate-900">{BACKUP_CONFIG.retention_days} days</p>
+                                    </div>
+                                    <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                                        <p className="text-xs font-bold uppercase text-slate-500 mb-1">Max Backup Size</p>
+                                        <p className="font-bold text-slate-900">{BACKUP_CONFIG.size_limit_gb} GB</p>
+                                    </div>
+                                </div>
+                                {BACKUP_CONFIG.auto_backup_enabled && (
+                                    <div className="mt-4 p-4 bg-emerald-50 rounded-xl border border-emerald-200">
+                                        <p className="text-sm font-bold text-emerald-800">✅ Automatic daily backups are enabled</p>
+                                    </div>
+                                )}
+                            </SettingCard>
+                            {/* Backup Management */}
+                            <SettingCard 
+                                icon={HardDrive} 
+                                title="Manajemen Backup" 
+                                description="Lihat dan kelola system backups."
+                            >
+                                {loadingBackups ? (
+                                    <div className="flex items-center justify-center py-8">
+                                        <RefreshCw className="animate-spin text-slate-400 mr-2" size={18} />
+                                        <p className="text-slate-500">Loading backups...</p>
+                                    </div>
+                                ) : backups.length > 0 ? (
+                                    <div className="space-y-3">
+                                        {backups.map((backup) => (
+                                            <div key={backup.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-slate-300 transition">
+                                                <div className="flex-1">
+                                                    <p className="font-bold text-slate-900">{backup.id}</p>
+                                                    <p className="text-sm text-slate-500 mt-1">
+                                                        {new Date(backup.created_at).toLocaleString('id-ID')} • {backup.size_formatted}
+                                                    </p>
+                                                    <span className={`inline-block mt-2 px-2 py-1 rounded text-xs font-bold ${
+                                                        backup.status === 'valid' ? 'bg-emerald-100 text-emerald-700' : 'bg-yellow-100 text-yellow-700'
+                                                    }`}>
+                                                        {backup.status}
+                                                    </span>
+                                                </div>
+                                                <a 
+                                                    href={backup.download_url}
+                                                    className="ml-4 px-4 py-2 bg-blue-500 text-white rounded-lg font-bold hover:bg-blue-600 transition"
+                                                    download
+                                                >
+                                                    Download
+                                                </a>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="py-8 text-center">
+                                        <p className="text-slate-500">Tidak ada backup tersedia</p>
+                                    </div>
+                                )}
+                            </SettingCard>
 
-                                    <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 flex gap-3">
-                                        <Key className="text-amber-600 shrink-0" />
-                                        <div>
-                                            <h4 className="font-bold text-amber-900 text-sm">Secret Key</h4>
-                                            <p className="font-mono text-xs text-amber-700 mt-1 break-all">
-                                                sk_live_51Msz...x82j9s (Hidden)
-                                            </p>
-                                            <button className="text-xs font-bold text-amber-800 underline mt-2">Regenerate Key</button>
+                            {/* Backup Status Summary */}
+                            {backups.length > 0 && (
+                                <SettingCard 
+                                    icon={HardDrive} 
+                                    title="Backup Status" 
+                                    description="Informasi backup terbaru."
+                                >
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                        <div className="bg-slate-50 rounded-xl p-4">
+                                            <p className="text-xs font-bold uppercase text-slate-500 mb-1">Total Backups</p>
+                                            <p className="font-bold text-lg text-slate-900">{backups.length}</p>
+                                        </div>
+                                        <div className="bg-slate-50 rounded-xl p-4">
+                                            <p className="text-xs font-bold uppercase text-slate-500 mb-1">Last Backup</p>
+                                            <p className="font-bold text-lg text-slate-900">{new Date(backups[0].created_at).toLocaleString('id-ID')}</p>
+                                        </div>
+                                        <div className="bg-slate-50 rounded-xl p-4">
+                                            <p className="text-xs font-bold uppercase text-slate-500 mb-1">Total Size</p>
+                                            <p className="font-bold text-lg text-slate-900">{backups.reduce((sum, b) => sum + b.size, 0) / (1024 * 1024 * 1024) > 1 ? (backups.reduce((sum, b) => sum + b.size, 0) / (1024 * 1024 * 1024)).toFixed(2) + ' GB' : (backups.reduce((sum, b) => sum + b.size, 0) / (1024 * 1024)).toFixed(2) + ' MB'}</p>
                                         </div>
                                     </div>
-                                </div>
-                            </SettingCard>
+                                </SettingCard>
+                            )}
                         </motion.div>
                     )}
+
+
                 </>
             )}
         </div>
-
-                {/* --- BACKUP MODAL --- */}
-                <AnimatePresence>
-                    {showBackupModal && (
-                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-                            <motion.div 
-                                initial={{ scale: 0.9, opacity: 0 }}
-                                animate={{ scale: 1, opacity: 1 }}
-                                exit={{ scale: 0.9, opacity: 0 }}
-                                className="bg-white rounded-[32px] w-full max-w-md p-8 shadow-2xl text-center"
-                            >
-                                {backupProgress < 100 ? (
-                                    <>
-                                        <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-6">
-                                            <RefreshCw className="animate-spin text-indigo-600" size={32} />
-                                        </div>
-                                        <h2 className="text-2xl font-black text-slate-900 mb-2">Creating Backup...</h2>
-                                        <p className="text-slate-500 mb-6">{backupMessage || 'Mohon tunggu, jangan tutup halaman ini.'}</p>
-                                        <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
-                                            <motion.div 
-                                                animate={{ width: `${backupProgress}%` }}
-                                                className="h-full bg-indigo-600 rounded-full"
-                                            />
-                                        </div>
-                                        <p className="text-xs font-bold text-indigo-600 mt-2">{backupProgress}%</p>
-                                    </>
-                                ) : (
-                                    <>
-                                        <div className="w-20 h-20 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-6">
-                                            <CheckCircle2 className="text-green-600" size={40} />
-                                        </div>
-                                        <h2 className="text-2xl font-black text-slate-900 mb-2">Backup Complete!</h2>
-                                        <p className="text-slate-500 mb-6">File backup aman tersimpan di server.</p>
-                                        <button 
-                                            onClick={() => setShowBackupModal(false)}
-                                            className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800"
-                                        >
-                                            Selesai
-                                        </button>
-                                    </>
-                                )}
-
-                                {backupProgress === 0 && (
-                                    <div className="mt-6 flex gap-3">
-                                        <button onClick={() => setShowBackupModal(false)} className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl">Batal</button>
-                                        <button onClick={startBackup} className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700">Mulai</button>
-                                    </div>
-                                )}
-                            </motion.div>
-                        </div>
-                    )}
-                </AnimatePresence>
 
             </div>
         </AdminLayout>

@@ -12,18 +12,21 @@
     import Modal from '@/Components/Modal';
     import showToast from '@/Utils/toast';
 
-    // --- CATEGORIES FOR BNI FINANCE ---
-    const categories = [
-        'Core Business & Product',
-        'Credit & Risk Management',
-        'Collection & Recovery',
-        'Compliance & Regulatory',
-        'Sales & Marketing',
-        'Service Excellence',
-        'Leadership & Soft Skills',
-        'IT & Digital Security',
-        'Onboarding'
-    ];
+    // --- ALLOWED FILE TYPES FOR MATERIALS ---
+    const ALLOWED_TYPES = {
+        document: [
+            'application/pdf',
+            'application/msword', 
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 
+            'application/vnd.ms-excel',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'text/plain',
+            'text/csv'
+        ],
+        video: ['video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo', 'video/x-ms-wmv', 'video/x-flv', 'video/webm', 'video/x-matroska'],
+        ppt: ['application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/pdf'],
+        spreadsheet: ['application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/csv']
+    };
 
     // --- REUSABLE COMPONENTS ---
 
@@ -94,15 +97,13 @@
         const [createdProgramId, setCreatedProgramId] = useState(null);
         const [previewFile, setPreviewFile] = useState(null);
         const [isDraftMode, setIsDraftMode] = useState(false);
-
-        // Unsaved changes tracking
+        const [fetchedCategories, setFetchedCategories] = useState([]);
+        const [categoryError, setCategoryError] = useState(''); // Track category fetch errors
         const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
         const [showUnsavedChangesModal, setShowUnsavedChangesModal] = useState(false);
-        const [pendingNavigation, setPendingNavigation] = useState(null);
 
         // Initial form state for comparison
         const [initialProgramData] = useState({
-            title: '',
             description: '',
             duration_minutes: '',
             passing_grade: 70,
@@ -193,6 +194,40 @@
             { number: 3, title: 'Assessment' },
             { number: 4, title: 'Review' }
         ];
+
+        // Fetch categories from backend on component mount
+        useEffect(() => {
+            const fetchCategories = async () => {
+                try {
+                    const response = await fetch('/api/admin/categories');
+                    if (response.ok) {
+                        const data = await response.json();
+                        const categories = Array.isArray(data) ? data : data.categories || [];
+                        
+                        if (categories.length === 0) {
+                            console.warn('⚠️ Backend returned empty categories - no fallback data');
+                            setCategoryError('Tidak ada kategori tersedia dari backend');
+                            setFetchedCategories([]);
+                        } else {
+                            setFetchedCategories(categories);
+                            setCategoryError(''); // Clear any previous errors
+                            console.log('✅ Categories loaded from backend:', categories);
+                        }
+                    } else {
+                        // NO fallback to hardcoded categories - show error to user
+                        console.warn('⚠️ Failed to fetch categories from API, status:', response.status);
+                        setCategoryError('Gagal memuat kategori dari server');
+                        setFetchedCategories([]); // Empty array, will show error in UI
+                    }
+                } catch (err) {
+                    console.error('❌ Error fetching categories:', err);
+                    // NO fallback hardcoded data - show empty state
+                    setCategoryError('Gagal memuat kategori: ' + err.message);
+                    setFetchedCategories([]);
+                }
+            };
+            fetchCategories();
+        }, []);
 
         // Auto-save effect
         useEffect(() => {
@@ -430,9 +465,20 @@
             const file = e.target.files?.[0];
             if (!file) return;
 
+            // Get the material type to validate against
+            const materialType = materials[idx]?.type || 'document';
+            const allowedMimeTypes = ALLOWED_TYPES[materialType] || ALLOWED_TYPES.document;
+
+            // Validate file type
+            if (!allowedMimeTypes.includes(file.type)) {
+                const typeLabel = materialType.charAt(0).toUpperCase() + materialType.slice(1);
+                setError(`❌ Tipe file tidak sesuai. Tipe ${typeLabel} yang didukung: ${allowedMimeTypes.join(', ')}`);
+                return;
+            }
+
             // Validate file size (max 50MB)
             if (file.size > 50 * 1024 * 1024) {
-                setError('Ukuran file terlalu besar (max 50MB)');
+                setError('❌ Ukuran file terlalu besar (max 50MB)');
                 return;
             }
 
@@ -454,12 +500,13 @@
             console.log(`Material ${idx} file uploaded:`, { 
                 name: file.name, 
                 size: file.size,
-                type: file.type 
+                type: file.type,
+                materialType: materialType
             });
         };
 
         const handleSubmit = async (isDraft = false) => {
-            // Skip full validation for drafts
+            // Skip full validation for drafts, but check title
             if (!isDraft && !validateStep()) return;
 
             setLoading(true);
@@ -467,9 +514,28 @@
             try {
                 // Validate title is not empty
                 if (!programData.title || !programData.title.trim()) {
-                    setError('Nama program harus diisi');
+                    setError('⚠️ Nama program harus diisi');
                     setLoading(false);
                     return;
+                }
+
+                // For non-draft, validate required fields before submission
+                if (!isDraft) {
+                    if (!programData.description || !programData.description.trim()) {
+                        setError('⚠️ Deskripsi harus diisi');
+                        setLoading(false);
+                        return;
+                    }
+                    if (!programData.duration_minutes) {
+                        setError('⚠️ Durasi program harus diisi');
+                        setLoading(false);
+                        return;
+                    }
+                    if (!programData.category || programData.category.trim() === '') {
+                        setError('⚠️ Kategori harus dipilih');
+                        setLoading(false);
+                        return;
+                    }
                 }
 
                 // Create FormData untuk handle file uploads
@@ -575,19 +641,19 @@
                     q.option_d.trim()
                 );
                 validPreTestQuestions.forEach((q, idx) => {
-                    formData.append(`pre_test_questions[${idx}][question_text]`, q.question_text);
-                    formData.append(`pre_test_questions[${idx}][option_a]`, q.option_a);
-                    formData.append(`pre_test_questions[${idx}][option_b]`, q.option_b);
-                    formData.append(`pre_test_questions[${idx}][option_c]`, q.option_c);
-                    formData.append(`pre_test_questions[${idx}][option_d]`, q.option_d);
+                    formData.append(`pre_test_questions[${idx}][question_text]`, q.question_text.trim());
+                    formData.append(`pre_test_questions[${idx}][option_a]`, q.option_a.trim());
+                    formData.append(`pre_test_questions[${idx}][option_b]`, q.option_b.trim());
+                    formData.append(`pre_test_questions[${idx}][option_c]`, q.option_c.trim());
+                    formData.append(`pre_test_questions[${idx}][option_d]`, q.option_d.trim());
                     formData.append(`pre_test_questions[${idx}][correct_answer]`, q.correct_answer);
                     // Add explanation jika ada
                     if (q.explanation && q.explanation.trim()) {
                         formData.append(`pre_test_questions[${idx}][explanation]`, q.explanation.trim());
                     }
-                    // Add image jika ada
-                    if (q.image_file) {
-                        formData.append(`pre_test_questions[${idx}][image_url]`, q.image_file);
+                    // Add image jika ada (hanya append jika File object)
+                    if (q.image_file && typeof q.image_file === 'object' && q.image_file.name) {
+                        formData.append(`pre_test_questions[${idx}][image_url]`, q.image_file, q.image_file.name);
                     }
                 });
 
@@ -600,23 +666,35 @@
                     q.option_d.trim()
                 );
                 validPostTestQuestions.forEach((q, idx) => {
-                    formData.append(`post_test_questions[${idx}][question_text]`, q.question_text);
-                    formData.append(`post_test_questions[${idx}][option_a]`, q.option_a);
-                    formData.append(`post_test_questions[${idx}][option_b]`, q.option_b);
-                    formData.append(`post_test_questions[${idx}][option_c]`, q.option_c);
-                    formData.append(`post_test_questions[${idx}][option_d]`, q.option_d);
+                    formData.append(`post_test_questions[${idx}][question_text]`, q.question_text.trim());
+                    formData.append(`post_test_questions[${idx}][option_a]`, q.option_a.trim());
+                    formData.append(`post_test_questions[${idx}][option_b]`, q.option_b.trim());
+                    formData.append(`post_test_questions[${idx}][option_c]`, q.option_c.trim());
+                    formData.append(`post_test_questions[${idx}][option_d]`, q.option_d.trim());
                     formData.append(`post_test_questions[${idx}][correct_answer]`, q.correct_answer);
                     // Add explanation jika ada
                     if (q.explanation && q.explanation.trim()) {
                         formData.append(`post_test_questions[${idx}][explanation]`, q.explanation.trim());
                     }
-                    // Add image jika ada
-                    if (q.image_file) {
-                        formData.append(`post_test_questions[${idx}][image_url]`, q.image_file);
+                    // Add image jika ada (hanya append jika File object)
+                    if (q.image_file && typeof q.image_file === 'object' && q.image_file.name) {
+                        formData.append(`post_test_questions[${idx}][image_url]`, q.image_file, q.image_file.name);
                     }
                 });
 
                 // Send request with FormData
+                console.log('📤 Sending form data to backend...');
+                console.log('Draft mode:', isDraft);
+                console.log('Form entries:', {
+                    title: programData.title,
+                    description: programData.description,
+                    category: programData.category,
+                    duration_minutes: programData.duration_minutes,
+                    materials_count: materialsToUpload.length,
+                    pre_test_count: validPreTestQuestions.length,
+                    post_test_count: validPostTestQuestions.length
+                });
+
                 const response = await axios.post('/api/admin/training-programs', formData, {
                     headers: {
                         'Content-Type': 'multipart/form-data'
@@ -631,14 +709,40 @@
                         ? '💾 Draft berhasil disimpan! Anda dapat melanjutkan mengedit kapan saja.'
                         : '✅ Program & Materi berhasil dibuat! Pilih aksi di bawah untuk melanjutkan.'
                     );
-                    console.info('Created program id:', programId);
+                    console.info('✅ Program created successfully with id:', programId);
 
                     // Reset unsaved changes tracking setelah berhasil simpan
                     setHasUnsavedChanges(false);
                 }
             } catch (err) {
                 console.error('Submit error:', err);
-                setError(err.response?.data?.message || 'Error membuat program: ' + err.message);
+                console.error('Error response data:', err.response?.data);
+                
+                // Extract detailed error message from backend response
+                let errorMsg = 'Error membuat program: ' + err.message;
+                
+                // Check for custom error format (from file validation or other custom checks)
+                if (err.response?.data?.error && err.response?.data?.message) {
+                    errorMsg = err.response.data.message;
+                    console.error('Custom error:', err.response.data.error, errorMsg);
+                }
+                // Check for Laravel validation errors format
+                else if (err.response?.data?.errors) {
+                    console.error('Validation errors:', err.response.data.errors);
+                    // Format validation errors
+                    const errors = err.response.data.errors;
+                    const errorLines = Object.keys(errors).map(key => {
+                        const msgs = Array.isArray(errors[key]) ? errors[key] : [errors[key]];
+                        return `${key}: ${msgs.join(', ')}`;
+                    });
+                    errorMsg = 'Validasi gagal:\n' + errorLines.join('\n');
+                }
+                // Check for simple message format
+                else if (err.response?.data?.message) {
+                    errorMsg = err.response.data.message;
+                }
+                
+                setError(errorMsg);
             } finally {
                 setLoading(false);
             }
@@ -809,7 +913,7 @@
                                         className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl font-medium outline-none focus:ring-2 focus:ring-[#D6FF59] focus:border-transparent transition-all shadow-sm appearance-none cursor-pointer"
                                     >
                                         <option value="" disabled>-- Pilih Kategori --</option>
-                                        {categories.map((cat, index) => (
+                                        {fetchedCategories.map((cat, index) => (
                                             <option key={index} value={cat}>
                                                 {cat}
                                             </option>
@@ -1357,6 +1461,22 @@
                                 <div>
                                     <p className="font-semibold text-red-900">Error</p>
                                     <p className="text-red-700 text-sm">{error}</p>
+                                </div>
+                            </motion.div>
+                        )}
+                        
+                        {/* Category Load Error Alert */}
+                        {categoryError && (
+                            <motion.div 
+                                initial={{ opacity: 0, y: -10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -10 }}
+                                className="mx-8 mb-6 bg-yellow-50 border border-yellow-200 rounded-xl p-4 flex items-start gap-3"
+                            >
+                                <AlertCircle className="text-yellow-600 flex-shrink-0 mt-0.5" size={20} />
+                                <div>
+                                    <p className="font-semibold text-yellow-900">Warning</p>
+                                    <p className="text-yellow-700 text-sm">{categoryError}</p>
                                 </div>
                             </motion.div>
                         )}

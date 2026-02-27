@@ -8,6 +8,7 @@ use App\Models\UserTraining;
 use App\Models\ModuleProgress;
 use App\Models\ExamAttempt;
 use App\Models\Certificate;
+use App\Services\PointsService;
 use Illuminate\Support\Facades\Auth;
 use Inertia\Inertia;
 
@@ -59,7 +60,7 @@ class LearnerReportController extends Controller
         
         // Count certificates
         $totalCertificates = UserTraining::where('user_id', $userId)
-            ->where('is_certified', true)
+            ->where('is_certified', 1)  // Use integer 1, not boolean true
             ->count();
         
         // Calculate total learning hours from module progress
@@ -72,8 +73,9 @@ class LearnerReportController extends Controller
         
         $totalLearningHours = round($totalMinutes / 60, 1);
         
-        // Calculate points (simple formula: completed trainings * 100 + certificates * 200 + exams * 50)
-        $pointsEarned = ($completedTrainings * 100) + ($totalCertificates * 200) + ($examAttempts->where('is_passed', true)->count() * 50);
+        // Get points dari PointsService (KONSISTEN)
+        $pointsService = app(PointsService::class);
+        $pointsEarned = $pointsService->getTotalPoints($userId);
         
         return [
             'total_trainings' => $totalTrainings,
@@ -170,7 +172,7 @@ class LearnerReportController extends Controller
     private function getCertificates($userId)
     {
         return UserTraining::where('user_id', $userId)
-            ->where('is_certified', true)
+            ->where('is_certified', 1)  // Use integer 1, not boolean true
             ->with('module:id,title')
             ->orderBy('completed_at', 'desc')
             ->get()

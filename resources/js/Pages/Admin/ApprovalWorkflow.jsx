@@ -63,6 +63,8 @@ export default function ApprovalWorkflow() {
     const [searchTerm, setSearchTerm] = useState('');
     const [comment, setComment] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    const [showEvidenceModal, setShowEvidenceModal] = useState(false);
+    const [selectedEvidence, setSelectedEvidence] = useState(null);
 
     useEffect(() => {
         fetchApprovals();
@@ -87,7 +89,8 @@ export default function ApprovalWorkflow() {
                     department: p.department || 'General',
                     urgency: Math.random() > 0.6 ? 'high' : (Math.random() > 0.4 ? 'medium' : 'low'),
                     risk_score: getRiskScore(p),
-                    history: []
+                    history: [],
+                    evidence: [] // Placeholder for evidence files
                 }));
                 
                 setApprovals(enriched);
@@ -452,6 +455,49 @@ export default function ApprovalWorkflow() {
                                     </p>
                                 </div>
 
+                                {/* Evidence / Attachments Section */}
+                                <div>
+                                    <h4 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
+                                        <FileText size={16} /> Supporting Evidence & Documents
+                                    </h4>
+                                    <div className="space-y-3">
+                                        {selectedItem.evidence && selectedItem.evidence.length > 0 ? (
+                                            selectedItem.evidence.map((file, idx) => (
+                                                <motion.div 
+                                                    key={idx}
+                                                    whileHover={{ scale: 1.02 }}
+                                                    onClick={() => {
+                                                        setSelectedEvidence(file);
+                                                        setShowEvidenceModal(true);
+                                                    }}
+                                                    className="bg-white p-4 rounded-2xl border border-slate-100 hover:border-slate-200 hover:shadow-md cursor-pointer transition-all group"
+                                                >
+                                                    <div className="flex items-start justify-between">
+                                                        <div className="flex items-start gap-3 flex-1">
+                                                            <div className="mt-1 p-2 bg-blue-50 rounded-lg group-hover:bg-blue-100 transition">
+                                                                <FileText size={20} className="text-blue-600" />
+                                                            </div>
+                                                            <div className="flex-1 min-w-0">
+                                                                <p className="font-bold text-slate-900 truncate">{file.name || 'Document ' + (idx + 1)}</p>
+                                                                <p className="text-xs text-slate-500 mt-0.5">{file.type || 'attachment'} • {file.size || 'N/A'}</p>
+                                                                {file.description && <p className="text-xs text-slate-600 mt-1">{file.description}</p>}
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                            <ChevronRight size={18} className="text-slate-400" />
+                                                        </div>
+                                                    </div>
+                                                </motion.div>
+                                            ))
+                                        ) : (
+                                            <div className="bg-slate-50 border border-dashed border-slate-200 rounded-2xl p-6 text-center">
+                                                <FileText size={32} className="text-slate-300 mx-auto mb-2" />
+                                                <p className="text-sm font-bold text-slate-500">No supporting documents attached</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
                                 {/* Timeline */}
                                 {selectedItem.history && selectedItem.history.length > 0 && (
                                     <div>
@@ -501,6 +547,113 @@ export default function ApprovalWorkflow() {
                                     </div>
                                 </div>
                             )}
+                        </motion.div>
+                    </>
+                )}
+            </AnimatePresence>
+
+            {/* --- EVIDENCE PREVIEW MODAL --- */}
+            <AnimatePresence>
+                {showEvidenceModal && selectedEvidence && (
+                    <>
+                        {/* Backdrop */}
+                        <motion.div 
+                            initial={{ opacity: 0 }} 
+                            animate={{ opacity: 1 }} 
+                            exit={{ opacity: 0 }}
+                            onClick={() => {
+                                setShowEvidenceModal(false);
+                                setTimeout(() => setSelectedEvidence(null), 300);
+                            }}
+                            className="fixed inset-0 bg-slate-900/30 backdrop-blur-sm z-[80]"
+                        />
+                        
+                        {/* Modal */}
+                        <motion.div 
+                            initial={{ opacity: 0, scale: 0.9, y: 20 }} 
+                            animate={{ opacity: 1, scale: 1, y: 0 }} 
+                            exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                            className="fixed inset-0 flex items-center justify-center z-[90] p-4"
+                        >
+                            <motion.div className="bg-white rounded-[32px] shadow-2xl border border-slate-100 max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+                                
+                                {/* Header */}
+                                <div className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-slate-50 sticky top-0 z-10">
+                                    <div>
+                                        <h3 className="text-xl font-black text-slate-900">{selectedEvidence.name || 'Document Preview'}</h3>
+                                        <p className="text-xs text-slate-500 mt-1">{selectedEvidence.type || 'attachment'}</p>
+                                    </div>
+                                    <button 
+                                        onClick={() => {
+                                            setShowEvidenceModal(false);
+                                            setTimeout(() => setSelectedEvidence(null), 300);
+                                        }}
+                                        className="p-2 bg-white hover:bg-slate-100 rounded-full transition"
+                                    >
+                                        <X size={20} />
+                                    </button>
+                                </div>
+
+                                {/* Content */}
+                                <div className="flex-1 overflow-y-auto p-8 flex items-center justify-center bg-white">
+                                    {selectedEvidence.url ? (
+                                        <div className="w-full space-y-4">
+                                            {/* Check if it's an image */}
+                                            {selectedEvidence.type && ['image/png', 'image/jpeg', 'image/jpg', 'image/gif'].includes(selectedEvidence.type) ? (
+                                                <div className="flex justify-center">
+                                                    <img 
+                                                        src={selectedEvidence.url} 
+                                                        alt={selectedEvidence.name}
+                                                        className="max-w-full h-auto rounded-2xl border border-slate-100"
+                                                    />
+                                                </div>
+                                            ) : (
+                                                <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl p-12 text-center">
+                                                    <FileText size={48} className="text-slate-300 mx-auto mb-4" />
+                                                    <p className="font-bold text-slate-700 mb-2">{selectedEvidence.name || 'Document'}</p>
+                                                    <p className="text-sm text-slate-500 mb-4">{selectedEvidence.type || 'File'}</p>
+                                                    <a 
+                                                        href={selectedEvidence.url}
+                                                        download
+                                                        className="inline-flex items-center gap-2 px-6 py-2.5 bg-[#D6FF59] text-black font-bold rounded-xl hover:bg-[#c3eb4b] transition"
+                                                    >
+                                                        <Download size={18} /> Download
+                                                    </a>
+                                                </div>
+                                            )}
+                                            {selectedEvidence.description && (
+                                                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 mt-6">
+                                                    <p className="text-xs font-bold text-slate-500 uppercase mb-2">Description</p>
+                                                    <p className="text-slate-700">{selectedEvidence.description}</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="text-center">
+                                            <AlertCircle size={48} className="text-slate-300 mx-auto mb-4" />
+                                            <p className="font-bold text-slate-700">Cannot preview document</p>
+                                            <p className="text-sm text-slate-500 mt-1">File is no longer available</p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Footer */}
+                                <div className="px-8 py-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between sticky bottom-0 z-10">
+                                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                                        <span className="font-bold">{selectedEvidence.size || 'Unknown size'}</span>
+                                        {selectedEvidence.uploadedAt && <span>• {new Date(selectedEvidence.uploadedAt).toLocaleDateString('id-ID')}</span>}
+                                    </div>
+                                    <button 
+                                        onClick={() => {
+                                            setShowEvidenceModal(false);
+                                            setTimeout(() => setSelectedEvidence(null), 300);
+                                        }}
+                                        className="px-4 py-2 bg-slate-900 text-white font-bold rounded-lg hover:bg-slate-800 transition"
+                                    >
+                                        Close
+                                    </button>
+                                </div>
+                            </motion.div>
                         </motion.div>
                     </>
                 )}

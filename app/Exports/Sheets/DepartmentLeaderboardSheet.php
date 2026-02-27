@@ -3,6 +3,12 @@
 namespace App\Exports\Sheets;
 
 use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
+use PhpOffice\PhpSpreadsheet\Events\AfterSheet;
+use PhpOffice\PhpSpreadsheet\Chart\Chart;
+use PhpOffice\PhpSpreadsheet\Chart\DataSeries;
+use PhpOffice\PhpSpreadsheet\Chart\DataSeriesValues;
+use PhpOffice\PhpSpreadsheet\Chart\BarChart;
+use PhpOffice\PhpSpreadsheet\Chart\Legend;
 
 class DepartmentLeaderboardSheet extends BaseReportSheet
 {
@@ -60,5 +66,20 @@ class DepartmentLeaderboardSheet extends BaseReportSheet
             'E' => NumberFormat::FORMAT_PERCENTAGE_00,
             'F' => NumberFormat::FORMAT_NUMBER_COMMA_SEPARATED2,
         ];
+    }
+
+    public function registerEvents(): array
+    {
+        $baseEvents = parent::registerEvents();
+        
+        $baseEvents[AfterSheet::class] = function(AfterSheet $event) {
+            $sheet = $event->sheet->getDelegate();
+            $lastRow = $sheet->getHighestRow();
+            $lastCol = $sheet->getHighestColumn();
+            
+
+        };
+        
+        return $baseEvents;
     }
 }

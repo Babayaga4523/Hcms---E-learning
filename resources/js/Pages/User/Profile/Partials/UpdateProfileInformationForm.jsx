@@ -5,6 +5,7 @@ import {
     Camera, Loader2, Sparkles 
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { validateEmail, validateRequired, validateMinLength, validateMaxLength } from '@/Utils/formValidation';
 
 // --- Wondr Style System ---
 const WondrStyles = () => (
@@ -44,8 +45,50 @@ export default function UpdateProfileInformation({ mustVerifyEmail = true, statu
         email: user.email,
     });
 
+    // Real-time validation state
+    const [validationErrors, setValidationErrors] = useState({});
+
+    // Real-time validation handler
+    const handleFieldChange = (field, value) => {
+        setData(field, value);
+        
+        // Clear the error for this field when user starts typing
+        if (validationErrors[field]) {
+            setValidationErrors(prev => {
+                const newErrors = { ...prev };
+                delete newErrors[field];
+                return newErrors;
+            });
+        }
+    };
+
+    // Validate form before submit
+    const validateForm = () => {
+        const newErrors = {};
+
+        // Name validation
+        const nameError = validateRequired(data.name, 'Nama');
+        if (nameError) newErrors.name = nameError;
+
+        const nameLengthError = validateMinLength(data.name, 3, 'Nama');
+        if (nameLengthError) newErrors.name = nameLengthError;
+
+        // Email validation
+        const emailError = validateEmail(data.email);
+        if (emailError) newErrors.email = emailError;
+
+        setValidationErrors(newErrors);
+        return Object.keys(newErrors).length === 0;
+    };
+
     const submit = (e) => {
         e.preventDefault();
+        
+        // Validate before submit
+        if (!validateForm()) {
+            return;
+        }
+
         patch(route('profile.update'));
     };
 
@@ -93,22 +136,25 @@ export default function UpdateProfileInformation({ mustVerifyEmail = true, statu
                                     <input
                                         id="name"
                                         type="text"
-                                        className={`w-full pl-12 pr-4 py-3.5 input-wondr font-medium text-slate-900 ${errors.name ? 'input-wondr-error' : ''}`}
+                                        className={`w-full pl-12 pr-4 py-3.5 input-wondr font-medium text-slate-900 ${validationErrors.name || errors.name ? 'input-wondr-error' : ''}`}
                                         value={data.name}
-                                        onChange={(e) => setData('name', e.target.value)}
+                                        onChange={(e) => handleFieldChange('name', e.target.value)}
                                         required
                                         autoComplete="name"
                                         placeholder="Masukkan nama lengkap Anda"
                                     />
                                 </div>
-                                {errors.name && (
-                                    <motion.p 
-                                        initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }}
-                                        className="text-sm text-red-600 font-medium ml-1 flex items-center gap-1"
-                                    >
-                                        <AlertTriangle size={14} /> {errors.name}
-                                    </motion.p>
-                                )}
+                                <AnimatePresence>
+                                    {(validationErrors.name || errors.name) && (
+                                        <motion.p 
+                                            initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, y: -5 }}
+                                            className="text-sm text-red-600 font-medium ml-1 flex items-center gap-1"
+                                        >
+                                            <AlertTriangle size={14} /> {validationErrors.name || errors.name}
+                                        </motion.p>
+                                    )}
+                                </AnimatePresence>
                             </div>
 
                             {/* Email Input */}
@@ -123,23 +169,26 @@ export default function UpdateProfileInformation({ mustVerifyEmail = true, statu
                                     <input
                                         id="email"
                                         type="email"
-                                        className={`w-full pl-12 pr-4 py-3.5 input-wondr font-medium text-slate-900 ${errors.email ? 'input-wondr-error' : ''}`}
+                                        className={`w-full pl-12 pr-4 py-3.5 input-wondr font-medium text-slate-900 ${validationErrors.email || errors.email ? 'input-wondr-error' : ''}`}
                                         value={data.email}
-                                        onChange={(e) => setData('email', e.target.value)}
+                                        onChange={(e) => handleFieldChange('email', e.target.value)}
                                         required
                                         autoComplete="username"
                                         placeholder="nama@perusahaan.com"
                                     />
                                 </div>
-                                {errors.email && (
-                                    <motion.p 
-                                        initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }}
-                                        className="text-sm text-red-600 font-medium ml-1 flex items-center gap-1"
-                                    >
-                                        <AlertTriangle size={14} /> {errors.email}
+                                <AnimatePresence>
+                                    {(validationErrors.email || errors.email) && (
+                                        <motion.p 
+                                            initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, y: -5 }}
+                                            className="text-sm text-red-600 font-medium ml-1 flex items-center gap-1"
+                                        >
+                                            <AlertTriangle size={14} /> {validationErrors.email || errors.email}
                                     </motion.p>
                                 )}
-                            </div>
+                            </AnimatePresence>
+                        </div>
                         </div>
 
                         {/* Email Verification Notice */}

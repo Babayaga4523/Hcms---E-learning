@@ -24,6 +24,7 @@ class ReportController extends Controller
      */
     public function index(Request $request)
     {
+        $this->authorize('view-reports');
         return $this->adminReportController->index($request);
     }
 
@@ -32,6 +33,7 @@ class ReportController extends Controller
      */
     public function getDashboardData(Request $request)
     {
+        $this->authorize('view-reports');
         return $this->adminReportController->index($request);
     }
 
@@ -40,6 +42,7 @@ class ReportController extends Controller
      */
     public function getLearnerProgress(Request $request)
     {
+        $this->authorize('view-reports');
         return $this->adminReportController->index($request);
     }
 
@@ -48,6 +51,7 @@ class ReportController extends Controller
      */
     public function exportLearnerProgress(Request $request)
     {
+        $this->authorize('export-reports');
         $request->merge(['type' => 'learner-progress']);
         return $this->adminReportController->exportReport($request);
     }
@@ -57,6 +61,7 @@ class ReportController extends Controller
      */
     public function getQuestionPerformance(Request $request)
     {
+        $this->authorize('view-reports');
         return $this->adminReportController->index($request);
     }
 

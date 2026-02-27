@@ -110,46 +110,60 @@ const StatusBadge = ({ status }) => {
 // --- Main Layout ---
 
 export default function UserEnrollmentHistory({ enrollments: initialEnrollments, users, stats: initialStats, filters }) {
-    // Mock Data if props empty - Fixed Safety Check
-    const mockEnrollments = (initialEnrollments && initialEnrollments.length > 0) ? initialEnrollments : Array.from({ length: 10 }).map((_, i) => ({
-        id: i + 1,
-        user: { name: `User ${i+1}`, email: `user${i+1}@bni.co.id` },
-        module: { title: i % 2 === 0 ? 'Wondr App Basics' : 'Compliance 2025' },
-        status: ['enrolled', 'in_progress', 'completed', 'failed'][i % 4],
-        enrolled_at: new Date().toISOString(),
-        final_score: i % 4 === 2 ? 85 : i % 4 === 3 ? 40 : null,
-        is_certified: i % 4 === 2
-    }));
+    // State with Real API Data
+    const [enrollments, setEnrollments] = useState(initialEnrollments || []);
+    const [stats, setStats] = useState(initialStats || {
+        total_enrollments: 0,
+        completed: 0,
+        in_progress: 0,
+        failed: 0,
+        enrolled: 0,
+        completion_rate: 0,
+        certified_users: 0,
+        avg_score: 0
+    });
+    const [pagination, setPagination] = useState({ current_page: 1, total: 0, per_page: 20, last_page: 1 });
 
-    // Fixed Mock Stats - Added missing properties and safety check
-    const mockStats = (initialStats && Object.keys(initialStats).length > 0) ? initialStats : {
-        total_enrollments: 1240,
-        completed: 850,
-        in_progress: 320,
-        failed: 70,
-        enrolled: 0, // Added to prevent undefined usage
-        completion_rate: 78,
-        avg_completion_days: 14, // Added default
-        certified_users: 850, // Added default
-        avg_score: 82 // Added default
-    };
-
-    // State
+    // State for filters
     const [searchUser, setSearchUser] = useState(filters?.search || '');
     const [filterStatus, setFilterStatus] = useState(filters?.status || 'all');
     const [dateFrom, setDateFrom] = useState(filters?.dateFrom || '');
     const [dateTo, setDateTo] = useState(filters?.dateTo || '');
     const [loading, setLoading] = useState(false);
+    const [currentPage, setCurrentPage] = useState(1);
 
-    // Derived Data
-    const filteredEnrollments = useMemo(() => {
-        return mockEnrollments.filter(e => {
-            const matchUser = !searchUser || e.user?.name?.toLowerCase().includes(searchUser.toLowerCase()) || 
-                              e.user?.email?.toLowerCase().includes(searchUser.toLowerCase());
-            const matchStatus = filterStatus === 'all' || e.status === filterStatus;
-            return matchUser && matchStatus;
-        });
-    }, [searchUser, filterStatus, mockEnrollments]);
+    // Fetch enrollment data from API
+    const fetchEnrollments = async (page = 1) => {
+        try {
+            setLoading(true);
+            const params = new URLSearchParams({
+                searchUser,
+                filterStatus,
+                dateFrom,
+                dateTo,
+                page,
+                perPage: 20
+            });
+
+            const response = await fetch(`/api/admin/enrollment-history?${params}`);
+            if (response.ok) {
+                const data = await response.json();
+                setEnrollments(data.enrollments || []);
+                setStats(data.stats || {});
+                setPagination(data.pagination || {});
+                setCurrentPage(page);
+            }
+        } catch (error) {
+            console.error('Error fetching enrollment history:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Fetch on component mount and when filters change
+    useEffect(() => {
+        fetchEnrollments(1);
+    }, [searchUser, filterStatus, dateFrom, dateTo]);
 
     // Handlers
     const handleExport = () => {
@@ -198,28 +212,28 @@ export default function UserEnrollmentHistory({ enrollments: initialEnrollments,
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
                     <StatCard 
                         label="Total Enrollments" 
-                        value={(mockStats.total_enrollments || 0).toLocaleString()} 
+                        value={(stats.total_enrollments || 0).toLocaleString()} 
                         icon={BookOpen} 
                         colorClass="bg-blue-100 text-blue-700"
                         delay={0}
                     />
                     <StatCard 
                         label="Selesai" 
-                        value={(mockStats.completed || 0).toLocaleString()} 
+                        value={(stats.completed || 0).toLocaleString()} 
                         icon={Check} 
                         colorClass="bg-green-100 text-green-700"
                         delay={100}
                     />
                     <StatCard 
                         label="Sedang Berjalan" 
-                        value={(mockStats.in_progress || 0).toLocaleString()} 
+                        value={(stats.in_progress || 0).toLocaleString()} 
                         icon={Clock} 
                         colorClass="bg-yellow-100 text-yellow-700"
                         delay={200}
                     />
                     <StatCard 
                         label="Tingkat Kelulusan" 
-                        value={`${mockStats.completion_rate || 0}%`} 
+                        value={`${stats.completion_rate || 0}%`} 
                         icon={Award} 
                         colorClass="bg-[#002824] text-[#D6F84C]"
                         delay={300}
@@ -297,22 +311,24 @@ export default function UserEnrollmentHistory({ enrollments: initialEnrollments,
                             </tr>
                         </thead>
                         <tbody>
-                            {filteredEnrollments.length > 0 ? (
-                                filteredEnrollments.map((enrollment, index) => (
+                            {loading ? (
+                                <tr><td colSpan="6" className="text-center py-8 text-slate-400">Loading...</td></tr>
+                            ) : enrollments.length > 0 ? (
+                                enrollments.map((enrollment, index) => (
                                     <tr key={enrollment.id} className="table-row-card group">
                                         <td className="px-6 py-5">
                                             <div className="flex items-center gap-4">
                                                 <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-500 border border-slate-200">
-                                                    {enrollment.user.name.charAt(0)}
+                                                    {enrollment.user_name.charAt(0)}
                                                 </div>
                                                 <div>
-                                                    <div className="font-bold text-slate-900 group-hover:text-[#005E54] transition-colors">{enrollment.user.name}</div>
-                                                    <div className="text-xs text-slate-500">{enrollment.user.email}</div>
+                                                    <div className="font-bold text-slate-900 group-hover:text-[#005E54] transition-colors">{enrollment.user_name}</div>
+                                                    <div className="text-xs text-slate-500">{enrollment.user_email}</div>
                                                 </div>
                                             </div>
                                         </td>
                                         <td className="px-6 py-5">
-                                            <div className="font-bold text-slate-800 text-sm">{enrollment.module.title}</div>
+                                            <div className="font-bold text-slate-800 text-sm">{enrollment.module_title}</div>
                                         </td>
                                         <td className="px-6 py-5">
                                             <StatusBadge status={enrollment.status} />
@@ -369,10 +385,10 @@ export default function UserEnrollmentHistory({ enrollments: initialEnrollments,
                         <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4">Status Breakdown</h3>
                         <div className="space-y-3">
                             {[
-                                { status: 'enrolled', count: mockStats.enrolled || 0, color: 'bg-blue-100 text-blue-700' },
-                                { status: 'in_progress', count: mockStats.in_progress, color: 'bg-yellow-100 text-yellow-700' },
-                                { status: 'completed', count: mockStats.completed, color: 'bg-green-100 text-green-700' },
-                                { status: 'failed', count: mockStats.failed, color: 'bg-red-100 text-red-700' },
+                                { status: 'enrolled', count: stats.enrolled || 0, color: 'bg-blue-100 text-blue-700' },
+                                { status: 'in_progress', count: stats.in_progress, color: 'bg-yellow-100 text-yellow-700' },
+                                { status: 'completed', count: stats.completed, color: 'bg-green-100 text-green-700' },
+                                { status: 'failed', count: stats.failed, color: 'bg-red-100 text-red-700' },
                             ].map(item => (
                                 <div key={item.status} className="flex items-center justify-between">
                                     <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide ${item.color}`}>
@@ -392,8 +408,8 @@ export default function UserEnrollmentHistory({ enrollments: initialEnrollments,
                                     <Clock className="w-5 h-5" />
                                 </div>
                                 <div>
-                                    <p className="text-xs text-slate-500 font-bold uppercase">Avg. Completion Time</p>
-                                    <p className="text-xl font-extrabold text-slate-900">{mockStats.avg_completion_days} Hari</p>
+                                    <p className="text-xs text-slate-500 font-bold uppercase">Completion Rate</p>
+                                    <p className="text-xl font-extrabold text-slate-900">{stats.completion_rate || 0}%</p>
                                 </div>
                             </div>
                             <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl">
@@ -402,7 +418,7 @@ export default function UserEnrollmentHistory({ enrollments: initialEnrollments,
                                 </div>
                                 <div>
                                     <p className="text-xs text-slate-500 font-bold uppercase">Certified Users</p>
-                                    <p className="text-xl font-extrabold text-slate-900">{mockStats.certified_users}</p>
+                                    <p className="text-xl font-extrabold text-slate-900">{stats.certified_users}</p>
                                 </div>
                             </div>
                             <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl">
@@ -411,7 +427,7 @@ export default function UserEnrollmentHistory({ enrollments: initialEnrollments,
                                 </div>
                                 <div>
                                     <p className="text-xs text-slate-500 font-bold uppercase">Average Score</p>
-                                    <p className="text-xl font-extrabold text-slate-900">{mockStats.avg_score}</p>
+                                    <p className="text-xl font-extrabold text-slate-900">{stats.avg_score}</p>
                                 </div>
                             </div>
                         </div>

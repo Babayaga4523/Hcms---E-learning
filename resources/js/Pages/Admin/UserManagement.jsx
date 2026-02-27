@@ -1,13 +1,13 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import AdminLayout from '@/Layouts/AdminLayout';
 import axios from 'axios';
 import {
-    Users, Plus, Search, Filter, Edit3, Trash2, Download,
+    Users, Plus, Search, Edit3, Trash2,
     AlertCircle, CheckCircle, ChevronLeft, ChevronRight,
-    MoreHorizontal, Shield, UserCheck, UserX, Upload,
-    Eye, Lock, Calendar, ArrowUpDown, X, Zap, Mail, Phone,
-    FileText, RefreshCw, Briefcase, MapPin, Building, Zap as Lightning,
-    TrendingUp, Clock, Award, BookOpen
+    MoreHorizontal, Shield, UserCheck, Upload,
+    Lock, Calendar, X, Zap, Mail, Phone,
+    FileText, RefreshCw, Briefcase, MapPin, Building,
+    Clock, Award, BookOpen
 } from 'lucide-react';
 
 // --- Wondr Style System (Memoized) ---
@@ -20,48 +20,6 @@ const WondrStyles = React.memo(() => (
         .wondr-lime-bg { background-color: #D6F84C; color: #002824; }
         .wondr-lime-text { color: #D6F84C; }
         
-        /* Glass & Floating Effects */
-        .glass-panel {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.6);
-            box-shadow: 0 10px 40px -10px rgba(0, 40, 36, 0.08);
-        }
-
-        /* Table Styling */
-        .table-spacing { border-collapse: separate; border-spacing: 0 8px; }
-        .row-card {
-            background: white;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
-        }
-        .row-card:hover {
-            transform: scale(1.005);
-            box-shadow: 0 10px 20px -5px rgba(0, 94, 84, 0.1);
-            border-left: 4px solid #005E54;
-        }
-        .row-card td:first-child { border-top-left-radius: 12px; border-bottom-left-radius: 12px; }
-        .row-card td:last-child { border-top-right-radius: 12px; border-bottom-right-radius: 12px; }
-
-        /* Custom Inputs */
-        .input-wondr {
-            background: #F1F5F9;
-            border: 1px solid transparent;
-            border-radius: 12px;
-            transition: all 0.3s ease;
-        }
-        .input-wondr:focus {
-            background: #FFFFFF;
-            border-color: #005E54;
-            box-shadow: 0 0 0 4px rgba(0, 94, 84, 0.1);
-            outline: none;
-        }
-
-        /* Slide Over Animation */
-        .slide-over { transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
-        .slide-over-open { transform: translateX(0); }
-        .slide-over-closed { transform: translateX(100%); }
-
         /* Custom Checkbox */
         .wondr-checkbox {
             appearance: none;
@@ -88,6 +46,27 @@ const WondrStyles = React.memo(() => (
         .wondr-checkbox:checked { background-color: #005E54; border-color: #005E54; }
         .wondr-checkbox:checked::before { transform: scale(1); }
 
+        .input-wondr {
+            background: #F3F4F6;
+            border: 1px solid #E5E7EB;
+            border-radius: 10px;
+            transition: all 0.3s ease;
+        }
+        .input-wondr:focus {
+            background: #FFFFFF;
+            border-color: #005E54;
+            box-shadow: 0 0 0 3px rgba(0, 94, 84, 0.05);
+            outline: none;
+        }
+
+        .card-hover { transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1); }
+        .card-hover:hover { transform: translateY(-2px); }
+
+        /* Slide Over Animation */
+        .slide-over { transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+        .slide-over-open { transform: translateX(0); }
+        .slide-over-closed { transform: translateX(100%); }
+
         .animate-fade-up { animation: fadeUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; opacity: 0; }
         @keyframes fadeUp {
             from { opacity: 0; transform: translateY(20px); }
@@ -100,18 +79,18 @@ const WondrStyles = React.memo(() => (
 
 const StatCard = React.memo(({ label, value, icon: Icon, trend, delay }) => (
     <div 
-        className="glass-panel p-5 rounded-[24px] flex items-center justify-between animate-fade-up"
+        className="bg-white p-6 rounded-[20px] border border-slate-100 shadow-sm hover:shadow-md transition-all card-hover"
         style={{ animationDelay: `${delay}ms` }}
     >
-        <div>
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">{label}</p>
-            <div className="flex items-baseline gap-2">
+        <div className="flex items-start justify-between">
+            <div className="flex-1">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">{label}</p>
                 <h3 className="text-3xl font-extrabold text-slate-900">{value}</h3>
-                {trend && <span className="text-xs font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full">{trend}</span>}
+                {trend && <span className="text-xs font-bold text-green-600 bg-green-100 px-2 py-1 rounded-full mt-2 inline-block">{trend}</span>}
             </div>
-        </div>
-        <div className="p-3 rounded-2xl bg-[#E6FFFA] text-[#005E54]">
-            <Icon className="w-6 h-6" />
+            <div className="p-3 rounded-xl bg-[#E6FFFA] text-[#005E54]">
+                <Icon className="w-6 h-6" />
+            </div>
         </div>
     </div>
 ));
@@ -175,7 +154,15 @@ const ProgramHistoryCard = React.memo(({ program, onClick }) => {
 
 // Helper function to get relative time
 const getRelativeTime = (dateString) => {
+    if (!dateString) return 'Tidak diketahui';
+    
     const date = new Date(dateString);
+    
+    // Check if date is valid
+    if (isNaN(date.getTime())) {
+        return 'Tidak diketahui';
+    }
+    
     const now = new Date();
     const diffMs = now - date;
     const diffMins = Math.floor(diffMs / 60000);
@@ -196,7 +183,15 @@ const getRelativeTime = (dateString) => {
 
 // Helper function to get formatted datetime
 const getFormattedDateTime = (dateString) => {
+    if (!dateString) return 'Tidak diketahui';
+    
     const date = new Date(dateString);
+    
+    // Check if date is valid
+    if (isNaN(date.getTime())) {
+        return 'Tidak diketahui';
+    }
+    
     return date.toLocaleDateString('id-ID', { 
         weekday: 'long', 
         year: 'numeric', 
@@ -209,7 +204,15 @@ const getFormattedDateTime = (dateString) => {
 
 // Helper to determine if user is online
 const isUserOnline = (lastLogin) => {
+    if (!lastLogin) return false;
+    
     const date = new Date(lastLogin);
+    
+    // Check if date is valid
+    if (isNaN(date.getTime())) {
+        return false;
+    }
+    
     const now = new Date();
     const diffMins = (now - date) / 60000;
     return diffMins < 5; // Online jika login dalam 5 menit terakhir
@@ -218,74 +221,48 @@ const isUserOnline = (lastLogin) => {
 // --- Main Layout ---
 
 export default function UserManagement({ users: initialUsers, stats: initialStats, filters }) {
-    // Mock Data Generator (Safety Fallback)
-    const getMockUsers = () => {
-        const mockUsers = (initialUsers && initialUsers.data) ? initialUsers.data : Array.from({ length: 10 }, (_, i) => ({
-            id: i + 1,
-            name: ['Sarah Wijaya', 'Budi Santoso', 'Dewi Putri', 'Andi Pratama', 'Eko Patrio'][i % 5] + ` ${i+1}`,
-            email: `user${i+1}@bni.co.id`,
-            nip: `${1001000 + (i+1)}`,
-            role: i % 5 === 0 ? 'Admin' : 'Employee',
-            status: i % 4 === 3 ? 'inactive' : 'active',
-            department: ['IT', 'HR', 'Finance', 'Marketing'][i % 4],
-            office_location: ['Head Office', 'Palembang', 'Manado', 'Jakarta'][i % 4],
-            created_at: new Date().toISOString(),
-            last_login: new Date().toISOString(),
-            phone: '08123456789'
-        }));
-        return mockUsers;
-    };
+    // Fetch real user statistics from API
+    const [stats, setStats] = useState(initialStats || {
+        total_users: 0,
+        active_users: 0,
+        inactive_users: 0,
+        admin_users: 0,
+        new_this_month: 0
+    });
 
-    const mockStats = initialStats || {
-        total_users: 1250,
-        active_users: 1180,
-        admin_users: 12,
-        new_this_month: 45
-    };
+    // Fetch real user program history from API
+    const [programHistoryCache, setProgramHistoryCache] = useState({});
 
-    // Mock Program History Data
-    const mockProgramHistory = {
-        1: [
-            { id: 1, name: 'Keamanan Informasi Dasar', score: 85, max_score: 100, time_spent: 120, completed_at: new Date(Date.now() - 2*24*60*60000).toISOString(), correct: 17, incorrect: 3, total_questions: 20 },
-            { id: 2, name: 'Compliance dan Regulasi', score: 92, max_score: 100, time_spent: 95, completed_at: new Date(Date.now() - 5*24*60*60000).toISOString(), correct: 23, incorrect: 2, total_questions: 25 },
-            { id: 3, name: 'Customer Service Excellence', score: 78, max_score: 100, time_spent: 110, completed_at: new Date(Date.now() - 10*24*60*60000).toISOString(), correct: 14, incorrect: 4, total_questions: 18 },
-            { id: 4, name: 'Digital Marketing Fundamentals', score: 88, max_score: 100, time_spent: 150, completed_at: new Date(Date.now() - 15*24*60*60000).toISOString(), correct: 22, incorrect: 3, total_questions: 25 },
-        ],
-        2: [
-            { id: 1, name: 'Data Protection & Privacy', score: 90, max_score: 100, time_spent: 105, completed_at: new Date(Date.now() - 3*24*60*60000).toISOString(), correct: 18, incorrect: 2, total_questions: 20 },
-            { id: 2, name: 'IT Security Essentials', score: 95, max_score: 100, time_spent: 140, completed_at: new Date(Date.now() - 7*24*60*60000).toISOString(), correct: 19, incorrect: 1, total_questions: 20 },
-        ],
-        3: [
-            { id: 1, name: 'Financial Analysis Basics', score: 87, max_score: 100, time_spent: 180, completed_at: new Date(Date.now() - 1*24*60*60000).toISOString(), correct: 21, incorrect: 3, total_questions: 24 },
-        ],
-    };
+    // Stats are already provided via Inertia props, no need to fetch
+    // useEffect removed - stats initialized from initialStats prop
 
-    // State - Initialize from localStorage or mock data
-    const [users, setUsers] = useState(() => {
+    // Function to fetch program history on demand
+    const fetchProgramHistory = async (userId) => {
+        if (programHistoryCache[userId]) {
+            return programHistoryCache[userId];
+        }
+
         try {
-            const savedUsers = localStorage.getItem('hcms_users_data');
-            if (savedUsers) {
-                return JSON.parse(savedUsers);
+            const response = await fetch(`/api/admin/users/${userId}/program-history`);
+            if (response.ok) {
+                const data = await response.json();
+                setProgramHistoryCache(prev => ({
+                    ...prev,
+                    [userId]: data
+                }));
+                return data;
             }
         } catch (error) {
-            console.warn('Failed to load users from localStorage:', error);
+            console.error('Error fetching program history:', error);
         }
-        return getMockUsers();
-    });
-    
-    // Save users to localStorage whenever they change
-    useEffect(() => {
-        try {
-            localStorage.setItem('hcms_users_data', JSON.stringify(users));
-        } catch (error) {
-            console.warn('Failed to save users to localStorage:', error);
-        }
-    }, [users]);
-    
+        return [];
+    };
+
+    const [users, setUsers] = useState(Array.isArray(initialUsers) ? initialUsers : []);
     const [selectedUsers, setSelectedUsers] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedRole, setSelectedRole] = useState('all');
-    const [drawerUser, setDrawerUser] = useState(null); // For slide-over
+    const [drawerUser, setDrawerUser] = useState(null);
     const [showImport, setShowImport] = useState(false);
     const [loading, setLoading] = useState(false);
     const [editMode, setEditMode] = useState(false);
@@ -293,38 +270,62 @@ export default function UserManagement({ users: initialUsers, stats: initialStat
     const [editLocation, setEditLocation] = useState('');
     const [editPhone, setEditPhone] = useState('');
     const [editDepartment, setEditDepartment] = useState('');
-    const [refreshKey, setRefreshKey] = useState(0); // For triggering re-renders
     const [showProgramHistory, setShowProgramHistory] = useState(false);
     const [selectedProgram, setSelectedProgram] = useState(null);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [debouncedSearch, setDebouncedSearch] = useState('');
+    const searchTimeoutRef = useRef(null);
 
-    // Auto-refresh Last Activity every 30 seconds
+    // Auto-load program history when drawer opens
     useEffect(() => {
-        const interval = setInterval(() => {
-            setRefreshKey(prev => prev + 1);
-        }, 30000);
-        return () => clearInterval(interval);
-    }, []);
+        if (drawerUser?.id) {
+            fetchProgramHistory(drawerUser.id);
+        }
+    }, [drawerUser?.id]);
 
-    // Filter Logic
+    // Debounce search input
+    useEffect(() => {
+        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+        
+        searchTimeoutRef.current = setTimeout(() => {
+            setDebouncedSearch(searchQuery);
+            setCurrentPage(1);
+        }, 300);
+
+        return () => clearTimeout(searchTimeoutRef.current);
+    }, [searchQuery]);
+
+    // Filter Logic with Pagination
+    const ITEMS_PER_PAGE = 10;
+    
     const filteredUsers = useMemo(() => {
-        return users.filter(user => {
-            const searchLower = searchQuery.toLowerCase();
+        const usersArray = Array.isArray(users) ? users : [];
+        return usersArray.filter(user => {
+            const searchLower = debouncedSearch.toLowerCase();
             const matchesSearch = 
                 user.name.toLowerCase().includes(searchLower) || 
                 user.email.toLowerCase().includes(searchLower) ||
                 (user.nip && user.nip.toLowerCase().includes(searchLower)) ||
                 (user.phone && user.phone.toLowerCase().includes(searchLower)) ||
                 (user.department && user.department.toLowerCase().includes(searchLower)) ||
-                (user.office_location && user.office_location.toLowerCase().includes(searchLower)) ||
+                (user.location && user.location.toLowerCase().includes(searchLower)) ||
                 (user.role && user.role.toLowerCase().includes(searchLower));
             const matchesRole = selectedRole === 'all' || user.role.toLowerCase() === selectedRole.toLowerCase();
             return matchesSearch && matchesRole;
         });
-    }, [users, searchQuery, selectedRole]);
+    }, [users, debouncedSearch, selectedRole]);
+
+    // Paginated users
+    const paginatedUsers = useMemo(() => {
+        const startIdx = (currentPage - 1) * ITEMS_PER_PAGE;
+        return filteredUsers.slice(startIdx, startIdx + ITEMS_PER_PAGE);
+    }, [filteredUsers, currentPage]);
+
+    const totalPages = Math.ceil(filteredUsers.length / ITEMS_PER_PAGE);
 
     // Handlers
     const handleSelectAll = (e) => {
-        if (e.target.checked) setSelectedUsers(filteredUsers.map(u => u.id));
+        if (e.target.checked) setSelectedUsers(paginatedUsers.map(u => u.id));
         else setSelectedUsers([]);
     };
 
@@ -333,10 +334,28 @@ export default function UserManagement({ users: initialUsers, stats: initialStat
         else setSelectedUsers([...selectedUsers, id]);
     };
 
-    const handleDelete = (id) => {
-        if(confirm('Hapus user ini?')) {
-            setUsers(users.filter(u => u.id !== id));
-            setDrawerUser(null);
+    const handleDelete = async (id) => {
+        if(!confirm('Hapus user ini?')) return;
+        
+        setLoading(true);
+        try {
+            const response = await fetch(`/api/admin/users/${id}`, {
+                method: 'DELETE',
+                headers: { 
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content 
+                }
+            });
+            
+            if (response.ok) {
+                setUsers((Array.isArray(users) ? users : []).filter(u => u.id !== id));
+                setDrawerUser(null);
+            } else {
+                alert('Gagal menghapus user');
+            }
+        } catch (error) {
+            alert('Error: ' + error.message);
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -356,9 +375,9 @@ export default function UserManagement({ users: initialUsers, stats: initialStat
             );
             
             // Update local state
-            const updatedUsers = users.map(u => 
+            const updatedUsers = (Array.isArray(users) ? users : []).map(u => 
                 u.id === drawerUser.id 
-                    ? { ...u, nip: editNip, office_location: editLocation, phone: editPhone, department: editDepartment }
+                    ? { ...u, nip: editNip, location: editLocation, phone: editPhone, department: editDepartment }
                     : u
             );
             setUsers(updatedUsers);
@@ -385,17 +404,39 @@ export default function UserManagement({ users: initialUsers, stats: initialStat
     const handleEditClick = () => {
         if (drawerUser) {
             setEditNip(drawerUser.nip || '');
-            setEditLocation(drawerUser.office_location || '');
+            setEditLocation(drawerUser.location || '');
             setEditPhone(drawerUser.phone || '');
             setEditDepartment(drawerUser.department || '');
             setEditMode(true);
         }
     };
 
-    const handleBulkDelete = () => {
-        if(confirm(`Hapus ${selectedUsers.length} user?`)) {
-            setUsers(users.filter(u => !selectedUsers.includes(u.id)));
-            setSelectedUsers([]);
+    const handleBulkDelete = async () => {
+        if(!confirm(`Hapus ${selectedUsers.length} user?`)) return;
+        
+        setLoading(true);
+        try {
+            const response = await fetch('/api/admin/users/bulk/delete', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+                },
+                body: JSON.stringify({ user_ids: selectedUsers })
+            });
+            
+            const result = await response.json();
+            if (response.ok) {
+                setUsers((Array.isArray(users) ? users : []).filter(u => !selectedUsers.includes(u.id)));
+                setSelectedUsers([]);
+                alert(`${result.deleted_count || selectedUsers.length} user berhasil dihapus`);
+            } else {
+                alert('Error: ' + (result.error || 'Unknown error'));
+            }
+        } catch (error) {
+            alert('Error: ' + error.message);
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -404,31 +445,30 @@ export default function UserManagement({ users: initialUsers, stats: initialStat
             <div className="min-h-screen bg-[#F8F9FA] pb-20 font-sans overflow-hidden">
                 <WondrStyles />
 
-            {/* --- Hero Header --- */}
-            <div className="bg-[#002824] pt-8 pb-36 px-6 lg:px-12 relative">
-                {/* Abstract Background */}
-                <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-[#005E54] rounded-full blur-[120px] opacity-20 -translate-y-1/2 translate-x-1/4"></div>
-                <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-[#D6F84C] rounded-full blur-[150px] opacity-10 translate-y-1/3"></div>
-
-                <div className="relative z-10 flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6 mb-8">
+            {/* --- Header Section --- */}
+            <div className="px-6 lg:px-12 py-8 bg-white border-b border-slate-100">
+                <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
                     <div>
-                        <div className="flex items-center gap-2 text-[#D6F84C] mb-2 font-bold text-xs tracking-widest uppercase">
-                            <Users className="w-4 h-4" /> People Operations
+                        <div className="flex items-center gap-2 text-[#005E54] mb-2 font-bold text-xs tracking-widest uppercase">
+                            <Users className="w-4 h-4" /> Manajemen
                         </div>
-                        <h1 className="text-4xl lg:text-5xl font-extrabold text-white leading-tight">
-                            User Management <br /> System
+                        <h1 className="text-3xl lg:text-4xl font-extrabold text-slate-900 mb-2">
+                            User Management
                         </h1>
+                        <p className="text-slate-600 flex items-center gap-2">
+                            Kelola user dan akses sistem HCMS Elearning
+                        </p>
                     </div>
                     
-                    <div className="flex gap-3">
+                    <div className="flex gap-3 flex-col sm:flex-row">
                         <button 
                             onClick={() => setShowImport(true)}
-                            className="flex items-center gap-2 px-5 py-3 bg-white/10 hover:bg-white/20 text-white rounded-2xl font-bold backdrop-blur-md transition border border-white/10"
+                            className="flex items-center justify-center gap-2 px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold transition text-sm whitespace-nowrap"
                         >
                             <Upload className="w-4 h-4" /> Import CSV
                         </button>
                         <button 
-                            className="flex items-center gap-2 px-6 py-3 bg-[#D6F84C] hover:bg-[#c2e43c] text-[#002824] rounded-2xl font-bold shadow-lg shadow-[#D6F84C]/20 transition hover:scale-105"
+                            className="flex items-center justify-center gap-2 px-6 py-2.5 bg-[#002824] hover:bg-[#001f1c] text-white rounded-xl font-semibold shadow-md transition text-sm whitespace-nowrap"
                         >
                             <Plus className="w-5 h-5" /> Tambah User
                         </button>
@@ -437,30 +477,30 @@ export default function UserManagement({ users: initialUsers, stats: initialStat
             </div>
 
             {/* --- Floating Stats & Content --- */}
-            <div className="max-w-7xl mx-auto px-6 -mt-24 relative z-20">
+            <div className="max-w-full mx-auto px-6 lg:px-12 py-8 bg-slate-50">
                 
                 {/* Stats Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-                    <StatCard label="Total User" value={mockStats.total_users} icon={Users} trend="+12%" delay={0} />
-                    <StatCard label="User Aktif" value={mockStats.active_users} icon={UserCheck} delay={100} />
-                    <StatCard label="Administrator" value={mockStats.admin_users} icon={Shield} delay={200} />
-                    <StatCard label="New Users" value={mockStats.new_this_month} icon={Zap} trend="+5" delay={300} />
+                    <StatCard label="Total User" value={stats.total_users} icon={Users} trend="+12%" delay={0} />
+                    <StatCard label="User Aktif" value={stats.active_users} icon={UserCheck} delay={100} />
+                    <StatCard label="Administrator" value={stats.admin_users} icon={Shield} delay={200} />
+                    <StatCard label="New Users" value={stats.new_this_month} icon={Zap} trend="+5" delay={300} />
                 </div>
 
                 {/* Main Content Card */}
-                <div className="glass-panel rounded-[32px] p-6 lg:p-8 min-h-[600px] animate-fade-up" style={{ animationDelay: '400ms' }}>
+                <div className="bg-white rounded-[24px] p-6 lg:p-8 border border-slate-100 shadow-sm animate-fade-up" style={{ animationDelay: '400ms' }}>
                     
                     {/* Toolbar */}
-                    <div className="flex flex-col lg:flex-row justify-between items-center gap-4 mb-8">
-                        <div className="flex gap-2 w-full lg:w-auto overflow-x-auto no-scrollbar pb-2 lg:pb-0">
+                    <div className="flex flex-col lg:flex-row justify-between items-center gap-4 mb-6 pb-6 border-b border-slate-100">
+                        <div className="flex gap-2 w-full lg:w-auto overflow-x-auto no-scrollbar">
                             {['All', 'Admin', 'Employee'].map((role) => (
                                 <button
                                     key={role}
                                     onClick={() => setSelectedRole(role.toLowerCase())}
-                                    className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all whitespace-nowrap ${
+                                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all whitespace-nowrap ${
                                         selectedRole === role.toLowerCase() 
-                                        ? 'bg-[#002824] text-[#D6F84C] shadow-lg' 
-                                        : 'bg-slate-50 text-slate-500 hover:bg-slate-100'
+                                        ? 'bg-[#002824] text-white shadow-md' 
+                                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                                     }`}
                                 >
                                     {role}
@@ -468,44 +508,45 @@ export default function UserManagement({ users: initialUsers, stats: initialStat
                             ))}
                         </div>
 
-                        <div className="relative w-full lg:w-80 group">
-                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-[#005E54] transition-colors w-5 h-5" />
+                        <div className="relative w-full lg:w-72">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
                             <input 
                                 type="text" 
-                                placeholder="Cari: nama, email, NIP, telepon, divisi..." 
+                                placeholder="Cari nama, email, NIP..." 
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
-                                className="w-full pl-12 pr-4 py-3 input-wondr font-bold text-slate-700"
+                                className="w-full pl-10 pr-4 py-2.5 input-wondr font-medium text-slate-700 placeholder-slate-400"
                             />
                         </div>
                     </div>
 
                     {/* Advanced Table */}
-                    <div className="overflow-x-auto pb-24">
-                        <table className="w-full table-spacing">
+                    <div className="overflow-x-auto">
+                        <table className="w-full">
                             <thead>
-                                <tr>
-                                    <th className="w-12 px-4">
+                                <tr className="border-b border-slate-200">
+                                    <th className="w-12 px-4 py-3">
                                         <input 
                                             type="checkbox" 
                                             className="wondr-checkbox"
-                                            checked={selectedUsers.length === filteredUsers.length && filteredUsers.length > 0}
+                                            checked={paginatedUsers.length > 0 && paginatedUsers.every(u => selectedUsers.includes(u.id))}
                                             onChange={handleSelectAll}
                                         />
                                     </th>
-                                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">User Profile</th>
-                                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">NIP</th>
-                                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">Role & Dept</th>
-                                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">Lokasi Kantor</th>
-                                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">Status</th>
-                                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">Last Activity</th>
-                                    <th className="px-6 py-3 text-right text-xs font-bold text-slate-400 uppercase tracking-wider">Aksi</th>
+                                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wide">User</th>
+                                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wide">Email</th>
+                                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wide">NIP</th>
+                                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wide">Lokasi</th>
+                                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wide">Divisi</th>
+                                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wide">Status</th>
+                                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wide">Last Activity</th>
+                                    <th className="px-6 py-3 text-right text-xs font-bold text-slate-600 uppercase tracking-wide">Action</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {filteredUsers.map((user) => (
-                                    <tr key={user.id} className={`row-card group ${selectedUsers.includes(user.id) ? 'bg-[#F0FDF4] ring-1 ring-[#005E54]' : ''}`}>
-                                        <td className="px-4 py-4 text-center">
+                                {paginatedUsers.map((user) => (
+                                    <tr key={user.id} className={`border-b border-slate-100 hover:bg-slate-50 transition ${selectedUsers.includes(user.id) ? 'bg-blue-50' : ''}`}>
+                                        <td className="px-4 py-3 text-center">
                                             <input 
                                                 type="checkbox" 
                                                 className="wondr-checkbox"
@@ -513,46 +554,35 @@ export default function UserManagement({ users: initialUsers, stats: initialStat
                                                 onChange={() => handleSelectUser(user.id)}
                                             />
                                         </td>
-                                        <td className="px-6 py-4">
-                                            <div className="flex items-center gap-4">
+                                        <td className="px-6 py-3">
+                                            <div className="flex items-center gap-3">
                                                 <UserAvatar name={user.name} />
                                                 <div>
-                                                    <div className="font-bold text-slate-900 group-hover:text-[#005E54] transition-colors">{user.name}</div>
-                                                    <div className="text-xs text-slate-500">{user.email}</div>
+                                                    <div className="font-bold text-slate-900 text-sm">{user.name}</div>
+                                                    <div className="text-xs text-slate-500">{user.role.toUpperCase()}</div>
                                                 </div>
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4">
-                                            <span className="text-sm font-bold text-slate-700 font-mono">{user.nip}</span>
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <div className="flex flex-col">
-                                                <span className="text-sm font-bold text-slate-700">{user.department}</span>
-                                                <span className="text-xs text-slate-500">{user.role}</span>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 text-xs font-bold">
-                                                <MapPin className="w-3.5 h-3.5" />
-                                                {user.office_location}
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4">
+                                        <td className="px-6 py-3 text-sm text-slate-600">{user.email}</td>
+                                        <td className="px-6 py-3 text-sm text-slate-600 font-mono">{user.nip || '-'}</td>
+                                        <td className="px-6 py-3 text-sm text-slate-600">{user.location || '-'}</td>
+                                        <td className="px-6 py-3 text-sm text-slate-600">{user.department || '-'}</td>
+                                        <td className="px-6 py-3">
                                             <StatusBadge status={user.status} />
                                         </td>
-                                        <td className="px-6 py-4">
-                                            <div className="flex items-center gap-3">
-                                                <div className={`w-2 h-2 rounded-full ${isUserOnline(user.last_login) ? 'bg-green-500 animate-pulse' : 'bg-slate-300'}`}></div>
-                                                <div className="text-sm">
-                                                    <div className="font-semibold text-slate-900">{getRelativeTime(user.last_login)}</div>
-                                                    <div className="text-xs text-slate-500">{new Date(user.last_login).toLocaleDateString('id-ID')}</div>
+                                        <td className="px-6 py-3">
+                                            <div className="flex items-start gap-2">
+                                                <span className={`w-2 h-2 rounded-full mt-1 flex-shrink-0 ${isUserOnline(user.last_login) ? 'bg-green-500 animate-pulse' : 'bg-slate-300'}`}></span>
+                                                <div>
+                                                    <p className="text-sm font-semibold text-slate-900">{getRelativeTime(user.last_login)}</p>
+                                                    <p className="text-xs text-slate-500">{user.last_login ? new Date(user.last_login).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Tidak diketahui'}</p>
                                                 </div>
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4 text-right">
+                                        <td className="px-6 py-3 text-right">
                                             <button 
                                                 onClick={() => setDrawerUser(user)}
-                                                className="p-2 rounded-xl text-slate-400 hover:bg-slate-50 hover:text-[#005E54] transition-colors"
+                                                className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-[#005E54] transition-colors"
                                             >
                                                 <MoreHorizontal className="w-5 h-5" />
                                             </button>
@@ -561,17 +591,57 @@ export default function UserManagement({ users: initialUsers, stats: initialStat
                                 ))}
                             </tbody>
                         </table>
-                        
-                        {filteredUsers.length === 0 && (
-                            <div className="text-center py-20">
-                                <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
-                                    <Search className="w-8 h-8" />
-                                </div>
-                                <h3 className="text-lg font-bold text-slate-900">User tidak ditemukan</h3>
-                                <p className="text-slate-500">Coba ubah kata kunci pencarian atau filter Anda.</p>
-                            </div>
-                        )}
                     </div>
+                    
+                    {/* Pagination Controls */}
+                    {filteredUsers.length > 0 && (
+                        <div className="flex items-center justify-between mt-6 pt-6 border-t border-slate-100">
+                            <div className="text-sm font-medium text-slate-600">
+                                Menampilkan {(currentPage - 1) * ITEMS_PER_PAGE + 1}-{Math.min(currentPage * ITEMS_PER_PAGE, filteredUsers.length)} dari {filteredUsers.length} user
+                            </div>
+                            <div className="flex gap-2">
+                                <button 
+                                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                                    disabled={currentPage === 1}
+                                    className="p-2 rounded-lg border border-slate-200 text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50"
+                                >
+                                    <ChevronLeft className="w-5 h-5" />
+                                </button>
+                                {Array.from({ length: Math.min(5, totalPages) }).map((_, i) => {
+                                    const page = Math.max(1, currentPage - 2) + i;
+                                    if (page > totalPages) return null;
+                                    return (
+                                        <button 
+                                            key={page}
+                                            onClick={() => setCurrentPage(page)}
+                                            className={`px-3 py-2 rounded-lg font-semibold text-sm transition-colors ${
+                                                currentPage === page 
+                                                    ? 'bg-[#005E54] text-white' 
+                                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                            }`}
+                                        >
+                                            {page}
+                                        </button>
+                                    );
+                                })}
+                                <button 
+                                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                                    disabled={currentPage === totalPages}
+                                    className="p-2 rounded-lg border border-slate-200 text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50"
+                                >
+                                    <ChevronRight className="w-5 h-5" />
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                    
+                    {filteredUsers.length === 0 && (
+                        <div className="text-center py-12">
+                            <Search className="w-12 h-12 mx-auto mb-4 text-slate-300" />
+                            <h3 className="text-lg font-bold text-slate-900">User tidak ditemukan</h3>
+                            <p className="text-slate-500 text-sm">Coba ubah kata kunci pencarian atau filter Anda.</p>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -708,7 +778,7 @@ export default function UserManagement({ users: initialUsers, stats: initialStat
                                                     <Building className="w-5 h-5 text-slate-400" />
                                                     <div>
                                                         <p className="text-xs text-slate-500 font-medium mb-0.5">Lokasi Kantor</p>
-                                                        <span className="font-bold text-slate-700">{drawerUser.office_location}</span>
+                                                        <span className="font-bold text-slate-700">{drawerUser.location}</span>
                                                     </div>
                                                 </div>
                                             </div>
@@ -768,8 +838,8 @@ export default function UserManagement({ users: initialUsers, stats: initialStat
                                                 </button>
                                             </div>
                                             <div className="space-y-2">
-                                                {mockProgramHistory[drawerUser.id] ? (
-                                                    mockProgramHistory[drawerUser.id].slice(0, 2).map(program => (
+                                                {programHistoryCache[drawerUser.id] ? (
+                                                    programHistoryCache[drawerUser.id].slice(0, 2).map(program => (
                                                         <ProgramHistoryCard 
                                                             key={program.id}
                                                             program={program}
@@ -1035,8 +1105,8 @@ export default function UserManagement({ users: initialUsers, stats: initialStat
                             ) : (
                                 // List View
                                 <div className="space-y-4">
-                                    {mockProgramHistory[drawerUser.id] && mockProgramHistory[drawerUser.id].length > 0 ? (
-                                        mockProgramHistory[drawerUser.id].map(program => (
+                                    {programHistoryCache[drawerUser.id] && programHistoryCache[drawerUser.id].length > 0 ? (
+                                        programHistoryCache[drawerUser.id].map(program => (
                                             <div 
                                                 key={program.id}
                                                 onClick={() => setSelectedProgram(program)}

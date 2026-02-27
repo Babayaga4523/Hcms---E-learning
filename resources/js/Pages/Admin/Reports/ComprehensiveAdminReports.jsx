@@ -48,7 +48,32 @@ const ComprehensiveAdminReports = ({
 
     const handleExport = async () => {
         try {
-            window.location.href = '/api/admin/reports/export?format=excel';
+            // Get CSRF token from meta tag
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+            
+            // Create a form for secure POST submission
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = '/api/admin/reports/export';
+            form.style.display = 'none';
+            
+            // Add CSRF token
+            const tokenInput = document.createElement('input');
+            tokenInput.type = 'hidden';
+            tokenInput.name = '_token';
+            tokenInput.value = csrfToken || '';
+            form.appendChild(tokenInput);
+            
+            // Add format parameter
+            const formatInput = document.createElement('input');
+            formatInput.type = 'hidden';
+            formatInput.name = 'format';
+            formatInput.value = 'excel';
+            form.appendChild(formatInput);
+            
+            document.body.appendChild(form);
+            form.submit();
+            setTimeout(() => document.body.removeChild(form), 100);
         } catch (error) {
             console.error('Export error:', error);
         }
@@ -212,8 +237,9 @@ const ComprehensiveAdminReports = ({
                     <h3 className="text-lg font-bold text-gray-900">Distribusi Peserta</h3>
                 </div>
                 {moduleStats.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={300}>
-                        <PieChart>
+                    <div style={{ width: '100%', height: '300px' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
                             <Pie
                                 data={moduleStats.slice(0, 8)}
                                 dataKey="total_enrolled"
@@ -229,7 +255,8 @@ const ComprehensiveAdminReports = ({
                             </Pie>
                             <Tooltip formatter={(value) => `${value} peserta`} />
                         </PieChart>
-                    </ResponsiveContainer>
+                        </ResponsiveContainer>
+                    </div>
                 ) : (
                     <div className="h-300 flex items-center justify-center text-gray-500">
                         <p>Tidak ada data program</p>
@@ -323,16 +350,18 @@ const ComprehensiveAdminReports = ({
                     <h3 className="text-lg font-bold text-gray-900">Analisis Pertanyaan</h3>
                 </div>
                 {questionPerformance.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={300}>
-                        <BarChart data={questionPerformance.slice(0, 8)}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                            <XAxis dataKey="question" width={50} tick={{ fontSize: 11 }} />
-                            <YAxis />
-                            <Tooltip content={<CustomTooltip />} />
-                            <Bar dataKey="correct" stackId="a" fill="#10b981" name="Benar" />
-                            <Bar dataKey="incorrect" stackId="a" fill="#ef4444" name="Salah" />
-                        </BarChart>
-                    </ResponsiveContainer>
+                    <div style={{ width: '100%', height: '300px' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={questionPerformance.slice(0, 8)}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                                <XAxis dataKey="question" width={50} tick={{ fontSize: 11 }} />
+                                <YAxis />
+                                <Tooltip content={<CustomTooltip />} />
+                                <Bar dataKey="correct" stackId="a" fill="#10b981" name="Benar" />
+                                <Bar dataKey="incorrect" stackId="a" fill="#ef4444" name="Salah" />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
                 ) : (
                     <div className="h-300 flex items-center justify-center text-gray-500">
                         <p>Tidak ada data pertanyaan</p>
@@ -352,8 +381,9 @@ const ComprehensiveAdminReports = ({
                     <h3 className="text-lg font-bold text-gray-900">Tren Pembelajaran</h3>
                 </div>
                 {trendData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={300}>
-                        <AreaChart data={trendData}>
+                    <div style={{ width: '100%', height: '300px' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={trendData}>
                             <defs>
                                 <linearGradient id="colorCompletion" x1="0" y1="0" x2="0" y2="1">
                                     <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
@@ -371,8 +401,9 @@ const ComprehensiveAdminReports = ({
                             <Legend />
                             <Area type="monotone" dataKey="completion" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorCompletion)" name="Penyelesaian" />
                             <Area type="monotone" dataKey="score" stroke="#3b82f6" strokeWidth={2} fillOpacity={1} fill="url(#colorScore)" name="Skor Rata-rata" />
-                        </AreaChart>
-                    </ResponsiveContainer>
+                            </AreaChart>
+                        </ResponsiveContainer>
+                    </div>
                 ) : (
                     <div className="h-300 flex items-center justify-center text-gray-500">
                         <p>Tidak ada data tren</p>
@@ -387,15 +418,17 @@ const ComprehensiveAdminReports = ({
                     <h3 className="text-lg font-bold text-gray-900">Statistik Departemen</h3>
                 </div>
                 {usersByDepartment.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={300}>
-                        <BarChart data={usersByDepartment.slice(0, 8)}>
+                    <div style={{ width: '100%', height: '300px' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={usersByDepartment.slice(0, 8)}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                             <XAxis dataKey="name" stroke="#9ca3af" />
                             <YAxis stroke="#9ca3af" />
                             <Tooltip content={<CustomTooltip />} />
                             <Bar dataKey="value" fill="#f59e0b" name="Jumlah Karyawan" radius={[8, 8, 0, 0]} />
-                        </BarChart>
-                    </ResponsiveContainer>
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
                 ) : (
                     <div className="h-300 flex items-center justify-center text-gray-500">
                         <p>Tidak ada data departemen</p>

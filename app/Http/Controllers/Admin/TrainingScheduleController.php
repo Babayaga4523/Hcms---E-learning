@@ -2,17 +2,20 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Http\Controllers\Controller;
 use App\Models\TrainingSchedule;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
-use Illuminate\Routing\Controller as BaseController;
+use Illuminate\Support\Facades\Cache;
 
-class TrainingScheduleController extends BaseController
+class TrainingScheduleController extends Controller
 {
     /**
      * Get all training schedules
      */
     public function index(Request $request)
     {
+        $this->authorize('view-schedules');
         $schedules = TrainingSchedule::query()
             ->with('program')
             ->when($request->input('status'), function ($q, $status) {
@@ -39,6 +42,7 @@ class TrainingScheduleController extends BaseController
      */
     public function store(Request $request)
     {
+        $this->authorize('create-schedules');
         try {
             $validated = $request->validate([
                 'title' => 'required|string|max:255',
@@ -62,6 +66,9 @@ class TrainingScheduleController extends BaseController
 
             $schedule = TrainingSchedule::create($validated);
             // Note: trainer_ids is automatically decoded by Model's $casts
+            
+            // Clear user calendar cache so updates appear immediately
+            Cache::forget('training-schedules-all');
 
             return response()->json([
                 'message' => 'Jadwal pelatihan berhasil dibuat',
@@ -121,6 +128,9 @@ class TrainingScheduleController extends BaseController
 
             $trainingSchedule->update($validated);
             // Note: trainer_ids is automatically decoded by Model's $casts
+            
+            // Clear user calendar cache so updates appear immediately
+            Cache::forget('training-schedules-all');
 
             return response()->json([
                 'message' => 'Jadwal pelatihan berhasil diperbarui',
@@ -147,6 +157,9 @@ class TrainingScheduleController extends BaseController
     {
         try {
             $trainingSchedule->delete();
+            
+            // Clear user calendar cache so updates appear immediately
+            Cache::forget('training-schedules-all');
 
             return response()->json([
                 'message' => 'Jadwal pelatihan berhasil dihapus',
@@ -181,26 +194,57 @@ class TrainingScheduleController extends BaseController
     }
 
     /**
-     * Get statistics for dashboard
+     * Get statistics for dashboard with date range filtering
+     * Query parameters: dateFrom (Y-m-d), dateTo (Y-m-d), status (optional)
      */
-    public function statistics()
+    public function statistics(Request $request)
     {
-        $today = now()->toDateString();
+        // Validate and parse date filters
+        $dateFrom = $request->query('dateFrom') ? Carbon::createFromFormat('Y-m-d', $request->query('dateFrom'))->startOfDay() : now()->subDays(30);
+        $dateTo = $request->query('dateTo') ? Carbon::createFromFormat('Y-m-d', $request->query('dateTo'))->endOfDay() : now();
+        $statusFilter = $request->query('status');
         
-        return response()->json([
-            'total_scheduled' => TrainingSchedule::count(),
-            'upcoming_7days' => TrainingSchedule::where('date', '>=', now())
-                ->where('date', '<=', now()->addDays(7))
-                ->where('status', '!=', 'cancelled')
-                ->count(),
-            'today' => TrainingSchedule::where('date', $today)->count(),
-            'by_status' => [
-                'scheduled' => TrainingSchedule::where('status', 'scheduled')->count(),
-                'ongoing' => TrainingSchedule::where('status', 'ongoing')->count(),
-                'completed' => TrainingSchedule::where('status', 'completed')->count(),
-                'cancelled' => TrainingSchedule::where('status', 'cancelled')->count(),
-            ],
-        ]);
+        // Ensure dateFrom <= dateTo
+        if ($dateFrom > $dateTo) {
+            return response()->json(['error' => 'Invalid date range'], 422);
+        }
+        
+        // Base query with date range filter
+        $baseQuery = TrainingSchedule::whereBetween('date', [$dateFrom, $dateTo]);
+        
+        // Add status filter if provided
+        if ($statusFilter && in_array($statusFilter, ['scheduled', 'ongoing', 'completed', 'cancelled'])) {
+            $baseQuery = $baseQuery->where('status', $statusFilter);
+        }
+        
+        // Build statistics response with caching (300s TTL for volatile data)
+        $cacheKey = "training_stats_{$dateFrom->format('Y-m-d')}_{$dateTo->format('Y-m-d')}_{$statusFilter}";
+        
+        $stats = \Illuminate\Support\Facades\Cache::remember($cacheKey, 300, function () use ($dateFrom, $dateTo, $statusFilter, $baseQuery) {
+            $today = now()->toDateString();
+            
+            return [
+                'total_scheduled' => (clone $baseQuery)->count(),
+                'upcoming_7days' => (clone $baseQuery)
+                    ->where('date', '>=', now())
+                    ->where('date', '<=', now()->addDays(7))
+                    ->where('status', '!=', 'cancelled')
+                    ->count(),
+                'today' => (clone $baseQuery)->where('date', $today)->count(),
+                'by_status' => [
+                    'scheduled' => (clone $baseQuery)->where('status', 'scheduled')->count(),
+                    'ongoing' => (clone $baseQuery)->where('status', 'ongoing')->count(),
+                    'completed' => (clone $baseQuery)->where('status', 'completed')->count(),
+                    'cancelled' => (clone $baseQuery)->where('status', 'cancelled')->count(),
+                ],
+                'date_range' => [
+                    'from' => $dateFrom->format('Y-m-d'),
+                    'to' => $dateTo->format('Y-m-d')
+                ]
+            ];
+        });
+        
+        return response()->json($stats);
     }
 
     /**
@@ -237,21 +281,54 @@ class TrainingScheduleController extends BaseController
      */
     public function diagnostic()
     {
-        $totalSchedules = TrainingSchedule::count();
-        $recentSchedules = TrainingSchedule::with('program')
-            ->latest('created_at')
-            ->limit(10)
-            ->get();
-            // Note: trainer_ids is automatically decoded by Model's $casts
-        $modules = \App\Models\Module::where('approval_status', 'approved')
-            ->where('is_active', true)
-            ->count();
+        try {
+            $totalSchedules = TrainingSchedule::count();
+            $activeSchedules = TrainingSchedule::where('status', 'active')->count();
+            $completedSchedules = TrainingSchedule::where('status', 'completed')->count();
+            $cancelledSchedules = TrainingSchedule::where('status', 'cancelled')->count();
+            
+            $schedulesWithoutInstructors = TrainingSchedule::whereNull('instructor_id')->count();
+            $schedulesWithoutParticipants = TrainingSchedule::withCount('participants')
+                ->having('participants_count', '=', 0)
+                ->count();
+            
+            $recentSchedules = TrainingSchedule::with('program', 'participants')
+                ->latest('created_at')
+                ->limit(10)
+                ->get();
+            
+            $upcomingSchedules = TrainingSchedule::where('start_date', '>', now())
+                ->where('status', 'active')
+                ->orderBy('start_date')
+                ->limit(5)
+                ->get();
+            
+            $modules = \App\Models\Module::where('approval_status', 'approved')
+                ->where('is_active', true)
+                ->count();
 
-        return response()->json([
-            'total_schedules' => $totalSchedules,
-            'total_approved_modules' => $modules,
-            'recent_schedules' => $recentSchedules,
-            'database_status' => 'OK',
-        ]);
+            return response()->json([
+                'total_schedules' => $totalSchedules,
+                'status_breakdown' => [
+                    'active' => $activeSchedules,
+                    'completed' => $completedSchedules,
+                    'cancelled' => $cancelledSchedules,
+                ],
+                'diagnostics' => [
+                    'missing_instructors' => $schedulesWithoutInstructors,
+                    'empty_schedules' => $schedulesWithoutParticipants,
+                ],
+                'total_approved_modules' => $modules,
+                'recent_schedules' => $recentSchedules,
+                'upcoming_schedules' => $upcomingSchedules,
+                'database_status' => 'OK',
+                'timestamp' => now(),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => 'Diagnostic failed: ' . $e->getMessage(),
+                'database_status' => 'ERROR'
+            ], 500);
+        }
     }
 }

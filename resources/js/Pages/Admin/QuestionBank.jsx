@@ -4,7 +4,7 @@ import AdminLayout from '@/Layouts/AdminLayout';
 import { 
     Plus, Search, Filter, Download, Upload, Edit3, Trash2, 
     Eye, MoreHorizontal, Copy, BookOpen, BarChart3, 
-    Grid, List as ListIcon, CheckCircle2, X, Sparkles, 
+    Grid, List as ListIcon, CheckCircle2, X,
     BrainCircuit, FileText, ChevronRight, Layout,
     CheckSquare, HelpCircle, PenTool, AlignLeft, Link2,
     Users, Code, Smile, Lightbulb, FileSearch
@@ -76,7 +76,6 @@ export default function QuestionBank() {
     const [selectedCategory, setSelectedCategory] = useState('all');
     const [selectedDifficulty, setSelectedDifficulty] = useState('all');
     const [selectedQuestions, setSelectedQuestions] = useState([]);
-    const [showAIModal, setShowAIModal] = useState(false);
     const [selectedQuestion, setSelectedQuestion] = useState(null);
     const [statistics, setStatistics] = useState({});
 
@@ -258,12 +257,6 @@ export default function QuestionBank() {
                         <p className="text-slate-500 font-medium mt-1">Kelola, kategorikan, dan buat pertanyaan untuk penilaian.</p>
                     </div>
                     <div className="flex gap-3">
-                        <button 
-                            onClick={() => setShowAIModal(true)}
-                            className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl font-bold shadow-lg shadow-indigo-200 hover:shadow-xl transition hover:-translate-y-1"
-                        >
-                            <Sparkles size={18} /> AI Generator
-                        </button>
                         <Link
                             href="/admin/question-management"
                             className="flex items-center gap-2 px-6 py-3 bg-[#D6FF59] text-slate-900 rounded-xl font-bold shadow-lg shadow-lime-200 hover:bg-[#cbf542] transition hover:-translate-y-1"
@@ -490,61 +483,6 @@ export default function QuestionBank() {
                                 </div>
                             </motion.div>
                         </>
-                    )}
-                </AnimatePresence>
-
-                {/* --- AI GENERATOR MODAL --- */}
-                <AnimatePresence>
-                    {showAIModal && (
-                        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-                            <motion.div 
-                                initial={{ scale: 0.9, opacity: 0 }}
-                                animate={{ scale: 1, opacity: 1 }}
-                                className="bg-white rounded-[32px] w-full max-w-2xl overflow-hidden shadow-2xl"
-                            >
-                                <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-8 text-white relative overflow-hidden">
-                                    <Sparkles className="absolute top-4 right-4 text-white/20" size={80} />
-                                    <h2 className="text-2xl font-black mb-2">🤖 AI Question Generator</h2>
-                                    <p className="text-indigo-100">Deskripsikan topik, dan biarkan AI membuat soal untuk Anda.</p>
-                                </div>
-                                <div className="p-8">
-                                    <div className="space-y-4">
-                                        <div>
-                                            <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Topik / Materi</label>
-                                            <textarea 
-                                                rows={4}
-                                                className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium text-slate-700"
-                                                placeholder="Tempel materi pelatihan Anda di sini, atau ketik topik seperti 'Cyber Security Basics'..."
-                                            />
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div>
-                                                <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Jumlah Soal</label>
-                                                <select className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500">
-                                                    <option>5 Pertanyaan</option>
-                                                    <option>10 Pertanyaan</option>
-                                                    <option>20 Pertanyaan</option>
-                                                </select>
-                                            </div>
-                                            <div>
-                                                <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-2">Kesulitan</label>
-                                                <select className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500">
-                                                    <option>Campuran</option>
-                                                    <option>Mudah</option>
-                                                    <option>Sulit</option>
-                                                </select>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="mt-8 flex gap-3 justify-end">
-                                        <button onClick={() => setShowAIModal(false)} className="px-6 py-3 font-bold text-slate-500 hover:bg-slate-50 rounded-xl">Batal</button>
-                                        <button className="px-8 py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 shadow-lg flex items-center gap-2">
-                                            <Sparkles size={18} /> Generate
-                                        </button>
-                                    </div>
-                                </div>
-                            </motion.div>
-                        </div>
                     )}
                 </AnimatePresence>
 

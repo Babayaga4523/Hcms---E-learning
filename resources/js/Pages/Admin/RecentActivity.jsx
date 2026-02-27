@@ -121,8 +121,28 @@ export default function RecentActivity(props) {
     // Helper functions
     const timeAgo = (iso) => {
         if (!iso) return 'Baru saja';
-        const d = new Date(iso);
+        
+        let d = null;
+        
+        // If iso is a number, treat it as timestamp
+        if (typeof iso === 'number') {
+            const ts = Number(iso);
+            // If less than 10^11, it's likely seconds, convert to milliseconds
+            d = new Date(ts < 10000000000 ? ts * 1000 : ts);
+        } else {
+            d = new Date(iso);
+        }
+        
+        // Validate date
+        if (!d || isNaN(d.getTime())) {
+            return 'Baru saja';
+        }
+        
         const sec = Math.floor((Date.now() - d.getTime()) / 1000);
+        
+        // Handle negative time (future date)
+        if (sec < 0) return 'Baru saja';
+        
         if (sec < 60) return `${sec} detik yang lalu`;
         if (sec < 3600) return `${Math.floor(sec/60)} menit yang lalu`;
         if (sec < 86400) return `${Math.floor(sec/3600)} jam yang lalu`;
@@ -131,7 +151,23 @@ export default function RecentActivity(props) {
 
     const getDateKey = (iso) => {
         if (!iso) return 'Tidak Diketahui';
-        const d = new Date(iso);
+        
+        let d = null;
+        
+        // If iso is a number, treat it as timestamp
+        if (typeof iso === 'number') {
+            const ts = Number(iso);
+            // If less than 10^11, it's likely seconds, convert to milliseconds
+            d = new Date(ts < 10000000000 ? ts * 1000 : ts);
+        } else {
+            d = new Date(iso);
+        }
+        
+        // Validate date
+        if (!d || isNaN(d.getTime())) {
+            return 'Tidak Diketahui';
+        }
+        
         const today = new Date();
         const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
         if (d.toDateString() === today.toDateString()) return 'Hari Ini';

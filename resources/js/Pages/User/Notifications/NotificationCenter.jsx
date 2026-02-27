@@ -2,12 +2,16 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Head } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
 import { motion, AnimatePresence } from 'framer-motion';
+import { API_BASE, API_ENDPOINTS } from '@/Config/api';
 import { 
     Bell, Search, Filter, CheckCircle, Trash2, X, 
     Info, AlertCircle, CheckCircle2, XCircle, Clock,
     Settings, Archive, Mail, MailOpen, Sparkles,
-    ChevronDown, MoreHorizontal, Check, Loader2
+    ChevronDown, MoreHorizontal, Check, Loader2, ChevronLeft, ChevronRight
 } from 'lucide-react';
+import showToast from '@/Utils/toast';
+import { handleAuthError } from '@/Utils/authGuard';
+import usePagination from '@/Hooks/usePagination';
 
 // --- Wondr Style System ---
 const WondrStyles = () => (
@@ -117,6 +121,7 @@ const ToggleSwitch = ({ label, checked, onChange, description }) => (
             <input 
                 type="checkbox" 
                 id={`toggle-${label}`} 
+                aria-label={`${label}, ${checked ? 'aktif' : 'tidak aktif'}`}
                 className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-all duration-300 left-0 checked:left-6 checked:bg-[#D6F84C] checked:border-[#005E54]"
                 checked={checked}
                 onChange={onChange}
@@ -136,12 +141,16 @@ export default function NotificationCenter({ auth }) {
     
     // State
     const [notifications, setNotifications] = useState([]);
+    const [paginationMeta, setPaginationMeta] = useState({ last_page: 1, total: 0 });
     const [loading, setLoading] = useState(true);
     const [searchLoading, setSearchLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('all'); // all, unread
     const [selectedIds, setSelectedIds] = useState([]);
     const [showSettings, setShowSettings] = useState(false);
+    const [deletingIds, setDeletingIds] = useState([]);
+    const [readingIds, setReadingIds] = useState([]);
+    const pagination = usePagination(1, 20);
     
     // Settings State
     const [settings, setSettings] = useState({
@@ -155,9 +164,15 @@ export default function NotificationCenter({ auth }) {
         loadNotifications();
     }, []);
 
-    // Debounced search + status filter
+    // Reload when page changes
+    useEffect(() => {
+        loadNotifications({ search: searchTerm.trim(), status: filterStatus === 'unread' ? 'unread' : '' });
+    }, [pagination.page]);
+
+    // Debounced search + status filter (reset to page 1)
     useEffect(() => {
         const handler = setTimeout(() => {
+            pagination.resetPage();
             loadNotifications({ search: searchTerm.trim(), status: filterStatus === 'unread' ? 'unread' : '' });
         }, 500);
 
@@ -171,10 +186,12 @@ export default function NotificationCenter({ auth }) {
 
         try {
             const params = new URLSearchParams();
+            params.append('page', pagination.page);
+            params.append('per_page', pagination.pageSize);
             if (search) params.append('search', search);
             if (status) params.append('status', status);
 
-            const url = `/api/user/notifications${params.toString() ? `?${params.toString()}` : ''}`;
+            const url = `${API_BASE}${API_ENDPOINTS.NOTIFICATIONS}${params.toString() ? `?${params.toString()}` : ''}`;
 
             const response = await fetch(url, {
                 headers: {
@@ -185,7 +202,16 @@ export default function NotificationCenter({ auth }) {
 
             if (response.ok) {
                 const data = await response.json();
-                setNotifications(data);
+                // Extract array from paginated response: { data: [...], meta: {...} }
+                const notificationData = Array.isArray(data) ? data : (data.data || []);
+                setNotifications(notificationData);
+                // Update pagination meta if available
+                if (data.meta) {
+                    setPaginationMeta(data.meta);
+                    pagination.updateMeta(notificationData, data.meta);
+                }
+            } else if (response.status === 401) {
+                handleAuthError({ response }, '/login');
             } else {
                 console.error('Failed to load notifications, status:', response.status);
             }
@@ -209,43 +235,86 @@ export default function NotificationCenter({ auth }) {
 
     // Handlers
     const handleMarkAsRead = async (id) => {
+        setReadingIds(prev => [...prev, id]);
+        
         try {
-            const response = await fetch(`/api/user/notifications/${id}/read`, {
-                method: 'PATCH',
-                headers: {
-                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content,
-                }
-            });
+            // Add timeout to prevent hanging requests
+            const fetchWithTimeout = Promise.race([
+                fetch(`${API_BASE}${API_ENDPOINTS.NOTIFICATIONS_READ(id)}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content,
+                    }
+                }),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Request timeout')), 30000)
+                )
+            ]);
+
+            const response = await fetchWithTimeout;
 
             if (response.ok) {
                 setNotifications(notifications.map(n => 
                     n.id === id ? { ...n, read_at: new Date().toISOString() } : n
                 ));
+                showToast('Notifikasi ditandai sudah dibaca', 'success');
+            } else if (response.status === 401) {
+                handleAuthError({ response }, '/login');
+            } else {
+                showToast('Gagal menandai notifikasi sebagai dibaca', 'error');
             }
         } catch (error) {
+            const errorMsg = error.message === 'Request timeout' 
+                ? 'Timeout: Server tidak merespons' 
+                : `Gagal menandai notifikasi: ${error.message}`;
+            showToast(errorMsg, 'error');
             console.error('Failed to mark as read:', error);
+        } finally {
+            setReadingIds(prev => prev.filter(rid => rid !== id));
         }
     };
 
     const handleBulkRead = async () => {
         if (selectedIds.length === 0) return;
 
+        setReadingIds(selectedIds);
+
         try {
-            await Promise.all(selectedIds.map(id => 
-                fetch(`/api/user/notifications/${id}/read`, {
+            const deleteWithTimeout = (id) => Promise.race([
+                fetch(`${API_BASE}${API_ENDPOINTS.NOTIFICATIONS_READ(id)}`, {
                     method: 'PATCH',
                     headers: {
                         'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content,
                     }
-                })
-            ));
+                }),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Request timeout')), 30000)
+                )
+            ]);
+
+            const responses = await Promise.all(selectedIds.map(deleteWithTimeout));
+
+            // Check for auth errors in any response
+            for (const response of responses) {
+                if (response.status === 401) {
+                    handleAuthError({ response }, '/login');
+                    return;
+                }
+            }
 
             setNotifications(notifications.map(n => 
                 selectedIds.includes(n.id) ? { ...n, read_at: new Date().toISOString() } : n
             ));
             setSelectedIds([]);
+            showToast(`${selectedIds.length} notifikasi ditandai sudah dibaca`, 'success');
         } catch (error) {
+            const errorMsg = error.message === 'Request timeout'
+                ? 'Timeout: Server tidak merespons'
+                : `Gagal menandai notifikasi: ${error.message}`;
+            showToast(errorMsg, 'error');
             console.error('Failed to bulk read:', error);
+        } finally {
+            setReadingIds([]);
         }
     };
 
@@ -253,20 +322,45 @@ export default function NotificationCenter({ auth }) {
         if (selectedIds.length === 0) return;
         if (!confirm(`Hapus ${selectedIds.length} notifikasi?`)) return;
 
+        // Show loading state
+        setDeletingIds(selectedIds);
+        
         try {
-            await Promise.all(selectedIds.map(id => 
-                fetch(`/api/user/notifications/${id}`, {
+            // Add timeout to prevent hanging requests
+            const deleteWithTimeout = (id) => Promise.race([
+                fetch(`${API_BASE}${API_ENDPOINTS.NOTIFICATIONS_DELETE(id)}`, {
                     method: 'DELETE',
                     headers: {
                         'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content,
                     }
-                })
-            ));
+                }),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Request timeout')), 30000)
+                )
+            ]);
+
+            const responses = await Promise.all(selectedIds.map(deleteWithTimeout));
+
+            // Check for auth errors in any response
+            for (const response of responses) {
+                if (response.status === 401) {
+                    handleAuthError({ response }, '/login');
+                    return;
+                }
+            }
 
             setNotifications(notifications.filter(n => !selectedIds.includes(n.id)));
             setSelectedIds([]);
+            showToast(`${selectedIds.length} notifikasi berhasil dihapus`, 'success');
+            
         } catch (error) {
+            const errorMsg = error.message === 'Request timeout'
+                ? 'Timeout: Server tidak merespons'
+                : `Gagal menghapus notifikasi: ${error.message}`;
+            showToast(errorMsg, 'error');
             console.error('Failed to bulk delete:', error);
+        } finally {
+            setDeletingIds([]);
         }
     };
 
@@ -282,17 +376,38 @@ export default function NotificationCenter({ auth }) {
     const handleDelete = async (id) => {
         if (!confirm('Hapus notifikasi ini?')) return;
 
+        setDeletingIds(prev => [...prev, id]);
+
         try {
-            await fetch(`/api/user/notifications/${id}`, {
-                method: 'DELETE',
-                headers: {
-                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content,
-                }
-            });
+            const fetchWithTimeout = Promise.race([
+                fetch(`${API_BASE}${API_ENDPOINTS.NOTIFICATIONS_DELETE(id)}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content,
+                    }
+                }),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Request timeout')), 30000)
+                )
+            ]);
+
+            const response = await fetchWithTimeout;
+
+            if (response.status === 401) {
+                handleAuthError({ response }, '/login');
+                return;
+            }
 
             setNotifications(prev => prev.filter(n => n.id !== id));
+            showToast('Notifikasi berhasil dihapus', 'success');
         } catch (error) {
+            const errorMsg = error.message === 'Request timeout'
+                ? 'Timeout: Server tidak merespons'
+                : `Gagal menghapus notifikasi: ${error.message}`;
+            showToast(errorMsg, 'error');
             console.error('Failed to delete:', error);
+        } finally {
+            setDeletingIds(prev => prev.filter(did => did !== id));
         }
     };
 
@@ -413,6 +528,7 @@ export default function NotificationCenter({ auth }) {
                                         <div className="flex items-start pt-3">
                                             <input 
                                                 type="checkbox" 
+                                                aria-label={`Pilih notifikasi: ${notif.title || 'Tanpa judul'}`}
                                                 checked={selectedIds.includes(notif.id)}
                                                 onChange={() => handleSelectOne(notif.id)}
                                                 className="w-5 h-5 rounded-md border-slate-300 text-[#005E54] focus:ring-[#005E54] cursor-pointer"
@@ -442,18 +558,28 @@ export default function NotificationCenter({ auth }) {
                                             {!notif.read_at && (
                                                 <button 
                                                     onClick={() => handleMarkAsRead(notif.id)}
-                                                    className="p-2 hover:bg-emerald-50 text-slate-400 hover:text-emerald-600 rounded-lg transition"
+                                                    disabled={readingIds.includes(notif.id)}
+                                                    className="p-2 hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed text-slate-400 hover:text-emerald-600 rounded-lg transition"
                                                     title="Tandai Sudah Dibaca"
                                                 >
-                                                    <CheckCircle size={18} />
+                                                    {readingIds.includes(notif.id) ? (
+                                                        <Loader2 size={18} className="animate-spin" />
+                                                    ) : (
+                                                        <CheckCircle size={18} />
+                                                    )}
                                                 </button>
                                             )}
                                             <button 
                                                 onClick={() => handleDelete(notif.id)}
-                                                className="p-2 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg transition"
+                                                disabled={deletingIds.includes(notif.id)}
+                                                className="p-2 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed text-slate-400 hover:text-red-600 rounded-lg transition"
                                                 title="Hapus"
                                             >
-                                                <Trash2 size={18} />
+                                                {deletingIds.includes(notif.id) ? (
+                                                    <Loader2 size={18} className="animate-spin" />
+                                                ) : (
+                                                    <Trash2 size={18} />
+                                                )}
                                             </button>
                                         </div>
                                     </motion.div>
@@ -469,6 +595,29 @@ export default function NotificationCenter({ auth }) {
                             </div>
                         )}
                     </div>
+
+                    {/* Pagination Controls */}
+                    {filteredNotifications.length > 0 && pagination.totalPages > 1 && (
+                        <div className="flex items-center justify-center gap-4 mt-8 pt-6 border-t border-slate-200">
+                            <button
+                                onClick={pagination.prevPage}
+                                disabled={pagination.page === 1}
+                                className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 font-bold rounded-xl transition-colors"
+                            >
+                                <ChevronLeft size={18} /> Sebelumnya
+                            </button>
+                            <span className="text-sm font-bold text-slate-600">
+                                Halaman {pagination.page} dari {pagination.totalPages}
+                            </span>
+                            <button
+                                onClick={pagination.nextPage}
+                                disabled={!pagination.hasMore}
+                                className="flex items-center gap-2 px-4 py-2 bg-[#005E54] hover:bg-[#003d38] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-colors"
+                            >
+                                Selanjutnya <ChevronRight size={18} />
+                            </button>
+                        </div>
+                    )}
 
                 </div>
             </div>
@@ -494,15 +643,33 @@ export default function NotificationCenter({ auth }) {
                         <div className="flex items-center gap-2 flex-1 justify-end">
                             <button 
                                 onClick={handleBulkRead}
-                                className="flex items-center gap-2 px-4 py-2 hover:bg-white/10 rounded-xl transition-colors text-sm font-bold text-white"
+                                disabled={readingIds.length > 0}
+                                className="flex items-center gap-2 px-4 py-2 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-colors text-sm font-bold text-white"
                             >
-                                <MailOpen size={18} className="text-[#D6F84C]" /> Tandai Baca
+                                {readingIds.length > 0 ? (
+                                    <>
+                                        <Loader2 size={18} className="animate-spin" /> Menandai...
+                                    </>
+                                ) : (
+                                    <>
+                                        <MailOpen size={18} className="text-[#D6F84C]" /> Tandai Baca
+                                    </>
+                                )}
                             </button>
                             <button 
                                 onClick={handleBulkDelete}
-                                className="flex items-center gap-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-xl transition-colors text-sm font-bold border border-red-500/20"
+                                disabled={deletingIds.length > 0}
+                                className="flex items-center gap-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 disabled:opacity-50 disabled:cursor-not-allowed text-red-400 rounded-xl transition-colors text-sm font-bold border border-red-500/20"
                             >
-                                <Trash2 size={18} /> Hapus
+                                {deletingIds.length > 0 ? (
+                                    <>
+                                        <Loader2 size={18} className="animate-spin" /> Menghapus...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Trash2 size={18} /> Hapus
+                                    </>
+                                )}
                             </button>
                             <button 
                                 onClick={() => setSelectedIds([])}

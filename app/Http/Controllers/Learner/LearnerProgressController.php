@@ -94,13 +94,6 @@ class LearnerProgressController extends Controller
                 ];
             });
 
-        // Get modules within the program (sub-modules)
-        $subModules = Module::where('parent_module_id', $programId)
-            ->get()
-            ->map(function ($subModule) use ($userId) {
-                return $this->buildModuleData($subModule, $userId);
-            });
-
         return response()->json([
             'program' => [
                 'id' => $module->id,
@@ -112,7 +105,7 @@ class LearnerProgressController extends Controller
                 'dueDate' => now()->addMonths(6)->format('Y-m-d'),
                 'totalHours' => round(($module->duration_minutes ?? 0) / 60, 1),
                 'completedHours' => round(($moduleProgress->progress_percentage ?? 0) / 100 * (($module->duration_minutes ?? 0) / 60), 2),
-                'modules' => $subModules->isEmpty() ? $this->buildDefaultModules($module, $userId) : $subModules,
+                'modules' => $this->buildDefaultModules($module, $userId),
             ],
         ]);
     }

@@ -22,6 +22,9 @@ class Reminder extends Model
         'sent_at',
         'department_id',
         'created_by',
+        'timezone',
+        'send_at_time',
+        'smart_scheduling_enabled',
     ];
 
     protected $casts = [

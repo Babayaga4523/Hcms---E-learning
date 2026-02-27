@@ -82,20 +82,26 @@ const ToggleSwitch = ({ label, checked, onChange, description }) => (
 
 // --- Main Component ---
 export default function TrainingProgramEdit({ program: initialProgram, auth }) {
-    // Mock Data for Preview
-    const programData = initialProgram || {
-        id: 1,
-        title: 'Mastering Wondr Financial Suite',
-        description: 'Pelatihan komprehensif mengenai fitur-fitur terbaru Wondr by BNI, mencakup investasi, transaksi harian, dan keamanan digital.',
-        duration_minutes: 120,
-        passing_grade: 80,
-        category: 'Product',
-        is_active: true,
-        expiry_date: '2025-12-31',
-        allow_retake: true,
-        max_retake_attempts: 3,
-        enrollment_count: 1450
-    };
+    // Use ONLY real data from backend - reject empty data
+    if (!initialProgram) {
+        return (
+            <>
+                <Head title="Edit Program" />
+                <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center">
+                    <div className="text-center">
+                        <AlertCircle className="w-16 h-16 text-orange-500 mx-auto mb-4" />
+                        <h2 className="text-2xl font-bold text-slate-900 mb-2">Program Tidak Ditemukan</h2>
+                        <p className="text-slate-600 mb-6">Program yang akan diubah tidak ditemukan di database.</p>
+                        <button onClick={() => router.visit('/admin/training-programs')} className="px-6 py-2 bg-[#005E54] text-white rounded-lg hover:bg-[#004940] transition">
+                            Kembali ke Program
+                        </button>
+                    </div>
+                </div>
+            </>
+        );
+    }
+    
+    const programData = initialProgram;
 
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState(null);

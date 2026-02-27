@@ -2,12 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Head, usePage } from '@inertiajs/react';
 import AdminLayout from '@/Layouts/AdminLayout';
 import axios from 'axios';
+import DOMPurify from 'dompurify';
 import { 
     Bell, Send, MessageSquare, Megaphone, Plus, X, Edit2, Trash2,
     CheckCircle2, AlertTriangle, Info, XCircle, Clock, Calendar,
     Search, Filter, BarChart3, Eye, Zap, ArrowRight, Smartphone,
     Sparkles, ChevronRight, User, MoreHorizontal, Copy, Check,
-    TrendingUp, Users, Activity, AlertCircle
+    TrendingUp, Users, Activity, AlertCircle, BookOpen, Zap as ZapIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -129,47 +130,86 @@ const AnnouncementItem = ({ item, onEdit, onDelete }) => {
         setTimeout(() => setCopied(false), 2000);
     };
 
+    // Calculate read receipt percentage
+    const readPercentage = item.user_count && item.user_count > 0 
+        ? Math.round((item.read_count || 0) / item.user_count * 100) 
+        : 0;
+
     return (
         <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="p-6 hover:bg-slate-50 transition border-b border-slate-100 last:border-0"
+            className="p-4 sm:p-6 hover:bg-slate-50 transition border-b border-slate-100 last:border-0 group"
         >
-            <div className="flex flex-col md:flex-row gap-4 items-start justify-between">
-                <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-2 flex-wrap">
-                        <h3 className="font-bold text-slate-900 text-lg">{item.title}</h3>
-                        <StatusBadge status={item.status} />
-                        <AnnouncementTypeBadge type={item.type} />
+            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 lg:gap-6">
+                {/* Left Content */}
+                <div className="flex-1 min-w-0">
+                    {/* Title & Badges Section */}
+                    <div className="mb-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3 mb-2">
+                            <h3 className="font-bold text-slate-900 text-base sm:text-lg line-clamp-1 flex-1">
+                                {item.title}
+                            </h3>
+                            <div className="flex gap-2 mt-2 sm:mt-0">
+                                <StatusBadge status={item.status} />
+                                <AnnouncementTypeBadge type={item.type} />
+                            </div>
+                        </div>
                     </div>
-                    <p className="text-slate-600 text-sm line-clamp-2 mb-3">{item.content}</p>
+
+                    {/* Content Preview - Sanitized */}
+                    <p className="text-slate-600 text-sm line-clamp-2 mb-3 break-words">
+                        {DOMPurify.sanitize(item.content, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] }).substring(0, 150)}
+                    </p>
                     
-                    <div className="flex items-center gap-4 text-xs text-slate-400 font-medium">
-                        <span className="flex items-center gap-1"><Calendar size={12}/> {new Date(item.created_at).toLocaleDateString('id-ID')}</span>
-                        <span className="flex items-center gap-1"><Eye size={12}/> {item.views || 0} views</span>
-                        {item.is_featured && <span className="text-amber-600 flex items-center gap-1"><Sparkles size={12}/> Featured</span>}
+                    {/* Meta Information & Read Receipt */}
+                    <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-xs text-slate-400 font-medium">
+                        <span className="flex items-center gap-1 whitespace-nowrap">
+                            <Calendar size={12}/> {new Date(item.created_at).toLocaleDateString('id-ID')}
+                        </span>
+                        <span className="flex items-center gap-1 whitespace-nowrap">
+                            <Eye size={12}/> {item.views || 0} views
+                        </span>
+                        
+                        {/* Read Receipt Tracking */}
+                        {item.user_count && item.user_count > 0 && (
+                            <span className={`flex items-center gap-1 whitespace-nowrap px-2 py-1 rounded-full ${
+                                readPercentage >= 80 ? 'bg-green-100 text-green-700' : 
+                                readPercentage >= 50 ? 'bg-blue-100 text-blue-700' : 
+                                'bg-orange-100 text-orange-700'
+                            }`}>
+                                <CheckCircle2 size={12}/> {item.read_count || 0}/{item.user_count} read ({readPercentage}%)
+                            </span>
+                        )}
+                        
+                        {item.is_featured && (
+                            <span className="text-amber-600 flex items-center gap-1 whitespace-nowrap">
+                                <Sparkles size={12}/> Featured
+                            </span>
+                        )}
                     </div>
                 </div>
 
-                <div className="flex gap-2 mt-4 md:mt-0">
+                {/* Action Buttons */}
+                <div className="flex gap-2 ml-0 lg:ml-4 flex-shrink-0 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
                     <button
                         onClick={handleCopy}
                         title="Copy content"
-                        className="p-2 rounded-full hover:bg-blue-100 text-blue-600 transition"
+                        className="p-2 rounded-full hover:bg-blue-100 text-blue-600 transition flex-shrink-0"
                     >
                         {copied ? <Check size={18} /> : <Copy size={18} />}
                     </button>
                     <button
                         onClick={() => onEdit(item.id)}
                         title="Edit announcement"
-                        className="p-2 rounded-full hover:bg-slate-200 text-slate-600 transition"
+                        className="p-2 rounded-full hover:bg-slate-200 text-slate-600 transition flex-shrink-0"
                     >
                         <Edit2 size={18} />
                     </button>
                     <button
                         onClick={() => onDelete(item.id)}
                         title="Delete announcement"
-                        className="p-2 rounded-full hover:bg-red-100 text-red-600 transition"
+                        className="p-2 rounded-full hover:bg-red-100 text-red-600 transition flex-shrink-0"
                     >
                         <Trash2 size={18} />
                     </button>
@@ -193,35 +233,58 @@ const NotificationItem = ({ item, onDelete }) => {
         <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="p-6 hover:bg-slate-50 transition border-b border-slate-100 last:border-0"
+            className="p-4 sm:p-6 hover:bg-slate-50 transition border-b border-slate-100 last:border-0 group"
         >
-            <div className="flex flex-col md:flex-row gap-4 items-start justify-between">
-                <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-2 flex-wrap">
-                        <h3 className="font-bold text-slate-900 text-lg">{item.title}</h3>
-                        <TypeBadge type={item.type} />
-                        <StatusBadge status={item.status || 'sent'} />
+            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 lg:gap-6">
+                {/* Left Content */}
+                <div className="flex-1 min-w-0">
+                    {/* Icon & Title Section */}
+                    <div className="flex items-start gap-3 sm:gap-4 mb-3">
+                        <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center shrink-0 ${
+                            item.status === 'scheduled' ? 'bg-orange-100 text-orange-600' : 'bg-blue-50 text-blue-600'
+                        }`}>
+                            {item.status === 'scheduled' ? <Clock size={20} /> : <Send size={20} />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <h3 className="font-bold text-slate-900 text-base sm:text-lg line-clamp-1 mb-1">
+                                {item.title}
+                            </h3>
+                            <div className="flex flex-wrap gap-2">
+                                <TypeBadge type={item.type} />
+                                <StatusBadge status={item.status || 'sent'} />
+                            </div>
+                        </div>
                     </div>
-                    <p className="text-slate-600 text-sm line-clamp-2 mb-3">{item.message}</p>
+
+                    {/* Message Preview */}
+                    <p className="text-slate-600 text-sm line-clamp-2 mb-3 break-words ml-0 sm:ml-1">
+                        {item.message}
+                    </p>
                     
-                    <div className="flex items-center gap-4 text-xs text-slate-400 font-medium">
-                        <span className="flex items-center gap-1"><User size={12}/> {item.recipients === 'all' ? 'All Users' : item.recipients || 'Unknown'}</span>
-                        <span className="flex items-center gap-1"><Calendar size={12}/> {new Date(item.created_at).toLocaleDateString('id-ID')}</span>
+                    {/* Meta Information */}
+                    <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-xs text-slate-400 font-medium">
+                        <span className="flex items-center gap-1 whitespace-nowrap">
+                            <User size={12}/> {item.recipients === 'all' ? 'All Users' : item.recipients || 'Unknown'}
+                        </span>
+                        <span className="flex items-center gap-1 whitespace-nowrap">
+                            <Calendar size={12}/> {new Date(item.created_at).toLocaleDateString('id-ID')}
+                        </span>
                     </div>
                 </div>
 
-                <div className="flex gap-2 mt-4 md:mt-0">
+                {/* Action Buttons */}
+                <div className="flex gap-2 ml-0 lg:ml-4 flex-shrink-0 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
                     <button
                         onClick={handleCopy}
                         title="Copy message"
-                        className="p-2 rounded-full hover:bg-blue-100 text-blue-600 transition"
+                        className="p-2 rounded-full hover:bg-blue-100 text-blue-600 transition flex-shrink-0"
                     >
                         {copied ? <Check size={18} /> : <Copy size={18} />}
                     </button>
                     <button
                         onClick={() => onDelete(item.id)}
                         title="Delete notification"
-                        className="p-2 rounded-full hover:bg-red-100 text-red-600 transition"
+                        className="p-2 rounded-full hover:bg-red-100 text-red-600 transition flex-shrink-0"
                     >
                         <Trash2 size={18} />
                     </button>
@@ -229,6 +292,70 @@ const NotificationItem = ({ item, onDelete }) => {
             </div>
         </motion.div>
     );
+};
+
+// ====== ANNOUNCEMENT TEMPLATES ======
+const ANNOUNCEMENT_TEMPLATES = {
+    maintenance: {
+        title: 'System Maintenance Scheduled',
+        content: 'We will be performing scheduled system maintenance to improve performance and security. During this time, the system will be temporarily unavailable. We apologize for any inconvenience. Expected maintenance window: 2-3 hours. Thank you for your patience.',
+        type: 'maintenance',
+        icon: '🛠️'
+    },
+    training_launch: {
+        title: 'New Training Program Available',
+        content: 'We are pleased to announce the launch of a new training program. This comprehensive program covers the latest industry practices and is designed to enhance your professional development. Enroll now to start your learning journey!',
+        type: 'event',
+        icon: '📚'
+    },
+    urgent_update: {
+        title: 'Urgent Security Update',
+        content: 'Important: A security update is now available. Please install this update as soon as possible to protect your account and data. If you have any issues, please contact our support team immediately.',
+        type: 'urgent',
+        icon: '🚨'
+    },
+    policy_change: {
+        title: 'Policy Update Notice',
+        content: 'Please note that our service policies have been updated effective immediately. Please review the new policies in the Settings section. If you have questions or concerns, please contact the administration team.',
+        type: 'general',
+        icon: '📋'
+    },
+    achievement: {
+        title: 'Achievement Milestone Reached',
+        content: 'Congratulations! Our organization has reached a significant milestone. This achievement is thanks to the dedication and hard work of our team. Let\'s celebrate this success together!',
+        type: 'event',
+        icon: '🎉'
+    }
+};
+
+// ====== NOTIFICATION SENDING UTILITY ======
+const sendAnnouncementNotification = async (announcement) => {
+    try {
+        console.log('[Notification] Starting notification send process for:', {
+            announcement_id: announcement.id,
+            title: announcement.title,
+            recipients: announcement.recipients
+        });
+
+        // Call the notification API endpoint
+        const response = await axios.post('/api/admin/announcements/notify', {
+            announcement_id: announcement.id,
+            recipients: announcement.recipients || 'all',
+            channels: ['email', 'in_app', 'push'], // Define which channels to use
+            title: announcement.title,
+            content: announcement.content,
+        });
+
+        console.log('[Notification] Success response:', response.data);
+        return response.data;
+    } catch (err) {
+        console.error('[Notification] Failed to send notification:', {
+            status: err.response?.status,
+            message: err.response?.data?.message || err.message,
+            error_details: err.response?.data?.errors
+        });
+        throw err;
+    }
 };
 
 // ====== MAIN COMPONENT ======
@@ -257,6 +384,7 @@ export default function CommunicationHub() {
     const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
     const [editingAnnouncementId, setEditingAnnouncementId] = useState(null);
     const [announcementSaving, setAnnouncementSaving] = useState(false);
+    const [showTemplateMenu, setShowTemplateMenu] = useState(false);
 
     const [announcementForm, setAnnouncementForm] = useState({
         title: '',
@@ -285,6 +413,7 @@ export default function CommunicationHub() {
         message: '',
         type: 'info',
         recipients: 'all',
+        recipient_ids: [],
         scheduled_at: '',
         is_scheduled: false,
     });
@@ -333,11 +462,18 @@ export default function CommunicationHub() {
         try {
             setAnnouncementSaving(true);
             
+            // Format dates dari datetime-local ke Y-m-d format yang diharapkan server
+            const formattedData = {
+                ...announcementForm,
+                start_date: announcementForm.start_date ? announcementForm.start_date.split('T')[0] : '',
+                end_date: announcementForm.end_date ? announcementForm.end_date.split('T')[0] : '',
+            };
+            
             if (editingAnnouncementId) {
-                await axios.put(`/api/admin/announcements/${editingAnnouncementId}`, announcementForm);
+                await axios.put(`/api/admin/announcements/${editingAnnouncementId}`, formattedData);
                 showToast('Announcement berhasil diupdate', 'success');
             } else {
-                await axios.post('/api/admin/announcements', announcementForm);
+                await axios.post('/api/admin/announcements', formattedData);
                 showToast('Announcement berhasil dibuat', 'success');
             }
             
@@ -346,6 +482,7 @@ export default function CommunicationHub() {
             loadAnnouncements();
         } catch (err) {
             console.error(err);
+            console.error('Full error response:', err.response?.data);
             showToast(err.response?.data?.message || 'Gagal menyimpan announcement', 'error');
         } finally {
             setAnnouncementSaving(false);
@@ -390,6 +527,20 @@ export default function CommunicationHub() {
         setEditingAnnouncementId(null);
     };
 
+    const applyTemplate = (templateKey) => {
+        const template = ANNOUNCEMENT_TEMPLATES[templateKey];
+        if (template) {
+            setAnnouncementForm({
+                ...announcementForm,
+                title: template.title,
+                content: template.content,
+                type: template.type,
+            });
+            setShowTemplateMenu(false);
+            showToast(`Template "${template.title}" applied successfully`, 'success');
+        }
+    };
+
     // ===== NOTIFICATION HANDLERS =====
     const handleSendNotification = async () => {
         if (!notificationForm.title.trim() || !notificationForm.message.trim()) {
@@ -397,17 +548,31 @@ export default function CommunicationHub() {
             return;
         }
 
+        if (notificationForm.is_scheduled && !notificationForm.scheduled_at) {
+            showToast('Jadwal pengiriman harus diisi untuk notifikasi terjadwal', 'warning');
+            return;
+        }
+
         try {
             setNotificationSending(true);
-            await axios.post('/api/admin/notifications/send', notificationForm);
+            const payload = {
+                ...notificationForm,
+                recipient_ids: notificationForm.recipient_ids || []
+            };
+            await axios.post('/api/admin/notifications/send', payload);
             
-            showToast('Notification berhasil dikirim', 'success');
+            const message = notificationForm.is_scheduled 
+                ? 'Notification berhasil dijadwalkan' 
+                : 'Notification berhasil dikirim';
+            
+            showToast(message, 'success');
             setShowNotificationCompose(false);
             setNotificationForm({
                 title: '',
                 message: '',
                 type: 'info',
                 recipients: 'all',
+                recipient_ids: [],
                 scheduled_at: '',
                 is_scheduled: false,
             });
@@ -821,6 +986,45 @@ export default function CommunicationHub() {
                                         <p className="text-xs text-slate-400 mt-2">{announcementForm.title.length}/100 karakter</p>
                                     </div>
 
+                                    {/* Templates Section */}
+                                    <div className="relative">
+                                        <button
+                                            onClick={() => setShowTemplateMenu(!showTemplateMenu)}
+                                            className="w-full flex items-center justify-between gap-3 px-4 py-3 bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200 rounded-xl hover:from-purple-100 hover:to-blue-100 transition font-medium text-sm text-slate-700"
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <BookOpen size={16} />
+                                                <span>📝 Use Template</span>
+                                            </div>
+                                            <ChevronRight size={18} className={`transition ${showTemplateMenu ? 'rotate-90' : ''}`} />
+                                        </button>
+                                        
+                                        {showTemplateMenu && (
+                                            <motion.div
+                                                initial={{ opacity: 0, y: -10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: -10 }}
+                                                className="absolute top-full mt-2 left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg z-50 p-3 space-y-2"
+                                            >
+                                                {Object.entries(ANNOUNCEMENT_TEMPLATES).map(([key, template]) => (
+                                                    <button
+                                                        key={key}
+                                                        onClick={() => applyTemplate(key)}
+                                                        className="w-full text-left p-3 rounded-lg hover:bg-slate-100 transition border border-slate-100"
+                                                    >
+                                                        <div className="flex items-start gap-2">
+                                                            <span className="text-lg">{template.icon}</span>
+                                                            <div className="flex-1 min-w-0">
+                                                                <p className="font-bold text-sm text-slate-900 truncate">{template.title}</p>
+                                                                <p className="text-xs text-slate-500 line-clamp-1">{template.content}</p>
+                                                            </div>
+                                                        </div>
+                                                    </button>
+                                                ))}
+                                            </motion.div>
+                                        )}
+                                    </div>
+
                                     <div>
                                         <label className="block text-xs font-bold uppercase text-slate-400 tracking-wider mb-3">Konten</label>
                                         <textarea 
@@ -1067,10 +1271,12 @@ export default function CommunicationHub() {
                                                 <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1 }}>
                                                     <Send size={16} />
                                                 </motion.div>
-                                                Sending...
+                                                {notificationForm.is_scheduled ? 'Scheduling...' : 'Sending...'}
                                             </>
                                         ) : (
-                                            <>✉️ Kirim</>
+                                            <>
+                                                {notificationForm.is_scheduled ? '⏰ Jadwalkan' : '✉️ Kirim'}
+                                            </>
                                         )}
                                     </button>
                                 </div>

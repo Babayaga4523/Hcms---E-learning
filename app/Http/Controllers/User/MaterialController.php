@@ -7,6 +7,7 @@ use App\Models\Material;
 use App\Models\Module;
 use App\Models\ModuleProgress;
 use App\Models\UserTraining;
+use App\Models\TrainingMaterial;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
@@ -125,7 +126,7 @@ class MaterialController extends Controller
                     'id' => $material->id, // Use actual material ID
                     'title' => $material->title,
                     'type' => $materialType,
-                    'url' => $material->external_url ? $material->external_url : ($material->file_path || $material->pdf_path ? route('user.material.serve', ['trainingId' => $trainingId, 'materialId' => $material->id]) : null),
+                    'url' => $material->url, // ← Use model accessor which handles all logic
                     'duration' => $material->duration_minutes ?? 15,
                     'module_title' => $training->title,
                     'is_completed' => false,
@@ -271,20 +272,23 @@ class MaterialController extends Controller
                 ], 403);
             }
 
-            // Build virtual materials from module fields (same as index method)
+            // Build materials from module fields and training_materials table
             $materials = collect();
             $materialIdCounter = 1;
             
             // Add video material if video_url exists
+            // NOTE: Virtual materials can be viewed but cannot be officially marked complete
+            // They are for reference only. Real completion tracking is for TrainingMaterial records.
             if ($training->video_url) {
                 $materials->push([
-                    'id' => $materialIdCounter++,
+                    'id' => 'video_' . $trainingId,  // Use string ID to differentiate from DB materials
                     'title' => 'Video Pembelajaran',
                     'type' => 'video',
                     'url' => $this->ensureValidUrl($training->video_url),
                     'duration' => 30,
                     'module_title' => $training->title,
                     'is_completed' => false,
+                    'is_virtual' => true,  // Mark as virtual
                     'content' => null,
                     'description' => 'Video pembelajaran untuk modul ' . $training->title
                 ]);
@@ -293,13 +297,14 @@ class MaterialController extends Controller
             // Add document material if document_url exists
             if ($training->document_url) {
                 $materials->push([
-                    'id' => $materialIdCounter++,
+                    'id' => 'document_' . $trainingId,  // Use string ID
                     'title' => 'Dokumen Pembelajaran',
                     'type' => 'document',
                     'url' => $this->ensureValidUrl($training->document_url),
                     'duration' => 20,
                     'module_title' => $training->title,
                     'is_completed' => false,
+                    'is_virtual' => true,  // Mark as virtual
                     'content' => null,
                     'description' => 'Dokumen pembelajaran untuk modul ' . $training->title
                 ]);
@@ -308,13 +313,14 @@ class MaterialController extends Controller
             // Add presentation material if presentation_url exists
             if ($training->presentation_url) {
                 $materials->push([
-                    'id' => $materialIdCounter++,
+                    'id' => 'presentation_' . $trainingId,  // Use string ID
                     'title' => 'Presentasi',
                     'type' => 'presentation',
                     'url' => $this->ensureValidUrl($training->presentation_url),
                     'duration' => 25,
                     'module_title' => $training->title,
                     'is_completed' => false,
+                    'is_virtual' => true,  // Mark as virtual
                     'content' => null,
                     'description' => 'Presentasi untuk modul ' . $training->title
                 ]);
@@ -358,7 +364,11 @@ class MaterialController extends Controller
             }
             
             // Find the requested material
-            $material = $materials->firstWhere('id', (int)$materialId);
+            // materialId can be either numeric (for DB materials) or string (for virtual materials)
+            // Use first() with callback for loose comparison
+            $material = $materials->first(function($m) use ($materialId) {
+                return $m['id'] == $materialId;  // Loose comparison handles both 'video_1' and 1
+            });
             
             if (!$material) {
                 return response()->json([
@@ -377,27 +387,44 @@ class MaterialController extends Controller
                 ->where('module_id', $trainingId)
                 ->first();
 
-            // Determine completed materials for this user/module
+            // Determine completed materials for this user/module (only actual training materials)
+            // Virtual materials do not have completion tracking
             $completedMaterialIds = \App\Models\UserMaterialProgress::where('user_id', $user->id)
                 ->where('is_completed', true)
                 ->whereHas('material', function($q) use ($trainingId) {
                     $q->where('module_id', $trainingId);
                 })->pluck('training_material_id')->toArray();
 
-            // If module is fully completed, mark all as completed; otherwise mark individually
+            // If module is fully completed, mark all actual materials as completed
+            // Virtual materials stay as incomplete (they're reference only)
             if ($progress && $progress->status === 'completed') {
                 $materials = $materials->map(function($m) {
-                    $m['is_completed'] = true;
+                    // Only mark actual materials as completed, keep virtual as-is
+                    if (!isset($m['is_virtual']) || !$m['is_virtual']) {
+                        $m['is_completed'] = true;
+                    }
                     return $m;
                 });
-                $material['is_completed'] = true;
+                // Mark current material as completed only if it's an actual material
+                if (!isset($material['is_virtual']) || !$material['is_virtual']) {
+                    $material['is_completed'] = true;
+                }
             } else {
                 $materials = $materials->map(function($m) use ($completedMaterialIds) {
-                    $m['is_completed'] = in_array($m['id'], $completedMaterialIds);
+                    // Only check completion for actual materials (numeric IDs)
+                    if (isset($m['is_virtual']) && $m['is_virtual']) {
+                        $m['is_completed'] = false; // Virtual never completes
+                    } else {
+                        $m['is_completed'] = in_array($m['id'], $completedMaterialIds);
+                    }
                     return $m;
                 });
-                // Ensure the single material reflects its own completed flag
-                $material['is_completed'] = in_array($material['id'], $completedMaterialIds) || ($progress && $progress->status === 'completed');
+                // Check if the single material is completed
+                if (isset($material['is_virtual']) && $material['is_virtual']) {
+                    $material['is_completed'] = false; // Virtual never completes
+                } else {
+                    $material['is_completed'] = in_array($material['id'], $completedMaterialIds) || ($progress && $progress->status === 'completed');
+                }
             }
             
             // Get prev/next materials for navigation
@@ -433,13 +460,49 @@ class MaterialController extends Controller
     
     /**
      * Mark material as completed
+     * NOTE: Only actual TrainingMaterial records (from training_materials table) can be officially marked complete.
+     * Virtual materials (video_url, document_url, presentation_url) are for viewing only.
      */
     public function complete($trainingId, $materialId)
     {
         try {
             $user = Auth::user();
 
-            // First, mark this specific material as completed
+            // Check if this is a virtual material ID (string with prefix)
+            $isVirtualMaterial = is_string($materialId) && (
+                strpos($materialId, 'video_') === 0 || 
+                strpos($materialId, 'document_') === 0 || 
+                strpos($materialId, 'presentation_') === 0
+            );
+
+            if ($isVirtualMaterial) {
+                // Virtual materials cannot be officially marked complete
+                // They are for reference/viewing only
+                \Log::info("User {$user->id} attempted to mark virtual material {$materialId} as complete", ['trainingId' => $trainingId]);
+                
+                return response()->json([
+                    'success' => true,  // Return success for UX continuity
+                    'message' => 'Materi telah dilihat',  // Just marking as viewed
+                    'is_virtual' => true,
+                    'progress_percentage' => $this->getProgressPercentage($user->id, $trainingId),
+                    'note' => 'Virtual materials are for reference only. Progress tracking requires actual learning materials.'
+                ]);
+            }
+
+            // Only record progress for actual training_materials records
+            // Check if materialId is a real training_material record
+            $trainingMaterial = \App\Models\TrainingMaterial::find($materialId);
+            
+            if (!$trainingMaterial || $trainingMaterial->module_id != $trainingId) {
+                // Material not found or doesn't belong to this training
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Material tidak ditemukan atau tidak tersedia untuk training ini',
+                    'progress_percentage' => $this->getProgressPercentage($user->id, $trainingId)
+                ], 404);
+            }
+
+            // Valid training material - record progress
             $materialProgress = \App\Models\UserMaterialProgress::updateOrCreate(
                 [
                     'user_id' => $user->id,
@@ -452,18 +515,20 @@ class MaterialController extends Controller
                 ]
             );
 
-            // Calculate real-time progress percentage
-            $progressPercentage = $this->calculateTrainingProgress($user->id, $trainingId);
+            // Calculate comprehensive progress (materials + pretest + posttest)
+            $quizService = new \App\Services\QuizService();
+            $comprehensiveProgress = $quizService->calculateComprehensiveProgress($user->id, $trainingId);
+            $totalProgressPercentage = $comprehensiveProgress['total_progress'] ?? 0;
 
-            // Update module progress with calculated percentage
+            // Update module progress with comprehensive percentage
             $progress = ModuleProgress::updateOrCreate(
                 [
                     'user_id' => $user->id,
                     'module_id' => $trainingId,
                 ],
                 [
-                    'status' => $progressPercentage >= 100 ? 'completed' : 'in_progress',
-                    'progress_percentage' => $progressPercentage,
+                    'status' => $totalProgressPercentage >= 100 ? 'completed' : 'in_progress',
+                    'progress_percentage' => $totalProgressPercentage,
                     'last_accessed_at' => now()
                 ]
             );
@@ -472,7 +537,8 @@ class MaterialController extends Controller
             Cache::forget("training_progress_{$user->id}_{$trainingId}");
 
             // Update user training status only if fully completed
-            if ($progressPercentage >= 100) {
+            // Completion requires: all materials + pretest passed (if exists) + posttest passed (if exists)
+            if ($totalProgressPercentage >= 100) {
                 UserTraining::where('user_id', $user->id)
                     ->where('module_id', $trainingId)
                     ->update([
@@ -485,7 +551,8 @@ class MaterialController extends Controller
                 'success' => true,
                 'message' => 'Material berhasil ditandai selesai',
                 'progress' => $progress,
-                'progress_percentage' => $progressPercentage
+                'progress_percentage' => $totalProgressPercentage,
+                'comprehensive_progress' => $comprehensiveProgress
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to complete material: ' . $e->getMessage());
@@ -495,6 +562,23 @@ class MaterialController extends Controller
                 'message' => 'Gagal menandai material sebagai selesai',
                 'progress' => null
             ], 500);
+        }
+    }
+
+    /**
+     * Helper method to get current progress percentage for a training
+     */
+    private function getProgressPercentage($userId, $trainingId)
+    {
+        try {
+            $progress = ModuleProgress::where('user_id', $userId)
+                ->where('module_id', $trainingId)
+                ->first();
+            
+            return $progress ? $progress->progress_percentage : 0;
+        } catch (\Exception $e) {
+            \Log::error('Failed to get progress percentage: ' . $e->getMessage());
+            return 0;
         }
     }
 
@@ -608,39 +692,45 @@ class MaterialController extends Controller
                 ], 404);
             }
 
+            Log::info("Serving material: $filePath");
+            
             $fullPath = null;
 
-            // Try storage disk (accounts for FILESYSTEM_DISK setting)
-            if (@Storage::disk('public')->exists($filePath)) {
-                $fullPath = Storage::disk('public')->path($filePath);
-            } elseif (@Storage::exists($filePath)) {
-                // Fallback to default storage
-                $fullPath = storage_path('app/' . $filePath);
+            // SECURITY FIX: Materials stored in private 'materials' disk
+            // Files NOT accessible via direct URL (no symlink exposure)
+            // All access must go through this controller for enrollment check
+            $normalizedPath = $filePath;
+            if (Str::startsWith($filePath, 'public/')) {
+                $normalizedPath = substr($filePath, 7);
+                Log::info("Normalized legacy path from 'public/*': $normalizedPath");
+            }
+
+            // Use private materials disk
+            $materialsDisk = Storage::disk('materials');
+            
+            if ($materialsDisk->exists($normalizedPath)) {
+                $fullPath = $materialsDisk->path($normalizedPath);
+                Log::info("File found on private materials disk: $fullPath");
             } else {
-                // Last resort: try other potential locations
-                $basename = basename($filePath);
-                $candidates = [
-                    storage_path('app/public/' . $filePath),
-                    storage_path('app/private/public/' . $filePath),
-                    storage_path('app/materials/' . $basename),
-                    storage_path('app/public/materials/' . $basename),
-                ];
-                
-                foreach ($candidates as $candidate) {
-                    if (@file_exists($candidate)) {
-                        $fullPath = $candidate;
-                        Log::info("Found material file at: {$candidate}");
-                        break;
-                    }
+                // Fallback for legacy files still on public disk
+                $publicDisk = Storage::disk('public');
+                if ($publicDisk->exists($normalizedPath)) {
+                    $fullPath = $publicDisk->path($normalizedPath);
+                    Log::warning("File found on PUBLIC disk (legacy) - should migrate to private: $fullPath");
+                } else {
+                    Log::error("Material file not found", [
+                        'material_id' => $materialId,
+                        'path' => $filePath,
+                        'normalized' => $normalizedPath,
+                        'private_disk_checked' => true,
+                        'public_disk_checked' => true
+                    ]);
+                    abort(404);
                 }
             }
 
-            if (!$fullPath) {
-                Log::warning("Could not resolve full path for file: {$filePath}");
-            }
-            
-            if (!$fullPath || !@file_exists($fullPath)) {
-                Log::error("Material file not found: {$filePath} (tried to resolve to: {$fullPath})");
+            if (!$fullPath || !file_exists($fullPath)) {
+                Log::error("Material file not found: {$filePath} (resolved to: {$fullPath})");
                 return response()->json([
                     'success' => false,
                     'message' => 'File tidak ditemukan'

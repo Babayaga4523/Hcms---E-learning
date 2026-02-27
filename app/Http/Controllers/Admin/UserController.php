@@ -2,23 +2,27 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\Role;
 use App\Models\Permission;
 use App\Models\Department;
 use App\Models\AuditLog;
 use App\Models\UserTraining;
+use App\Services\PointsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
-class UserController
+class UserController extends Controller
 {
     // Role Management
     public function getRoles()
     {
+        $this->authorize('view-roles');
+        
         $roles = Role::with('permissions')->get();
         $permissions = Permission::all();
         $stats = [
@@ -36,6 +40,8 @@ class UserController
 
     public function storeRole(Request $request)
     {
+        $this->authorize('manage-roles');
+        
         $validated = $request->validate([
             'name' => 'required|unique:roles,name',
             'description' => 'nullable',
@@ -58,6 +64,8 @@ class UserController
 
     public function updateRole($id, Request $request)
     {
+        $this->authorize('manage-roles');
+        
         $role = Role::findOrFail($id);
 
         $validated = $request->validate([
@@ -80,6 +88,8 @@ class UserController
 
     public function deleteRole($id)
     {
+        $this->authorize('manage-roles');
+        
         $role = Role::findOrFail($id);
         $role->delete();
 
@@ -89,6 +99,8 @@ class UserController
     // Permission Management
     public function storePermission(Request $request)
     {
+        $this->authorize('manage-permissions');
+        
         $validated = $request->validate([
             'name' => 'required|unique:permissions,name',
             'slug' => 'required|unique:permissions,slug',
@@ -366,46 +378,31 @@ class UserController
     public function getTopPerformers(Request $request)
     {
         $limit = $request->query('limit', 10);
-
-        // Use same calculation as DashboardMetricsController for consistency
-        $topPerformers = User::where('role', 'user')
-            ->leftJoin('user_trainings', 'users.id', '=', 'user_trainings.user_id')
-            ->leftJoin('modules', 'user_trainings.module_id', '=', 'modules.id')
-            ->selectRaw('
-                users.id,
-                users.name,
-                users.email,
-                users.department as dept,
-                COUNT(DISTINCT user_trainings.module_id) as completed_trainings,
-                SUM(CASE WHEN user_trainings.is_certified = true THEN 1 ELSE 0 END) as certifications,
-                ROUND(AVG(user_trainings.final_score), 2) as avg_exam_score,
-                ROUND(
-                    SUM(CASE WHEN user_trainings.status = "completed" OR user_trainings.is_certified = true 
-                             THEN COALESCE(modules.xp, 0) ELSE 0 END)
-                ) as total_points
-            ')
-            ->groupBy('users.id', 'users.name', 'users.email', 'users.department')
-            ->orderByDesc('total_points')
-            ->limit($limit)
-            ->get()
-            ->map(function ($user) {
-                $totalPoints = $user->total_points ?? 0;
-                $badge = $totalPoints >= 500 ? 'PRO' : ($totalPoints >= 300 ? 'ADVANCED' : 'MEMBER');
-
-                return [
-                    'id' => $user->id,
-                    'name' => $user->name,
-                    'email' => $user->email,
-                    'department' => $user->dept ?? 'No Department',
-                    'total_points' => $totalPoints,
-                    'xp_earned' => $totalPoints, // Alias for backwards compatibility
-                    'completed_modules' => $user->completed_trainings ?? 0,
-                    'modules' => $user->completed_trainings ?? 0,
-                    'certifications' => $user->certifications ?? 0,
-                    'avg_exam_score' => $user->avg_exam_score ?? 0,
-                    'badge' => $badge,
-                ];
-            });
+        
+        // Use same PointsService calculation for consistency across all pages
+        $pointsService = app(PointsService::class);
+        $topPerformers = $pointsService->getTopPerformers($limit);
+        
+        // Map PointsService output to expected format for AdvancedAnalytics
+        // PointsService returns: id, name, email, nip, department, total_points, completed_modules, certifications, avg_score, badge
+        $mapped = collect($topPerformers)->map(function ($user) {
+            return [
+                'id' => $user['id'],
+                'name' => $user['name'],
+                'email' => $user['email'],
+                'department' => $user['department'] ?? 'No Department',
+                'dept' => $user['department'] ?? 'No Department',
+                'total_points' => $user['total_points'],
+                'xp_earned' => $user['total_points'], // Alias for backwards compatibility
+                'completed_modules' => $user['completed_modules'] ?? 0,
+                'modules' => $user['completed_modules'] ?? 0,
+                'completed_trainings' => $user['completed_modules'] ?? 0,
+                'certifications' => $user['certifications'] ?? 0,
+                'avg_exam_score' => $user['avg_score'] ?? 0,
+                'avg_score' => $user['avg_score'] ?? 0,
+                'badge' => $user['badge'],
+            ];
+        });
 
         return response()->json($topPerformers);
     }
@@ -418,52 +415,14 @@ class UserController
         $limit = $request->query('limit', 50);
         $department = $request->query('department', 'all');
 
-        $query = User::where('role', 'user');
+        $pointsService = app(PointsService::class);
+        $leaderboard = $pointsService->getTopPerformers($limit);
 
         if ($department !== 'all') {
-            $query->where('department', $department);
+            $leaderboard = collect($leaderboard)->filter(function ($user) use ($department) {
+                return $user['department'] === $department;
+            })->values();
         }
-
-        $leaderboard = $query
-            ->leftJoin('user_trainings', 'users.id', '=', 'user_trainings.user_id')
-            ->leftJoin('modules', 'user_trainings.module_id', '=', 'modules.id')
-            ->selectRaw('
-                users.id,
-                users.name,
-                users.email,
-                users.nip,
-                users.department,
-                users.location,
-                COUNT(DISTINCT user_trainings.module_id) as completed_modules,
-                SUM(CASE WHEN user_trainings.is_certified = true THEN 1 ELSE 0 END) as certifications,
-                ROUND(AVG(user_trainings.final_score), 2) as avg_score,
-                ROUND(
-                    SUM(CASE WHEN user_trainings.status = "completed" OR user_trainings.is_certified = true 
-                             THEN COALESCE(modules.xp, 0) ELSE 0 END)
-                ) as total_points
-            ')
-            ->groupBy('users.id', 'users.name', 'users.email', 'users.nip', 'users.department', 'users.location')
-            ->orderByDesc('total_points')
-            ->limit($limit)
-            ->get()
-            ->map(function ($user) {
-                $totalPoints = $user->total_points ?? 0;
-                $badge = $totalPoints >= 500 ? 'PRO' : ($totalPoints >= 300 ? 'ADVANCED' : 'MEMBER');
-
-                return [
-                    'id' => $user->id,
-                    'name' => $user->name,
-                    'email' => $user->email,
-                    'nip' => $user->nip ?? 'N/A',
-                    'department' => $user->department ?? 'Unassigned',
-                    'location' => $user->location ?? 'N/A',
-                    'completed_modules' => $user->completed_modules ?? 0,
-                    'certifications' => $user->certifications ?? 0,
-                    'avg_score' => $user->avg_score ?? 0,
-                    'total_points' => $totalPoints,
-                    'badge' => $badge,
-                ];
-            });
 
         return response()->json([
             'leaderboard' => $leaderboard,
@@ -477,6 +436,7 @@ class UserController
     public function getUserHistory(Request $request, $userId)
     {
         $user = User::findOrFail($userId);
+        $pointsService = app(PointsService::class);
 
         // Get user's training history
         $trainings = DB::table('user_trainings')
@@ -496,10 +456,11 @@ class UserController
             ->orderByDesc('user_trainings.completed_at')
             ->get()
             ->map(function ($training) {
-                // Calculate points for this training
-                $modulePoints = 20; // Base points for module completion
-                $certPoints = $training->is_certified ? 25 : 0; // Certification bonus
-                $scorePoints = $training->final_score ?? 0; // Score points
+                // Calculate points using PointsService formula (CONSISTENT)
+                $modulePoints = $training->status === 'completed' ? 100 : 0;
+                $certPoints = $training->is_certified ? 200 : 0;
+                $scorePoints = $training->final_score ? floor($training->final_score / 2) : 0; // score/2
+                $scorePoints = min($scorePoints, 50); // max 50
 
                 return [
                     'id' => $training->id,
@@ -511,10 +472,10 @@ class UserController
                     'enrolled_date' => $training->enrolled_at ? \Carbon\Carbon::parse($training->enrolled_at)->format('Y-m-d H:i') : null,
                     'completed_date' => $training->completed_at ? \Carbon\Carbon::parse($training->completed_at)->format('Y-m-d H:i') : null,
                     'points_breakdown' => [
-                        'module_completion' => $training->status === 'completed' ? $modulePoints : 0,
+                        'module_completion' => $modulePoints,
                         'certification_bonus' => $certPoints,
                         'score_points' => $scorePoints,
-                        'total' => ($training->status === 'completed' ? $modulePoints : 0) + $certPoints + round($scorePoints),
+                        'total' => $modulePoints + $certPoints + $scorePoints,
                     ],
                 ];
             });
@@ -522,28 +483,33 @@ class UserController
         // Get exam attempts history
         $examAttempts = DB::table('exam_attempts')
             ->where('exam_attempts.user_id', $userId)
+            ->where('is_passed', true)
             ->select(
                 'exam_attempts.id',
                 'exam_attempts.score',
+                'exam_attempts.percentage',
                 'exam_attempts.created_at',
                 'exam_attempts.updated_at'
             )
             ->orderByDesc('exam_attempts.created_at')
             ->get()
             ->map(function ($attempt) {
+                // Calculate exam points using PointsService formula
+                $scoreBonus = min(floor(($attempt->percentage ?? 0) / 2), 50);
+                $examPoints = 50 + $scoreBonus;
+                
                 return [
                     'id' => $attempt->id,
                     'type' => 'exam',
                     'score' => $attempt->score ?? 0,
+                    'percentage' => $attempt->percentage ?? 0,
                     'date' => \Carbon\Carbon::parse($attempt->created_at)->format('Y-m-d H:i'),
-                    'points' => round($attempt->score ?? 0),
+                    'points' => $examPoints,
                 ];
             });
 
-        // Calculate total points breakdown
-        $totalModulePoints = $trainings->sum(fn($t) => $t['points_breakdown']['module_completion']);
-        $totalCertPoints = $trainings->sum(fn($t) => $t['points_breakdown']['certification_bonus']);
-        $totalScorePoints = $trainings->sum(fn($t) => $t['points_breakdown']['score_points']);
+        // Get total points using PointsService (CONSISTENT from database)
+        $pointsBreakdown = $pointsService->getPointsBreakdown($userId);
 
         return response()->json([
             'user' => [
@@ -556,10 +522,10 @@ class UserController
             'trainings' => $trainings,
             'exam_attempts' => $examAttempts,
             'points_summary' => [
-                'module_completion_points' => $totalModulePoints,
-                'certification_bonus_points' => $totalCertPoints,
-                'score_points' => round($totalScorePoints),
-                'total_points' => $totalModulePoints + $totalCertPoints + round($totalScorePoints),
+                'module_completion_points' => $pointsBreakdown['module_completion'],
+                'certification_bonus_points' => $pointsBreakdown['certification'],
+                'exam_points' => $pointsBreakdown['exam_passed'],
+                'total_points' => $pointsBreakdown['total'],
             ],
             'stats' => [
                 'total_modules_completed' => $trainings->where('status', 'completed')->count(),
@@ -577,7 +543,7 @@ class UserController
         $user = User::findOrFail($id);
 
         $validated = $request->validate([
-            'nip' => 'nullable|string|max:50|unique:users,nip,' . $id,
+            'nip' => 'nullable|string|max:50|unique:users,nip,' . $id . ',id',
             'location' => 'nullable|string|max:100',
             'phone' => 'nullable|string|max:20',
             'department' => 'nullable|string|max:100',
@@ -589,6 +555,59 @@ class UserController
             'message' => 'User information updated successfully',
             'user' => $user,
         ]);
+    }
+
+    /**
+     * Get all roles with user counts (API endpoint)
+     */
+    public function getApiRoles()
+    {
+        $roles = Role::with('permissions')->get()->map(function ($role) {
+            return [
+                'id' => $role->id,
+                'name' => $role->name,
+                'description' => $role->description,
+                'is_active' => $role->is_active,
+                'permissions' => $role->permissions->pluck('id')->toArray(),
+                'users_count' => $role->users()->count(),
+            ];
+        });
+
+        return response()->json($roles);
+    }
+
+    /**
+     * Get all permissions (API endpoint)
+     */
+    public function getApiPermissions()
+    {
+        $permissions = Permission::all()->map(function ($perm) {
+            return [
+                'id' => $perm->id,
+                'name' => $perm->name,
+                'slug' => $perm->slug,
+                'description' => $perm->description,
+                'category' => $perm->category,
+                'is_active' => $perm->is_active,
+            ];
+        });
+
+        return response()->json($permissions);
+    }
+
+    /**
+     * Get role permissions statistics (API endpoint)
+     */
+    public function getRoleStats()
+    {
+        $stats = [
+            'total_roles' => Role::count(),
+            'total_permissions' => Permission::count(),
+            'active_roles' => Role::where('is_active', true)->count(),
+            'active_permissions' => Permission::where('is_active', true)->count(),
+        ];
+
+        return response()->json($stats);
     }
 }
 

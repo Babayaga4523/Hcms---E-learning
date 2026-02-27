@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Maatwebsite\Excel\Facades\Excel;
@@ -84,10 +85,20 @@ class AdminReportController extends Controller
             });
 
             // ===== 2. USER DATA BREAKDOWN =====
+            // OPTIMIZED: Single query with raw aggregates instead of separate queries
+            $userStats = DB::table('users')
+                ->where('role', '!=', 'admin')
+                ->select(
+                    DB::raw('COUNT(*) as total_non_admins'),
+                    DB::raw("SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_count"),
+                    DB::raw("SUM(CASE WHEN status = 'inactive' THEN 1 ELSE 0 END) as inactive_count")
+                )
+                ->first();
+
             $usersByDepartment = DB::table('users')
                 ->where('role', '!=', 'admin')
-                ->groupBy('department')
                 ->select('department', DB::raw('COUNT(*) as count'))
+                ->groupByRaw('department')
                 ->orderBy('count', 'desc')
                 ->get()
                 ->map(function($item) {
@@ -97,32 +108,26 @@ class AdminReportController extends Controller
                     ];
                 });
 
-            $usersByStatus = DB::table('users')
-                ->where('role', '!=', 'admin')
-                ->groupBy('status')
-                ->select('status', DB::raw('COUNT(*) as count'))
-                ->get()
-                ->map(function($item) {
-                    return [
-                        'name' => ucfirst($item->status),
-                        'value' => $item->count
-                    ];
-                });
+            $usersByStatus = [
+                ['name' => 'Active', 'value' => $userStats->active_count ?? 0],
+                ['name' => 'Inactive', 'value' => $userStats->inactive_count ?? 0],
+            ];
 
             // ===== 3. MODULE/PROGRAM DATA BREAKDOWN =====
+            // OPTIMIZED: Remove unnecessary join - use select with aggregates
             $moduleStats = DB::table('user_trainings as ut')
-                ->join('modules as m', 'ut.module_id', '=', 'm.id')
                 ->select(
-                    'm.id', 'm.title',
+                    DB::raw('ut.module_id'),
+                    DB::raw('(SELECT title FROM modules WHERE id = ut.module_id LIMIT 1) as title'),
                     DB::raw('COUNT(ut.id) as total_enrolled'),
                     DB::raw("SUM(CASE WHEN ut.status = 'completed' THEN 1 ELSE 0 END) as completed"),
                     DB::raw("SUM(CASE WHEN ut.status = 'in_progress' THEN 1 ELSE 0 END) as in_progress"),
                     DB::raw("SUM(CASE WHEN ut.status = 'pending' THEN 1 ELSE 0 END) as pending"),
                     DB::raw("ROUND((SUM(CASE WHEN ut.status = 'completed' THEN 1 ELSE 0 END) / COUNT(ut.id)) * 100, 2) as completion_rate")
                 )
-                ->groupBy('m.id', 'm.title')
+                ->groupByRaw('ut.module_id')
                 ->orderBy('total_enrolled', 'desc')
-                ->limit(20)
+                ->limit(config('admin.reports.top_modules_limit', 20))
                 ->get();
 
             // ===== 4. LEARNER PROGRESS DATA =====
@@ -154,17 +159,26 @@ class AdminReportController extends Controller
 
             // ===== 9. TOP PERFORMERS & STRUGGLERS =====
             $topPerformers = $this->getTopComplianceUsers();
+            
+            // OPTIMIZED: Use aggregate functions instead of left join + filtering
             $strugglers = DB::table('users as u')
-                ->leftJoin('user_trainings as ut', 'u.id', '=', 'ut.user_id')
-                ->select('u.id', 'u.name', 'u.department',
+                ->select(
+                    'u.id', 'u.name', 'u.department',
                     DB::raw('COUNT(ut.id) as total_modules'),
                     DB::raw("SUM(CASE WHEN ut.status = 'completed' THEN 1 ELSE 0 END) as completed"),
                     DB::raw("CASE WHEN COUNT(ut.id) > 0 THEN ROUND((SUM(CASE WHEN ut.status = 'completed' THEN 1 ELSE 0 END) / COUNT(ut.id)) * 100, 2) ELSE 0 END as completion_rate")
                 )
+                ->leftJoinSub(
+                    DB::table('user_trainings'),
+                    'ut',
+                    function($join) {
+                        $join->on('u.id', '=', 'ut.user_id');
+                    }
+                )
                 ->where('u.role', '!=', 'admin')
-                ->groupBy('u.id', 'u.name', 'u.department')
+                ->groupByRaw('u.id, u.name, u.department')
                 ->orderBy('completion_rate', 'asc')
-                ->limit(10)
+                ->limit(config('admin.reports.low_performers_limit', 10))
                 ->get();
 
             // ===== 10. ENGAGEMENT METRICS =====
@@ -335,14 +349,24 @@ class AdminReportController extends Controller
                 // Sheet 1: Main Compliance Data (SEMUA rows tanpa limit)
                 $complianceData = $query->get();
 
-                // Sheet 2: User Statistics (LENGKAP)
+                // Sheet 2: User Statistics (LENGKAP) - Cache queries to avoid duplication
+                $totalUsers = User::count();
+                $activeUsers = User::where('status', 'active')->count();
+                $inactiveUsers = User::where('status', 'inactive')->count();
+                
+                // Cache training stats queries
+                $totalTrainings = DB::table('user_trainings')->count();
+                $completedTrainings = DB::table('user_trainings')->where('status', 'completed')->count();
+                $inProgressTrainings = DB::table('user_trainings')->where('status', 'in_progress')->count();
+                $pendingTrainings = DB::table('user_trainings')->where('status', 'pending')->count();
+                
                 $userStats = collect([
-                    ['category' => 'Total Users', 'status' => 'Registered', 'count' => User::count(), 'percentage' => 100],
-                    ['category' => 'User Status', 'status' => 'Active', 'count' => User::where('status', 'active')->count(), 'percentage' => round((User::where('status', 'active')->count() / User::count() * 100), 2)],
-                    ['category' => 'User Status', 'status' => 'Inactive', 'count' => User::where('status', 'inactive')->count(), 'percentage' => round((User::where('status', 'inactive')->count() / User::count() * 100), 2)],
-                    ['category' => 'Training Status', 'status' => 'Completed', 'count' => DB::table('user_trainings')->where('status', 'completed')->count(), 'percentage' => round((DB::table('user_trainings')->where('status', 'completed')->count() / DB::table('user_trainings')->count() * 100), 2)],
-                    ['category' => 'Training Status', 'status' => 'In Progress', 'count' => DB::table('user_trainings')->where('status', 'in_progress')->count(), 'percentage' => round((DB::table('user_trainings')->where('status', 'in_progress')->count() / DB::table('user_trainings')->count() * 100), 2)],
-                    ['category' => 'Training Status', 'status' => 'Pending', 'count' => DB::table('user_trainings')->where('status', 'pending')->count(), 'percentage' => round((DB::table('user_trainings')->where('status', 'pending')->count() / DB::table('user_trainings')->count() * 100), 2)],
+                    ['category' => 'Total Users', 'status' => 'Registered', 'count' => $totalUsers, 'percentage' => 100],
+                    ['category' => 'User Status', 'status' => 'Active', 'count' => $activeUsers, 'percentage' => $totalUsers > 0 ? round(($activeUsers / $totalUsers * 100), 2) : 0],
+                    ['category' => 'User Status', 'status' => 'Inactive', 'count' => $inactiveUsers, 'percentage' => $totalUsers > 0 ? round(($inactiveUsers / $totalUsers * 100), 2) : 0],
+                    ['category' => 'Training Status', 'status' => 'Completed', 'count' => $completedTrainings, 'percentage' => $totalTrainings > 0 ? round(($completedTrainings / $totalTrainings * 100), 2) : 0],
+                    ['category' => 'Training Status', 'status' => 'In Progress', 'count' => $inProgressTrainings, 'percentage' => $totalTrainings > 0 ? round(($inProgressTrainings / $totalTrainings * 100), 2) : 0],
+                    ['category' => 'Training Status', 'status' => 'Pending', 'count' => $pendingTrainings, 'percentage' => $totalTrainings > 0 ? round(($pendingTrainings / $totalTrainings * 100), 2) : 0],
                 ]);
 
                 // Sheet 3: Module/Program Performance (SEMUA modules)
@@ -425,7 +449,7 @@ class AdminReportController extends Controller
         }
 
         // Untuk Excel & PDF - load data with limit
-        $data = $query->limit(5000)->get();
+        $data = $query->limit(config('admin.reports.export_limit', 5000))->get();
 
         if ($format === 'pdf') {
             return $this->generatePdf($data, $filename);
@@ -494,7 +518,7 @@ class AdminReportController extends Controller
         
         // Logika generate report berdasarkan ID
         if ($reportId === 'compliance_q' . Carbon::now()->quarter || str_contains($reportId, 'compliance')) {
-            $data = $this->buildComplianceQuery($request)->limit(100)->get(); // Sample 100
+            $data = $this->buildComplianceQuery($request)->limit(config('admin.reports.sample_size', 100))->get(); // Sample
             return $this->generatePdf($data, $filename, 'Laporan Kepatuhan Kuartal');
         }
 
@@ -530,10 +554,18 @@ class AdminReportController extends Controller
     {
         return DB::table('users as u')
             ->join('user_trainings as ut', 'u.id', '=', 'ut.user_id')
-            ->select('u.id', 'u.name', 'u.department', DB::raw('COUNT(ut.id) as total'), DB::raw("SUM(CASE WHEN ut.status='completed' THEN 1 ELSE 0 END) as completed"))
+            ->select(
+                'u.id', 
+                'u.name', 
+                'u.department', 
+                DB::raw('COUNT(ut.id) as total'),
+                DB::raw("SUM(CASE WHEN ut.status='completed' THEN 1 ELSE 0 END) as completed"),
+                DB::raw("ROUND((SUM(CASE WHEN ut.status='completed' THEN 1 ELSE 0 END) / COUNT(ut.id)) * 100, 2) as completion_rate")
+            )
+            ->where('u.role', '!=', 'admin')
             ->groupBy('u.id', 'u.name', 'u.department')
-            ->orderByRaw('(completed / total) DESC')
-            ->limit(5)
+            ->orderByRaw('(SUM(CASE WHEN ut.status="completed" THEN 1 ELSE 0 END) / COUNT(ut.id)) DESC')
+            ->limit(config('admin.reports.top_users_limit', 10))
             ->get();
     }
 
@@ -581,7 +613,7 @@ class AdminReportController extends Controller
             ->where('u.role', '!=', 'admin')
             ->groupBy('u.id', 'u.name', 'u.nip', 'u.department')
             ->orderBy('modules_completed', 'desc')
-            ->limit(100)
+            ->limit(config('admin.reports.sample_size', 100))
             ->get()
             ->toArray();
     }
@@ -645,7 +677,7 @@ class AdminReportController extends Controller
             ->groupBy('q.id', 'q.question_text')
             ->havingRaw('COUNT(uea.id) > 0')
             ->orderByRaw('(SUM(CASE WHEN uea.is_correct = 0 THEN 1 ELSE 0 END) / COUNT(uea.id)) DESC')
-            ->limit(10)
+            ->limit(config('admin.reports.low_performers_limit', 10))
             ->get()
             ->toArray();
     }
@@ -1150,7 +1182,7 @@ class AdminReportController extends Controller
                     ->groupBy('m.id', 'm.title')
                     ->select('m.title', DB::raw('COUNT(c.id) as count'))
                     ->orderBy('count', 'desc')
-                    ->limit(10)
+                    ->limit(config('admin.reports.low_performers_limit', 10))
                     ->get();
                 
                 return [
@@ -1228,7 +1260,7 @@ class AdminReportController extends Controller
                     ];
                 }
                 
-                return collect($result)->sortByDesc('improvement_pct')->take(15)->values();
+                return collect($result)->sortByDesc('improvement_pct')->take(config('admin.reports.improvement_limit', 15))->values();
             });
 
             // Summary statistics
@@ -1276,7 +1308,7 @@ class AdminReportController extends Controller
                         'engagement_score' => (float)$item->engagement_score ?? 0,
                         'badge' => $index == 0 ? '🏆' : ($index == 1 ? '🥈' : ($index == 2 ? '🥉' : ''))
                     ];
-                })->take(20);
+                })->take(config('admin.reports.top_performers_limit', 20));
             });
 
             // 2.2 QUESTION ITEM ANALYSIS (Hardest Questions)
@@ -1448,7 +1480,7 @@ class AdminReportController extends Controller
                     ];
                 })
                 ->sortByDesc('probability_of_failure')
-                ->take(30)
+                ->take(config('admin.reports.risk_assessment_limit', 30))
                 ->values();
             });
 
@@ -1496,7 +1528,7 @@ class AdminReportController extends Controller
                 }
 
                 // Find peak hours
-                $allFlat = $heatmapData->sortByDesc('avg_score')->take(5);
+                $allFlat = $heatmapData->sortByDesc('avg_score')->take(config('admin.reports.top_scores_limit', 5));
                 $peakHours = $allFlat->map(fn($item) => [
                     'day' => $item->day_name,
                     'hour' => $item->hour,
@@ -1507,7 +1539,7 @@ class AdminReportController extends Controller
                 // Find worst hours
                 $worstHours = $heatmapData->filter(fn($item) => $item->attempt_count > 5)
                     ->sortBy('avg_score')
-                    ->take(3)
+                    ->take(3) // Top 3 worst performing hours
                     ->map(fn($item) => [
                         'day' => $item->day_name,
                         'hour' => $item->hour,
@@ -1523,12 +1555,18 @@ class AdminReportController extends Controller
                 ];
             });
 
+            // Get total unique enrolled users for accurate program stats
+            $totalEnrolledUsers = DB::table('user_trainings')
+                ->distinct('user_id')
+                ->count('user_id');
+
             // ===== RENDER UNIFIED REPORTS PAGE =====
             return Inertia::render('Admin/Reports/UnifiedReports', [
                 'stats' => $stats,
                 'usersByDepartment' => $usersByDepartment,
                 'usersByStatus' => $usersByStatus,
                 'moduleStats' => $moduleStats,
+                'totalEnrolledUsers' => $totalEnrolledUsers,
                 'learnerProgress' => $learnerProgress,
                 'examPerformance' => $examPerformance,
                 'questionPerformance' => $questionPerformance,
@@ -1765,75 +1803,203 @@ class AdminReportController extends Controller
      */
     private function calculateDropoutPredictions()
     {
-        $users = User::where('role', '!=', 'admin')->get();
-        
-        $predictions = $users->map(function($user) {
-            // H: Days since last login
-            $lastLogin = DB::table('activity_logs')
-                ->where('user_id', $user->id)
-                ->where('action', 'login')
-                ->max('created_at');
+        return Cache::remember('dropout_predictions_cache', 300, function() {
+            $users = User::where('role', '!=', 'admin')->get();
             
-            $daysSinceLogin = $lastLogin ? 
-                Carbon::parse($lastLogin)->diffInDays(now()) : 30;
-            $H = min($daysSinceLogin, 30); // Cap at 30 days
-
-            // S: Consecutive failed quiz attempts (count of recent failures)
-            $failedAttempts = DB::table('exam_attempts')
-                ->where('user_id', $user->id)
-                ->where('is_passed', false)
-                ->where('created_at', '>=', Carbon::now()->subDays(7))
-                ->count();
-            $S = $failedAttempts;
-
-            // L: Average session duration (in minutes)
-            $avgSessionDuration = round(
-                DB::table('exam_attempts')
+            $predictions = $users->map(function($user) {
+                // FACTOR 1 (40%): Inactivity Score - days since last login
+                $lastLogin = DB::table('activity_logs')
                     ->where('user_id', $user->id)
-                    ->avg(DB::raw('COALESCE(duration_minutes, 0)')) ?? 0,
-                1
-            );
-            $L = $avgSessionDuration < 5 ? 10 : 1; // High risk if < 5 min sessions
+                    ->where('action', 'login')
+                    ->max('created_at');
+                
+                $daysSinceLogin = $lastLogin ? 
+                    Carbon::parse($lastLogin)->diffInDays(now()) : 30;
+                $inactivityDays = min($daysSinceLogin, 30); // Cap at 30 days
+                // Scale 0-30 days to 0-100 score
+                $factor1_inactivity = ($inactivityDays / 30) * 100;
 
-            // RISK SCORE CALCULATION
-            $riskScore = ($H * 2) + ($S * 3) + ($L * 1);
-            
-            // Normalize to 0-100
-            $riskPercentage = min(round(($riskScore / 100) * 100, 1), 100);
+                // FACTOR 2 (25%): Learning Progress - completion rate vs expected enrollment time
+                $enrollmentDate = $user->created_at;
+                $daysEnrolled = Carbon::parse($enrollmentDate)->diffInDays(now());
+                
+                $totalModules = DB::table('modules')
+                    ->where('is_active', true)
+                    ->count();
+                
+                $completedModules = DB::table('user_trainings')
+                    ->where('user_trainings.user_id', $user->id)
+                    ->where('user_trainings.status', 'completed')
+                    ->count();
+                
+                $expectedCompletionRate = min(($daysEnrolled / 90) * 100, 100); // Assume 90 days for full completion
+                $actualCompletionRate = $totalModules > 0 ? ($completedModules / $totalModules) * 100 : 0;
+                $factor2_progress = max(100 - $actualCompletionRate, 0); // Inverse: lower progress = higher risk
 
-            // Determine risk level
-            if ($riskPercentage >= 70) {
-                $riskLevel = 'high';
-                $recommendation = 'Perlu intervensi HR - User kemungkinan akan dropout';
-            } elseif ($riskPercentage >= 40) {
-                $riskLevel = 'medium';
-                $recommendation = 'Monitor performa - Tawarkan dukungan jika diperlukan';
-            } else {
-                $riskLevel = 'low';
-                $recommendation = 'User on track - Pertahankan momentum';
-            }
+                // FACTOR 3 (20%): Assessment Performance - failed exam rate + low scores
+                $totalExams = DB::table('exam_attempts')
+                    ->where('user_id', $user->id)
+                    ->count();
+                
+                $failedExams = DB::table('exam_attempts')
+                    ->where('user_id', $user->id)
+                    ->where('is_passed', false)
+                    ->count();
+                
+                $avgScore = DB::table('exam_attempts')
+                    ->where('user_id', $user->id)
+                    ->avg('score') ?? 0;
+                
+                $failureRate = $totalExams > 0 ? ($failedExams / $totalExams) * 100 : 0;
+                $lowScoreRisk = max(100 - $avgScore, 0); // Inverse: lower score = higher risk
+                $factor3_assessment = ($failureRate * 0.6) + ($lowScoreRisk * 0.4); // 60% weight to failure, 40% to low scores
 
-            return [
-                'user_id' => $user->id,
-                'name' => $user->name,
-                'email' => $user->email,
-                'department' => $user->department,
-                'risk_score' => $riskScore,
-                'probability_of_failure' => $riskPercentage,  // For export compatibility
-                'risk_level' => $riskLevel,
-                'recommendation' => $recommendation,
-                'factors' => [
-                    'days_since_login' => $daysSinceLogin,
-                    'failed_attempts_week' => $failedAttempts,
-                    'avg_session_minutes' => $avgSessionDuration
-                ]
-            ];
-        })
-        ->sortByDesc('probability_of_failure')
-        ->values()
-        ->toArray();
+                // FACTOR 4 (10%): Engagement Depth - session duration + frequency
+                $sessionCount = DB::table('exam_attempts')
+                    ->where('user_id', $user->id)
+                    ->where('created_at', '>=', Carbon::now()->subDays(14))
+                    ->count();
+                
+                $avgSessionDuration = DB::table('exam_attempts')
+                    ->where('user_id', $user->id)
+                    ->avg(DB::raw('COALESCE(duration_minutes, 0)')) ?? 0;
+                
+                $expectedSessionsPerWeek = 3; // Benchmark
+                $sessionsPerWeek = ($sessionCount / 2); // Past 14 days
+                $engagementFrequencyRisk = max(100 - (($sessionsPerWeek / $expectedSessionsPerWeek) * 100), 0);
+                $engagementDurationRisk = $avgSessionDuration < 10 ? 100 : max(100 - ($avgSessionDuration / 60 * 100), 0);
+                $factor4_engagement = ($engagementFrequencyRisk * 0.6) + ($engagementDurationRisk * 0.4);
 
-        return $predictions;
+                // FACTOR 5 (3%): Behavioral Pattern - consecutive inactive days
+                $lastActivity = DB::table('activity_logs')
+                    ->where('user_id', $user->id)
+                    ->max('created_at');
+                
+                $consecutiveInactiveDays = $lastActivity ? 
+                    Carbon::parse($lastActivity)->diffInDays(now()) : 30;
+                $factor5_behavior = min(($consecutiveInactiveDays / 14) * 100, 100); // 14 days = 100% risk
+
+                // FACTOR 6 (2%): Course Completion Trend - declining completion rate detection
+                $previousCompletionRate = DB::table('user_trainings')
+                    ->where('user_id', $user->id)
+                    ->where('status', 'completed')
+                    ->whereDate('completed_at', '<', Carbon::now()->subDays(7))
+                    ->count();
+                
+                $currentCompletionRate = DB::table('user_trainings')
+                    ->where('user_id', $user->id)
+                    ->where('status', 'completed')
+                    ->whereDate('completed_at', '>=', Carbon::now()->subDays(7))
+                    ->count();
+                
+                $trend = $previousCompletionRate > 0 ? 
+                    (($previousCompletionRate - $currentCompletionRate) / $previousCompletionRate) * 100 : 0;
+                $factor6_trend = max($trend, 0); // Only count declining trends
+
+                // Calculate weighted risk score
+                $riskScore = 
+                    ($factor1_inactivity * 0.40) +
+                    ($factor2_progress * 0.25) +
+                    ($factor3_assessment * 0.20) +
+                    ($factor4_engagement * 0.10) +
+                    ($factor5_behavior * 0.03) +
+                    ($factor6_trend * 0.02);
+                
+                $riskScore = round($riskScore, 1);
+
+                // Determine risk level and intervention type
+                if ($riskScore >= 75) {
+                    $riskLevel = 'high';
+                    $interventionType = 'immediate';
+                    $recommendation = 'Perlu intervensi segera - Kontak user untuk assessment';
+                } elseif ($riskScore >= 50) {
+                    $riskLevel = 'medium';
+                    $interventionType = 'proactive';
+                    $recommendation = 'Monitor ketat - Tawarkan dukungan dan resources tambahan';
+                } else {
+                    $riskLevel = 'low';
+                    $interventionType = 'standard';
+                    $recommendation = 'User on track - Pertahankan momentum dan engagement';
+                }
+
+                return [
+                    'user_id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'department' => $user->department,
+                    'risk_score' => $riskScore,
+                    'risk_percentage' => round($riskScore, 0),
+                    'probability_of_failure' => $riskScore, // Same as risk_score (0-100)
+                    'risk_level' => $riskLevel,
+                    'intervention_type' => $interventionType,
+                    'recommendation' => $recommendation,
+                    'score_breakdown' => [
+                        'inactivity' => round($factor1_inactivity, 1),
+                        'progress' => round($factor2_progress, 1),
+                        'assessment' => round($factor3_assessment, 1),
+                        'engagement' => round($factor4_engagement, 1),
+                        'behavior' => round($factor5_behavior, 1),
+                        'trend' => round($factor6_trend, 1)
+                    ],
+                    'risk_factors' => $this->identifyRiskFactors(
+                        $factor1_inactivity, $factor2_progress, $factor3_assessment, 
+                        $factor4_engagement, $factor5_behavior, $factor6_trend
+                    ),
+                    'factors' => [
+                        'days_since_login' => $inactivityDays,
+                        'failed_attempts_week' => $failedExams,
+                        'avg_session_minutes' => round($avgSessionDuration, 0)
+                    ],
+                    'metrics' => [
+                        'days_since_login' => $inactivityDays,
+                        'completion_rate' => round($actualCompletionRate, 1),
+                        'avg_score' => round($avgScore, 1),
+                        'sessions_last_14_days' => $sessionCount,
+                        'days_enrolled' => $daysEnrolled
+                    ]
+                ];
+            })
+            ->sortByDesc('probability_of_failure')
+            ->values()
+            ->toArray();
+
+            return $predictions;
+        });
+    }
+
+    /**
+     * Identify dominant risk factors
+     */
+    private function identifyRiskFactors($inactivity, $progress, $assessment, $engagement, $behavior, $trend)
+    {
+        $factors = [
+            ['name' => 'Inactivity', 'score' => $inactivity, 'weight' => 0.40],
+            ['name' => 'Progress Lag', 'score' => $progress, 'weight' => 0.25],
+            ['name' => 'Assessment Issues', 'score' => $assessment, 'weight' => 0.20],
+            ['name' => 'Low Engagement', 'score' => $engagement, 'weight' => 0.10],
+            ['name' => 'Behavioral Patterns', 'score' => $behavior, 'weight' => 0.03],
+            ['name' => 'Declining Trend', 'score' => $trend, 'weight' => 0.02]
+        ];
+
+        // Sort by weighted score and return top 3
+        $topFactors = collect($factors)
+            ->map(function($factor) {
+                $factor['weighted_score'] = $factor['score'] * $factor['weight'];
+                return $factor;
+            })
+            ->sortByDesc('weighted_score')
+            ->take(3)
+            ->map(function($factor) {
+                return [
+                    'name' => $factor['name'],
+                    'score' => round($factor['score'], 1),
+                    'impact' => round($factor['weighted_score'], 1)
+                ];
+            })
+            ->values()
+            ->toArray();
+
+        return $topFactors;
     }
 
     // =========================================================================
@@ -1849,30 +2015,44 @@ class AdminReportController extends Controller
         $this->authorizeAdmin();
 
         try {
-            $query = DB::table('exam_attempts as ea')
-                ->join('users as u', 'ea.user_id', '=', 'u.id')
-                ->select(
-                    DB::raw('HOUR(ea.created_at) as hour_of_day'),
-                    DB::raw('DAYNAME(ea.created_at) as day_name'),
-                    DB::raw('WEEKDAY(ea.created_at) as day_number'),
-                    DB::raw('AVG(ea.score) as avg_score'),
-                    DB::raw('COUNT(ea.id) as attempt_count')
-                )
-                ->where('ea.created_at', '>=', Carbon::now()->subDays(60));
+            // Create cache key with department filter
+            $cacheKey = 'peak_performance_heatmap_' . ($departmentFilter ?? 'all');
+            
+            $heatmapData = Cache::remember($cacheKey, 3600, function() use ($departmentFilter) {
+                // Optimized single query with all aggregations
+                $query = DB::table('exam_attempts as ea')
+                    ->join('users as u', 'ea.user_id', '=', 'u.id')
+                    ->select(
+                        DB::raw('HOUR(ea.created_at) as hour_of_day'),
+                        DB::raw('DAYNAME(ea.created_at) as day_name'),
+                        DB::raw('WEEKDAY(ea.created_at) as day_number'),
+                        DB::raw('AVG(ea.score) as avg_score'),
+                        DB::raw('COUNT(ea.id) as attempt_count'),
+                        DB::raw('SUM(CASE WHEN ea.is_passed = 1 THEN 1 ELSE 0 END) as passed_count'),
+                        DB::raw('MAX(ea.score) as max_score'),
+                        DB::raw('MIN(ea.score) as min_score'),
+                        DB::raw('STDDEV(ea.score) as score_stddev')
+                    )
+                    ->where('ea.created_at', '>=', Carbon::now()->subDays(60));
 
-            if ($departmentFilter && $departmentFilter !== 'all') {
-                $query->where('u.department', $departmentFilter);
-            }
+                if ($departmentFilter && $departmentFilter !== 'all') {
+                    $query->where('u.department', $departmentFilter);
+                }
 
-            $heatmapData = $query
-                ->groupBy('hour_of_day', 'day_name', 'day_number')
-                ->orderBy('day_number')
-                ->orderBy('hour_of_day')
-                ->get();
+                return $query
+                    ->groupBy(DB::raw('HOUR(ea.created_at), DAYNAME(ea.created_at), WEEKDAY(ea.created_at)'))
+                    ->orderBy('day_number')
+                    ->orderBy('hour_of_day')
+                    ->get();
+            });
 
-            // Format into grid structure (7 days × 24 hours)
+            // Build heatmap grid with intensity calculation
             $heatmapGrid = [];
             $dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+            $allScores = $heatmapData->pluck('avg_score')->filter()->toArray();
+            $maxScore = count($allScores) > 0 ? max($allScores) : 100;
+            $minScore = count($allScores) > 0 ? min($allScores) : 0;
+            $baseline = 70; // Baseline for intensity scoring
             
             foreach ($dayOrder as $dayIndex => $dayName) {
                 $dayData = [];
@@ -1881,12 +2061,27 @@ class AdminReportController extends Controller
                         return $item->hour_of_day == $hour && $item->day_name == $dayName;
                     });
 
+                    $avgScore = $cellData?->avg_score ? round($cellData->avg_score, 1) : 0;
+                    $passRate = $cellData && $cellData->attempt_count > 0 
+                        ? round(($cellData->passed_count / $cellData->attempt_count) * 100, 1) 
+                        : 0;
+                    
+                    // Intensity: 0-1 scale, normalized against baseline (70)
+                    if ($avgScore > 0) {
+                        $intensity = min(round(($avgScore / 100) * 2, 2), 1);
+                    } else {
+                        $intensity = 0;
+                    }
+
                     $dayData[] = [
                         'hour' => $hour,
                         'day' => $dayName,
-                        'avg_score' => $cellData?->avg_score ? round($cellData->avg_score, 1) : 0,
+                        'avg_score' => $avgScore,
+                        'pass_rate' => $passRate,
                         'attempt_count' => $cellData?->attempt_count ?? 0,
-                        'intensity' => $cellData?->avg_score ? round($cellData->avg_score / 100, 2) : 0
+                        'intensity' => $intensity,
+                        'max_score' => $cellData?->max_score ? round($cellData->max_score, 1) : 0,
+                        'min_score' => $cellData?->min_score ? round($cellData->min_score, 1) : 0
                     ];
                 }
                 $heatmapGrid[] = [
@@ -1895,8 +2090,8 @@ class AdminReportController extends Controller
                 ];
             }
 
-            // Find peak times
-            $peakTimes = $heatmapData
+            // Find peak performance times (highest avg_score)
+            $peakTimes = collect($heatmapData)
                 ->sortByDesc('avg_score')
                 ->take(5)
                 ->map(function($item) {
@@ -1904,12 +2099,16 @@ class AdminReportController extends Controller
                         'time' => sprintf('%02d:00 - %02d:00', $item->hour_of_day, $item->hour_of_day + 1),
                         'day' => $item->day_name,
                         'avg_score' => round($item->avg_score, 1),
+                        'pass_rate' => round(($item->passed_count / $item->attempt_count) * 100, 1),
                         'attempts' => $item->attempt_count
                     ];
-                });
+                })->values();
 
-            // Low performance times (recommendations)
-            $lowPerformanceTimes = $heatmapData
+            // Low performance times (lowest avg_score, filter by minimum attempts)
+            $lowPerformanceTimes = collect($heatmapData)
+                ->filter(function($item) {
+                    return $item->attempt_count >= 3; // Only consider slots with at least 3 attempts
+                })
                 ->sortBy('avg_score')
                 ->take(5)
                 ->map(function($item) {
@@ -1917,24 +2116,44 @@ class AdminReportController extends Controller
                         'time' => sprintf('%02d:00 - %02d:00', $item->hour_of_day, $item->hour_of_day + 1),
                         'day' => $item->day_name,
                         'avg_score' => round($item->avg_score, 1),
+                        'pass_rate' => round(($item->passed_count / $item->attempt_count) * 100, 1),
                         'attempts' => $item->attempt_count
                     ];
-                });
+                })->values();
+
+            // Calculate overall insights
+            $overallAvgScore = round($heatmapData->avg('avg_score'), 1);
+            $totalAttempts = $heatmapData->sum('attempt_count');
+            $totalPassed = $heatmapData->sum('passed_count');
+            $overallPassRate = $totalAttempts > 0 
+                ? round(($totalPassed / $totalAttempts) * 100, 1) 
+                : 0;
 
             return response()->json([
+                'success' => true,
                 'heatmap_grid' => $heatmapGrid,
                 'peak_times' => $peakTimes,
                 'low_performance_times' => $lowPerformanceTimes,
-                'insight' => "Waktu terbaik untuk training: " . 
-                    ($peakTimes->first()['day'] ?? 'N/A') . " jam " . 
-                    ($peakTimes->first()['time'] ?? 'N/A'),
-                'warning' => "Hindari training di: " . 
-                    ($lowPerformanceTimes->first()['day'] ?? 'N/A') . " jam " . 
-                    ($lowPerformanceTimes->first()['time'] ?? 'N/A')
+                'insights' => [
+                    'best_time' => $peakTimes->first() ? $peakTimes->first()['day'] . ' ' . $peakTimes->first()['time'] : 'N/A',
+                    'worst_time' => $lowPerformanceTimes->first() ? $lowPerformanceTimes->first()['day'] . ' ' . $lowPerformanceTimes->first()['time'] : 'N/A',
+                    'avg_score' => $overallAvgScore,
+                    'overall_pass_rate' => $overallPassRate,
+                    'total_attempts' => $totalAttempts,
+                    'total_passed' => $totalPassed
+                ],
+                'recommendations' => [
+                    'primary' => "Waktu terbaik untuk training: " . ($peakTimes->first()['day'] ?? 'N/A') . " jam " . ($peakTimes->first()['time'] ?? 'N/A'),
+                    'secondary' => "Hindari training di: " . ($lowPerformanceTimes->first()['day'] ?? 'N/A') . " jam " . ($lowPerformanceTimes->first()['time'] ?? 'N/A'),
+                    'note' => "Data dari 60 hari terakhir dengan " . $totalAttempts . " attempt"
+                ]
             ]);
         } catch (\Exception $e) {
             Log::error('Peak Performance Heatmap Error: ' . $e->getMessage());
-            return response()->json(['error' => $e->getMessage()], 500);
+            return response()->json([
+                'success' => false,
+                'error' => 'Failed to generate heatmap: ' . $e->getMessage()
+            ], 500);
         }
     }
 
@@ -2034,26 +2253,55 @@ class AdminReportController extends Controller
             $overdueTraining = $this->getOverdueTraining($startDate, $endDate);
             $prePostAnalysis = $this->getPrePostAnalysis();
             $questionItemAnalysis = $this->getQuestionItemAnalysis();
-            $dropoutPredictions = $this->calculateDropoutPredictions();
-            $peakPerformanceTime = $this->getPeakPerformanceHeatmap();
             
-            // Collect all additional data
-            $moduleStats = $this->getModuleStats();
-            $examPerformance = $this->getExamPerformance();
-            $trendData = $this->getTrendData();
-            $quizDifficulty = $this->getQuizDifficultyAnalysis();
-            $complianceAudit = $this->getComplianceAudit();
-            $prerequisiteCompliance = $this->getPrerequisiteCompliance();
-            $engagementAnalytics = $this->getEngagementAnalytics();
-            $performanceHeatmap = $this->getPerformanceHeatmap();
-            $trainingMaterials = $this->getTrainingMaterials();
-            $programEnrollment = $this->getProgramEnrollment();
-            $resourceUtilization = $this->getResourceUtilization();
-            $dormantUsers = $this->getDormantUsers();
-            $skillDevelopment = $this->getSkillDevelopment();
-            $demographics = $this->getDemographics();
-            $certificateDistribution = $this->getCertificateDistribution();
-            $moduleTimeline = $this->getModuleTimeline();
+            // Wrap risky methods in try-catch to handle missing tables gracefully
+            $dropoutPredictions = [];
+            $peakPerformanceTime = [];
+            try {
+                $dropoutPredictions = $this->calculateDropoutPredictions();
+                $peakPerformanceTime = $this->getPeakPerformanceHeatmap();
+            } catch (\Exception $e) {
+                \Log::warning('Dropout predictions/peak performance data unavailable: ' . $e->getMessage());
+            }
+            
+            // Collect all additional data with error handling
+            $moduleStats = [];
+            $examPerformance = [];
+            $trendData = [];
+            $quizDifficulty = [];
+            $complianceAudit = [];
+            $prerequisiteCompliance = [];
+            $engagementAnalytics = [];
+            $performanceHeatmap = [];
+            $trainingMaterials = [];
+            $programEnrollment = [];
+            $resourceUtilization = [];
+            $dormantUsers = [];
+            $skillDevelopment = [];
+            $demographics = [];
+            $certificateDistribution = [];
+            $moduleTimeline = [];
+            
+            try {
+                $moduleStats = $this->getModuleStats();
+                $examPerformance = $this->getExamPerformance();
+                $trendData = $this->getTrendData();
+                $quizDifficulty = $this->getQuizDifficultyAnalysis();
+                $complianceAudit = $this->getComplianceAudit();
+                $prerequisiteCompliance = $this->getPrerequisiteCompliance();
+                $engagementAnalytics = $this->getEngagementAnalytics();
+                $performanceHeatmap = $this->getPerformanceHeatmap();
+                $trainingMaterials = $this->getTrainingMaterials();
+                $programEnrollment = $this->getProgramEnrollment();
+                $resourceUtilization = $this->getResourceUtilization();
+                $dormantUsers = $this->getDormantUsers();
+                $skillDevelopment = $this->getSkillDevelopment();
+                $demographics = $this->getDemographics();
+                $certificateDistribution = $this->getCertificateDistribution();
+                $moduleTimeline = $this->getModuleTimeline();
+            } catch (\Exception $e) {
+                \Log::warning('Some export data unavailable: ' . $e->getMessage());
+            }
 
             $totalModules = count($prePostAnalysis);
             $modulesWithImprovement = count(array_filter($prePostAnalysis, fn($item) => ($item['improvement_pct'] ?? 0) > 5));
@@ -2113,13 +2361,37 @@ class AdminReportController extends Controller
 
             $filename = 'UnifiedReports_' . $startDate->format('Y-m-d') . '_to_' . $endDate->format('Y-m-d') . '_' . date('Hi') . '.xlsx';
 
-            return Excel::download(
-                new \App\Exports\UnifiedReportsExport($data),
-                $filename
-            );
+            // SOLUTION: Direct Download Response
+            // Create Excel export and stream directly to browser
+            // Use response()->streamDownload() to bypass Inertia middleware
+            
+            try {
+                $export = new \App\Exports\UnifiedReportsExport($data);
+                
+                // Log for audit
+                \Log::info('Unified Reports Export Started', [
+                    'filename' => $filename,
+                    'user_id' => auth()->id() ?? null,
+                    'start_date' => $startDate->format('Y-m-d'),
+                    'end_date' => $endDate->format('Y-m-d'),
+                ]);
+                
+                // Stream Excel file directly to browser
+                // This bypasses Inertia middleware since we're returning a StreamedResponse
+                return Excel::download($export, $filename);
+                
+            } catch (\Exception $e) {
+                \Log::error('Excel export error: ' . $e->getMessage(), [
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                return redirect()->back()->withErrors(['export' => 'Export failed: ' . $e->getMessage()]);
+            }
+            
         } catch (\Exception $e) {
             \Log::error('Excel export error: ' . $e->getMessage() . ' ' . $e->getFile() . ':' . $e->getLine());
-            return response()->json(['error' => 'Export failed: ' . $e->getMessage()], 500);
+            return redirect()->back()->withErrors(['export' => 'Export failed: ' . $e->getMessage()]);
         }
     }
 
@@ -2375,7 +2647,7 @@ class AdminReportController extends Controller
                 ];
             }
             
-            return collect($result)->sortByDesc('improvement_pct')->take(15)->values()->toArray();
+            return collect($result)->sortByDesc('improvement_pct')->take(config('admin.reports.improvement_limit', 15))->values()->toArray();
         });
     }
 
@@ -2676,7 +2948,7 @@ class AdminReportController extends Controller
             $modules = DB::table('modules')->select('id', 'title')->get();
             
             $heatmap = [];
-            foreach ($modules->take(10) as $module) {
+            foreach ($modules->take(config('admin.reports.low_performers_limit', 10)) as $module) {
                 $avgScore = DB::table('exam_attempts')
                     ->where('module_id', $module->id)
                     ->avg('score');

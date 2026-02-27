@@ -97,6 +97,8 @@ export default function NotificationPreferences() {
 
     const [saving, setSaving] = useState(false);
     const [activePreview, setActivePreview] = useState('app');
+    const [testingSMS, setTestingSMS] = useState(false);
+    const [smsTestResult, setSmsTestResult] = useState(null);
 
     // Load preferences on mount
     useEffect(() => {
@@ -150,6 +152,48 @@ export default function NotificationPreferences() {
             showToast('Gagal menyimpan preferensi notifikasi', 'error');
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleTestSMS = async () => {
+        setTestingSMS(true);
+        setSmsTestResult(null);
+        try {
+            const res = await fetch('/api/admin/notification-preferences/test-sms', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content,
+                },
+                body: JSON.stringify({
+                    phone_number: user?.phone_number || user?.phone || null,
+                }),
+            });
+
+            const data = await res.json();
+            
+            if (res.ok) {
+                setSmsTestResult({ 
+                    success: true, 
+                    message: data.message || 'SMS test sent successfully! Check your phone.' 
+                });
+                showToast('SMS test sent to ' + user?.phone_number, 'success');
+            } else {
+                setSmsTestResult({ 
+                    success: false, 
+                    message: data.error || data.message || 'Failed to send SMS test' 
+                });
+                showToast('Failed to send SMS test: ' + (data.error || 'Unknown error'), 'error');
+            }
+        } catch (err) {
+            console.error('SMS test error:', err);
+            setSmsTestResult({ 
+                success: false, 
+                message: err.message || 'Failed to send SMS test' 
+            });
+            showToast('Failed to send SMS test', 'error');
+        } finally {
+            setTestingSMS(false);
         }
     };
 
@@ -309,6 +353,67 @@ export default function NotificationPreferences() {
                                     onChange={() => handleToggle('sms_approval_alert')}
                                     disabled={!preferences.sms_enabled}
                                 />
+                            </div>
+
+                            {/* SMS Test Button */}
+                            <div className="mt-8 pt-6 border-t border-slate-200">
+                                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                                    <div>
+                                        <h4 className="font-bold text-slate-900 mb-1">Test SMS Delivery</h4>
+                                        <p className="text-xs text-slate-500">Send a test SMS to {user?.phone_number || 'your phone'} to verify SMS delivery is working</p>
+                                    </div>
+                                    <button
+                                        onClick={handleTestSMS}
+                                        disabled={testingSMS || !preferences.sms_enabled}
+                                        className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-sm whitespace-nowrap transition-all ${
+                                            testingSMS || !preferences.sms_enabled
+                                                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                                : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 active:scale-95'
+                                        }`}
+                                    >
+                                        {testingSMS ? (
+                                            <>
+                                                <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity }}>
+                                                    <Smartphone size={16} />
+                                                </motion.div>
+                                                Sending...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Smartphone size={16} />
+                                                Send Test SMS
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
+
+                                {/* Test Result Alert */}
+                                <AnimatePresence>
+                                    {smsTestResult && (
+                                        <motion.div
+                                            initial={{ opacity: 0, y: -10 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, y: -10 }}
+                                            className={`mt-4 p-4 rounded-xl border-2 flex items-start gap-3 ${
+                                                smsTestResult.success
+                                                    ? 'bg-green-50 border-green-200'
+                                                    : 'bg-red-50 border-red-200'
+                                            }`}
+                                        >
+                                            <div className={`mt-0.5 ${smsTestResult.success ? 'text-green-600' : 'text-red-600'}`}>
+                                                {smsTestResult.success ? <Check size={20} /> : <X size={20} />}
+                                            </div>
+                                            <div>
+                                                <p className={`font-bold text-sm ${smsTestResult.success ? 'text-green-900' : 'text-red-900'}`}>
+                                                    {smsTestResult.success ? 'SMS Sent Successfully' : 'SMS Send Failed'}
+                                                </p>
+                                                <p className={`text-xs mt-1 ${smsTestResult.success ? 'text-green-700' : 'text-red-700'}`}>
+                                                    {smsTestResult.message}
+                                                </p>
+                                            </div>
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
                             </div>
                         </motion.div>
 

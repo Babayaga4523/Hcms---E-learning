@@ -47,7 +47,11 @@ const ViewToggle = ({ mode, setMode }) => (
 );
 
 // --- DEPARTMENT CARD (GRID VIEW) ---
-const DepartmentCard = ({ dept, onEdit, onDelete, headName, headAvatar }) => (
+const DepartmentCard = ({ dept, onEdit, onDelete, onViewUsers, headName, headAvatar }) => {
+    // Get department users count
+    const deptUsers = dept.users || [];
+    
+    return (
     <motion.div 
         layout
         initial={{ opacity: 0, scale: 0.9 }}
@@ -64,6 +68,15 @@ const DepartmentCard = ({ dept, onEdit, onDelete, headName, headAvatar }) => (
                 {dept.code?.split('-')[0] || 'ORG'}
             </div>
             <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <motion.button 
+                    whileHover={{ scale: 1.1 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => onViewUsers(dept)}
+                    title="View Department Users"
+                    className="p-2 text-slate-400 hover:text-teal-600 hover:bg-teal-50 rounded-full transition"
+                >
+                    <Users size={18} />
+                </motion.button>
                 <motion.button 
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.95 }}
@@ -132,7 +145,8 @@ const DepartmentCard = ({ dept, onEdit, onDelete, headName, headAvatar }) => (
             </span>
         </div>
     </motion.div>
-);
+    );
+};
 
 // --- MAIN PAGE ---
 export default function DepartmentManagement({ departments = [], users = [], stats = {} }) {
@@ -140,6 +154,8 @@ export default function DepartmentManagement({ departments = [], users = [], sta
     const [localDepts, setLocalDepts] = useState(departments);
     const [searchTerm, setSearchTerm] = useState('');
     const [showModal, setShowModal] = useState(false);
+    const [showUserModal, setShowUserModal] = useState(false);
+    const [selectedDept, setSelectedDept] = useState(null);
     const [editingDept, setEditingDept] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
     const [message, setMessage] = useState(null);
@@ -237,6 +253,12 @@ export default function DepartmentManagement({ departments = [], users = [], sta
         } finally {
             setIsLoading(false);
         }
+    };
+
+    // View Department Users
+    const handleViewUsers = (dept) => {
+        setSelectedDept(dept);
+        setShowUserModal(true);
     };
 
     // Manager Users
@@ -362,6 +384,7 @@ export default function DepartmentManagement({ departments = [], users = [], sta
                                                 dept={dept}
                                                 onEdit={openModal}
                                                 onDelete={handleDeleteDept}
+                                                onViewUsers={handleViewUsers}
                                                 headName={headName}
                                                 headAvatar={headAvatar}
                                             />
@@ -594,6 +617,68 @@ export default function DepartmentManagement({ departments = [], users = [], sta
                             </motion.div>
                         </>
                     )}
+
+                    {/* --- USERS MODAL --- */}
+                    <AnimatePresence>
+                        {showUserModal && selectedDept && (
+                            <>
+                                <motion.div
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    onClick={() => setShowUserModal(false)}
+                                    className="fixed inset-0 bg-black/50 z-40"
+                                />
+                                <motion.div
+                                    initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                                    exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                                    className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-3xl shadow-2xl z-50 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto"
+                                >
+                                    <div className="sticky top-0 bg-white border-b border-slate-200 p-6 flex items-center justify-between">
+                                        <div>
+                                            <h2 className="text-2xl font-bold text-slate-900">{selectedDept.name}</h2>
+                                            <p className="text-sm text-slate-500 mt-1">Department Members</p>
+                                        </div>
+                                        <button 
+                                            onClick={() => setShowUserModal(false)}
+                                            className="p-2 hover:bg-slate-100 rounded-full transition"
+                                        >
+                                            <X size={24} className="text-slate-600" />
+                                        </button>
+                                    </div>
+
+                                    <div className="p-6">
+                                        {selectedDept.users && selectedDept.users.length > 0 ? (
+                                            <div className="grid gap-3">
+                                                {selectedDept.users.map(user => (
+                                                    <div key={user.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-slate-300 transition">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold text-sm shadow-sm">
+                                                                {(user.name || '?').charAt(0).toUpperCase()}
+                                                            </div>
+                                                            <div>
+                                                                <p className="font-bold text-slate-900">{user.name}</p>
+                                                                <p className="text-xs text-slate-500">{user.email}</p>
+                                                            </div>
+                                                        </div>
+                                                        <span className="px-3 py-1 bg-slate-100 text-slate-700 text-xs font-bold rounded-full">
+                                                            {user.role || 'User'}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="text-center py-12">
+                                                <Users className="w-8 h-8 text-slate-300 mx-auto mb-4" />
+                                                <p className="text-slate-500 font-semibold">No users in this department</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </motion.div>
+                            </>
+                        )}
+                    </AnimatePresence>
                 </AnimatePresence>
 
             </AdminLayout>

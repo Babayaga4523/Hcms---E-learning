@@ -5,6 +5,7 @@ import {
     LogOut, Upload, FileText, CheckCircle, Shield, 
     ChevronRight, X, Clock, RefreshCw
 } from 'lucide-react';
+import axios from 'axios';
 
 // --- Wondr Style System ---
 const WondrStyles = () => (
@@ -156,26 +157,84 @@ const ActivityRow = ({ activity, isLast, onClick }) => {
 
 export default function UserActivityLog() {
     // State
+    const [activities, setActivities] = useState([]);
     const [filter, setFilter] = useState('all');
     const [search, setSearch] = useState('');
     const [isLive, setIsLive] = useState(true);
     const [selectedActivity, setSelectedActivity] = useState(null);
-    const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [exporting, setExporting] = useState(false);
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
+
+    // Fetch activities from backend API
+    useEffect(() => {
+        fetchActivities();
+        if (isLive) {
+            const interval = setInterval(fetchActivities, 30000); // Refresh every 30s
+            return () => clearInterval(interval);
+        }
+    }, [isLive, dateFrom, dateTo]);
+
+    const fetchActivities = async () => {
+        try {
+            setLoading(true);
+            const params = new URLSearchParams();
+            if (dateFrom) params.append('dateFrom', dateFrom);
+            if (dateTo) params.append('dateTo', dateTo);
+            
+            const response = await axios.get(`/api/admin/activity-logs?${params.toString()}`);
+            if (response.data && response.data.data) {
+                setActivities(response.data.data);
+            }
+        } catch (error) {
+            console.error('Error fetching activities:', error);
+            // Fallback to empty array on error
+            setActivities([]);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     // Filter Logic
     const filteredActivities = useMemo(() => {
-        return MOCK_ACTIVITIES.filter(act => {
-            const matchesFilter = filter === 'all' || act.action === filter || (filter === 'security' && act.action === 'security');
-            const matchesSearch = act.user.name.toLowerCase().includes(search.toLowerCase()) || 
-                                  act.entity.toLowerCase().includes(search.toLowerCase());
+        return activities.filter(act => {
+            const actionType = act.action?.toLowerCase() || '';
+            const matchesFilter = filter === 'all' || actionType === filter || (filter === 'security' && actionType === 'security');
+            const matchesSearch = (act.user?.name || '').toLowerCase().includes(search.toLowerCase()) || 
+                                  (act.ip_address || '').includes(search) ||
+                                  (act.entity || '').toLowerCase().includes(search.toLowerCase());
             return matchesFilter && matchesSearch;
         });
-    }, [filter, search]);
+    }, [activities, filter, search]);
 
     // Handlers
-    const handleExport = () => {
-        setLoading(true);
-        setTimeout(() => setLoading(false), 1500); // Sim export
+    const handleExport = async () => {
+        try {
+            setExporting(true);
+            const params = new URLSearchParams();
+            if (dateFrom) params.append('dateFrom', dateFrom);
+            if (dateTo) params.append('dateTo', dateTo);
+            if (filter !== 'all') params.append('action', filter);
+            
+            const response = await axios.get(`/api/admin/activity-logs/export?${params.toString()}`, {
+                responseType: 'blob'
+            });
+            
+            // Create blob download
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `activity-logs-${new Date().toISOString().split('T')[0]}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            link.parentNode.removeChild(link);
+        } catch (error) {
+            console.error('Error exporting logs:', error);
+            alert('Export failed. Please try again.');
+        } finally {
+            setExporting(false);
+        }
     };
 
     return (
@@ -196,26 +255,51 @@ export default function UserActivityLog() {
                         </h1>
                     </div>
                     
-                    <div className="flex gap-3">
+                    <div className="flex gap-3 flex-wrap lg:flex-nowrap items-center">
+                        <div className="flex gap-2">
+                            <input 
+                                type="date" 
+                                value={dateFrom}
+                                onChange={(e) => setDateFrom(e.target.value)}
+                                className="px-3 py-2 bg-white/10 text-white rounded-lg border border-white/20 text-sm font-semibold placeholder-white/50 focus:border-[#D6F84C] focus:ring-2 focus:ring-[#D6F84C]/30 focus:bg-white/20 transition-all outline-none"
+                            />
+                            <input 
+                                type="date" 
+                                value={dateTo}
+                                onChange={(e) => setDateTo(e.target.value)}
+                                className="px-3 py-2 bg-white/10 text-white rounded-lg border border-white/20 text-sm font-semibold placeholder-white/50 focus:border-[#D6F84C] focus:ring-2 focus:ring-[#D6F84C]/30 focus:bg-white/20 transition-all outline-none"
+                            />
+                        </div>
                         <button 
                             onClick={() => setIsLive(!isLive)}
-                            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all border ${
+                            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all border whitespace-nowrap ${
                                 isLive 
                                 ? 'bg-red-500/20 text-red-400 border-red-500/50 animate-pulse-slow' 
                                 : 'bg-white/10 text-slate-400 border-white/10 hover:bg-white/20'
                             }`}
                         >
                             <div className={`w-2 h-2 rounded-full ${isLive ? 'bg-red-500' : 'bg-slate-400'}`}></div>
-                            {isLive ? 'Live Stream On' : 'Live Stream Off'}
+                            {isLive ? 'Live' : 'Paused'}
                         </button>
                         <button 
                             onClick={handleExport}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-[#D6F84C] hover:bg-[#c2e43c] text-[#002824] rounded-xl font-bold shadow-lg shadow-[#D6F84C]/20 transition-all hover:scale-105"
+                            disabled={exporting}
+                            className="flex items-center gap-2 px-5 py-2.5 bg-[#D6FF59] hover:bg-[#c2e43c] disabled:opacity-50 disabled:cursor-not-allowed text-[#002824] rounded-xl font-bold shadow-lg shadow-[#D6FF59]/20 transition-all hover:scale-105 whitespace-nowrap"
                         >
-                            {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                            Export CSV
+                            {exporting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                            {exporting ? 'Exporting...' : 'Export'}
                         </button>
                     </div>
+                </div>
+                
+                <div className="relative z-10">
+                    <input 
+                        type="text" 
+                        placeholder="Search by user, IP, or entity..." 
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        className="w-full px-6 py-3 bg-white/10 text-white rounded-xl border border-white/20 font-semibold placeholder-white/50 focus:border-[#D6FF59] focus:ring-2 focus:ring-[#D6FF59]/30 focus:bg-white/20 transition-all outline-none"
+                    />
                 </div>
             </div>
 
@@ -226,28 +310,28 @@ export default function UserActivityLog() {
                 <div className="flex-1 min-w-0">
                     <div className="glass-card rounded-[32px] p-6 lg:p-8 min-h-[80vh]">
                         
-                        {/* Toolbar */}
-                        <div className="flex flex-col md:flex-row gap-4 justify-between items-center mb-8 sticky top-0 bg-white/80 backdrop-blur-xl z-20 py-2 -mx-2 px-2 rounded-xl">
-                            <div className="flex gap-2 overflow-x-auto no-scrollbar w-full md:w-auto pb-2 md:pb-0">
+                        {/* Loading or Empty State */}
+                        {loading ? (
+                            <div className="flex flex-col items-center justify-center py-20">
+                                <RefreshCw className="w-8 h-8 animate-spin text-[#005E54] mb-4" />
+                                <p className="text-slate-600 font-semibold">Loading activity logs...</p>
+                            </div>
+                        ) : filteredActivities.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-20">
+                                <AlertCircle className="w-8 h-8 text-slate-300 mb-4" />
+                                <p className="text-slate-600 font-semibold">No activity logs found</p>
+                            </div>
+                        ) : null}
+
+                        {/* Filter Pills */}
+                        {!loading && filteredActivities.length > 0 && (
+                            <div className="flex gap-2 overflow-x-auto no-scrollbar mb-6 pb-2">
                                 <FilterPill label="All" active={filter === 'all'} onClick={() => setFilter('all')} />
                                 <FilterPill label="Security" icon={Shield} active={filter === 'security'} onClick={() => setFilter('security')} />
                                 <FilterPill label="Logins" icon={Eye} active={filter === 'login'} onClick={() => setFilter('login')} />
                                 <FilterPill label="Changes" icon={Edit3} active={filter === 'update'} onClick={() => setFilter('update')} />
                             </div>
-                            
-                            <div className="relative w-full md:w-64 group">
-                                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-[#005E54] w-5 h-5 transition-colors" />
-                                <input 
-                                    type="text" 
-                                    placeholder="Search user or IP..." 
-                                    value={search}
-                                    onChange={(e) => setSearch(e.target.value)}
-                                    className="w-full pl-12 pr-4 py-2.5 bg-slate-50 border-none rounded-xl font-bold text-slate-700 focus:ring-2 focus:ring-[#005E54]/20 focus:bg-white transition-all outline-none"
-                                />
-                            </div>
-                        </div>
-
-                        {/* Timeline List */}
+                        )}
                         <div className="space-y-0 px-2">
                             {filteredActivities.length > 0 ? (
                                 filteredActivities.map((activity, index) => (

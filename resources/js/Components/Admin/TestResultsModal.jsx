@@ -2,6 +2,14 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { CheckCircle, XCircle, Award, AlertCircle } from 'lucide-react';
 
+// Helper: Format duration from minutes to MM:SS format
+const formatDuration = (durationMinutes) => {
+    if (!durationMinutes && durationMinutes !== 0) return 'N/A';
+    const mins = Math.floor(Number(durationMinutes) || 0);
+    const secs = Math.round(((Number(durationMinutes) || 0) - mins) * 60);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+};
+
 export default function TestResultsModal({ examAttemptId, isOpen, onClose }) {
     const [results, setResults] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -122,7 +130,7 @@ export default function TestResultsModal({ examAttemptId, isOpen, onClose }) {
                                     <div className="bg-white rounded p-3">
                                         <p className="text-gray-600 text-sm">Waktu Pengerjaan</p>
                                         <p className="text-2xl font-bold text-purple-600">
-                                            {results.duration_minutes} menit
+                                            {formatDuration(results.duration_minutes)}
                                         </p>
                                     </div>
                                 </div>

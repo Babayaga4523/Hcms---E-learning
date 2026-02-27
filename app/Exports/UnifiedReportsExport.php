@@ -5,35 +5,21 @@ namespace App\Exports;
 use Maatwebsite\Excel\Concerns\WithMultipleSheets;
 use App\Exports\Sheets\{
     ExecutiveSummarySheet,
-    LearnerProgressDetailSheet,
-    ModulePerformanceDetailSheet,
-    ExamPerformanceDetailSheet,
-    DepartmentLeaderboardSheet,
-    TrendAnalysisSheet,
-    CertificateAnalyticsSheet,
-    AtRiskUsersSheet,
-    LearningImpactSheet,
-    ComplianceAuditSheet,
+    MasterLearnerDataSheet,
+    ProgramPerformanceSheet,
+    AssessmentQualitySheet,
     QuestionPerformanceSheet,
-    LearnerComparisonSheet,
-    EngagementAnalyticsSheet,
-    TrainingMaterialSheet,
-    ProgramEnrollmentSheet,
-    CertificateDistributionSheet,
-    DormantUserSheet,
-    ModuleProgressTimelineSheet,
-    SkillDevelopmentSheet,
-    ResourceUtilizationSheet,
-    PerformanceHeatmapSheet,
-    DemographicAnalysisSheet,
-    PrerequisiteComplianceSheet,
-    QuizDifficultyAnalysisSheet
+    DepartmentLeaderboardSheet,
+    CertificateLogSheet,
+    LearningHabitsSheet
 };
 
 /**
- * UNIFIED REPORTS EXPORT - ENTERPRISE GRADE
+ * UNIFIED REPORTS EXPORT - CONSOLIDATED 8-SHEET STRUCTURE
  * 
- * 24 Professional Sheets dengan:
+ * Strategic Consolidation: Reduced from 25 sheets to 8 High-Value Sheets
+ * Fokus pada: Actionable Insights bukan Data Dump
+ * 
  * ✅ Auto Filter pada header
  * ✅ Freeze Pane (sticky headers)
  * ✅ Zebra Striping (warna selang-seling)
@@ -41,6 +27,17 @@ use App\Exports\Sheets\{
  * ✅ Merged Titles & Metadata
  * ✅ Auto Wrap Text
  * ✅ Border & Formatting
+ * ✅ Color-Coded Risk/Status Indicators
+ * 
+ * 8 SHEETS (CONSOLIDATED):
+ * 1. Executive Dashboard - KPI utama & ringkasan eksekutif
+ * 2. Master Learner Data - Profil lengkap setiap learner (PALING PENTING!)
+ * 3. Program Performance - Analisis modul dengan learning impact
+ * 4. Assessment Quality - Kualitas soal & analisis reliabilitas
+ * 5. Question Analysis - Detail per-butir soal (untuk pembuat soal)
+ * 6. Department Insights - Leaderboard departemen & performa tim
+ * 7. Certificate Log - Audit trail sertifikat & compliance
+ * 8. Learning Habits - Tren pembelajaran & pola waktu optimal
  */
 class UnifiedReportsExport implements WithMultipleSheets
 {
@@ -77,41 +74,50 @@ class UnifiedReportsExport implements WithMultipleSheets
     public function sheets(): array
     {
         return [
-            // 🎯 CORE SHEETS (9)
-            'Executive Summary' => new ExecutiveSummarySheet($this->data['stats'] ?? [], 'EXECUTIVE SUMMARY'),
-            'Learner Progress' => new LearnerProgressDetailSheet($this->data['learnerProgress'] ?? [], 'LEARNER PROGRESS'),
-            'Module Performance' => new ModulePerformanceDetailSheet($this->data['moduleStats'] ?? [], 'MODULE PERFORMANCE'),
-            'Exam Performance' => new ExamPerformanceDetailSheet($this->data['examPerformance'] ?? [], 'EXAM PERFORMANCE'),
-            'Department Leaderboard' => new DepartmentLeaderboardSheet($this->data['departmentLeaderboard'] ?? [], 'DEPARTMENT LEADERBOARD'),
-            'Trend Analysis' => new TrendAnalysisSheet($this->data['trendData'] ?? [], 'TREND ANALYSIS'),
-            'Certificates' => new CertificateAnalyticsSheet($this->data['certificateStats'] ?? [], 'CERTIFICATES'),
-            'At-Risk Users' => new AtRiskUsersSheet($this->data['atRiskUsers'] ?? [], 'AT-RISK USERS'),
-            'Learning Impact' => new LearningImpactSheet($this->data['prePostAnalysis'] ?? [], 'LEARNING IMPACT'),
+            // 📊 EXECUTIVE DASHBOARD
+            'Executive Dashboard' => new ExecutiveSummarySheet($this->data['stats'] ?? [], 'EXECUTIVE DASHBOARD'),
             
-            // ⚖️ COMPLIANCE (3)
-            'Compliance Audit' => new ComplianceAuditSheet($this->data['complianceAudit'] ?? [], 'COMPLIANCE AUDIT'),
-            'Question Performance' => new QuestionPerformanceSheet($this->data['questionItemAnalysis'] ?? [], 'QUESTION PERFORMANCE'),
-            'Prerequisite Compliance' => new PrerequisiteComplianceSheet($this->data['prerequisiteCompliance'] ?? [], 'PREREQUISITE COMPLIANCE'),
+            // 👤 MASTER LEARNER DATA (PALING PENTING!)
+            'Master Learner Data' => new MasterLearnerDataSheet([
+                'learnerProgress' => $this->data['learnerProgress'] ?? [],
+                'engagementAnalytics' => $this->data['engagementAnalytics'] ?? [],
+                'learnerComparison' => $this->data['learnerComparison'] ?? [],
+                'dormantUsers' => $this->data['dormantUsers'] ?? [],
+                'atRiskUsers' => $this->data['atRiskUsers'] ?? [],
+                'skillDevelopment' => $this->data['skillDevelopment'] ?? [],
+            ], 'MASTER LEARNER DATA'),
             
-            // 📊 ANALYTICS (3)
-            'Learner Comparison' => new LearnerComparisonSheet($this->data['learnerComparison'] ?? [], 'LEARNER COMPARISON'),
-            'Engagement Analytics' => new EngagementAnalyticsSheet($this->data['engagementAnalytics'] ?? [], 'ENGAGEMENT ANALYTICS'),
-            'Performance Heatmap' => new PerformanceHeatmapSheet($this->data['performanceHeatmap'] ?? [], 'PERFORMANCE HEATMAP'),
+            // 📚 PROGRAM PERFORMANCE
+            'Program Performance' => new ProgramPerformanceSheet([
+                'moduleStats' => $this->data['moduleStats'] ?? [],
+                'programEnrollment' => $this->data['programEnrollment'] ?? [],
+                'prePostAnalysis' => $this->data['prePostAnalysis'] ?? [],
+            ], 'PROGRAM PERFORMANCE'),
             
-            // 📚 TRAINING (3)
-            'Training Materials' => new TrainingMaterialSheet($this->data['trainingMaterials'] ?? [], 'TRAINING MATERIALS'),
-            'Program Enrollment' => new ProgramEnrollmentSheet($this->data['programEnrollment'] ?? [], 'PROGRAM ENROLLMENT'),
-            'Resource Utilization' => new ResourceUtilizationSheet($this->data['resourceUtilization'] ?? [], 'RESOURCE UTILIZATION'),
+            // 📝 ASSESSMENT QUALITY
+            'Assessment Quality' => new AssessmentQualitySheet([
+                'examPerformance' => $this->data['examPerformance'] ?? [],
+                'quizDifficulty' => $this->data['quizDifficulty'] ?? [],
+            ], 'ASSESSMENT QUALITY'),
             
-            // 👥 USER DEVELOPMENT (3)
-            'Dormant Users' => new DormantUserSheet($this->data['dormantUsers'] ?? [], 'DORMANT USERS'),
-            'Skill Development' => new SkillDevelopmentSheet($this->data['skillDevelopment'] ?? [], 'SKILL DEVELOPMENT'),
-            'Demographics' => new DemographicAnalysisSheet($this->data['demographics'] ?? [], 'DEMOGRAPHICS'),
+            // ❓ QUESTION ANALYSIS
+            'Question Analysis' => new QuestionPerformanceSheet($this->data['questionItemAnalysis'] ?? [], 'QUESTION ANALYSIS'),
             
-            // 🎓 PROGRAM & QUIZ (3)
-            'Certificate Distribution' => new CertificateDistributionSheet($this->data['certificateDistribution'] ?? [], 'CERTIFICATE DISTRIBUTION'),
-            'Module Timeline' => new ModuleProgressTimelineSheet($this->data['moduleTimeline'] ?? [], 'MODULE TIMELINE'),
-            'Quiz Difficulty' => new QuizDifficultyAnalysisSheet($this->data['quizDifficulty'] ?? [], 'QUIZ DIFFICULTY'),
+            // 🏆 DEPARTMENT INSIGHTS
+            'Department Insights' => new DepartmentLeaderboardSheet($this->data['departmentLeaderboard'] ?? [], 'DEPARTMENT INSIGHTS'),
+            
+            // 🛡️ CERTIFICATE LOG & COMPLIANCE
+            'Certificate Log' => new CertificateLogSheet([
+                'certificateStats' => $this->data['certificateStats'] ?? [],
+                'complianceAudit' => $this->data['complianceAudit'] ?? [],
+                'certificateDistribution' => $this->data['certificateDistribution'] ?? [],
+            ], 'CERTIFICATE LOG & COMPLIANCE'),
+            
+            // 🔥 LEARNING HABITS ANALYTICS
+            'Learning Habits' => new LearningHabitsSheet([
+                'trendData' => $this->data['trendData'] ?? [],
+                'performanceHeatmap' => $this->data['performanceHeatmap'] ?? [],
+            ], 'LEARNING HABITS ANALYTICS'),
         ];
     }
 }

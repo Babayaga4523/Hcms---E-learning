@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Http\Controllers\Controller;
 use App\Models\Reminder;
 use App\Models\User;
 use App\Models\Department;
@@ -10,13 +11,14 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
 
-class ReminderController
+class ReminderController extends Controller
 {
     /**
      * Get all reminders with filters
      */
     public function index(Request $request)
     {
+        $this->authorize('view-reminders');
         try {
             $query = Reminder::query();
 
@@ -65,6 +67,9 @@ class ReminderController
                 'scheduled_at' => 'nullable|date',
                 'send_now' => 'boolean',
                 'department_id' => 'nullable|exists:departments,id',
+                'timezone' => 'nullable|string|timezone',
+                'send_at_time' => 'nullable|date_format:H:i',
+                'smart_scheduling_enabled' => 'boolean',
             ]);
 
             $reminder = new Reminder();
@@ -72,8 +77,28 @@ class ReminderController
             $reminder->message = $validated['message'];
             $reminder->recipient_count = count($validated['recipient_users']);
             $reminder->department_id = $validated['department_id'] ?? null;
-            $reminder->scheduled_at = $validated['send_now'] ? now() : $validated['scheduled_at'];
-            $reminder->status = $validated['send_now'] ? 'sent' : 'scheduled';
+            $reminder->timezone = $validated['timezone'] ?? config('app.timezone', 'UTC');
+            $reminder->smart_scheduling_enabled = $validated['smart_scheduling_enabled'] ?? false;
+            $reminder->send_at_time = $validated['send_at_time'] ?? '09:00'; // Default 9 AM
+
+            // Calculate scheduled time based on timezone
+            if ($validated['send_now']) {
+                $reminder->scheduled_at = now();
+                $reminder->status = 'sent';
+            } else if ($validated['scheduled_at']) {
+                // Convert user-provided time to UTC for storage
+                $scheduledTime = \Carbon\Carbon::createFromFormat(
+                    'Y-m-d',
+                    $validated['scheduled_at'],
+                    $reminder->timezone
+                )->setTimeFromTimeString($reminder->send_at_time);
+                
+                $reminder->scheduled_at = $scheduledTime->setTimezone('UTC');
+                $reminder->status = 'scheduled';
+            } else {
+                $reminder->status = 'draft';
+            }
+
             $reminder->created_by = Auth::id();
             $reminder->save();
 
@@ -83,10 +108,11 @@ class ReminderController
             // Send immediately if requested
             if ($validated['send_now']) {
                 $this->sendReminder($reminder);
+                $reminder->update(['sent_at' => now(), 'sent_count' => $reminder->users()->count()]);
             }
 
             return response()->json([
-                'message' => 'Reminder created successfully',
+                'message' => 'Reminder created successfully with timezone support',
                 'reminder' => $reminder->load('department', 'users'),
             ], 201);
         } catch (\Exception $e) {
@@ -110,7 +136,26 @@ class ReminderController
                 'recipient_users.*' => 'exists:users,id',
                 'scheduled_at' => 'sometimes|nullable|date',
                 'department_id' => 'sometimes|nullable|exists:departments,id',
+                'timezone' => 'sometimes|nullable|string|timezone',
+                'send_at_time' => 'sometimes|nullable|date_format:H:i',
+                'smart_scheduling_enabled' => 'sometimes|boolean',
             ]);
+
+            // Handle timezone-aware scheduling update
+            if (isset($validated['timezone']) || isset($validated['send_at_time'])) {
+                $timezone = $validated['timezone'] ?? $reminder->timezone;
+                $sendTime = $validated['send_at_time'] ?? $reminder->send_at_time;
+                
+                if (isset($validated['scheduled_at'])) {
+                    $scheduledTime = \Carbon\Carbon::createFromFormat(
+                        'Y-m-d',
+                        $validated['scheduled_at'],
+                        $timezone
+                    )->setTimeFromTimeString($sendTime);
+                    
+                    $validated['scheduled_at'] = $scheduledTime->setTimezone('UTC');
+                }
+            }
 
             $reminder->update($validated);
 
@@ -182,22 +227,50 @@ class ReminderController
     }
 
     /**
-     * Helper function to send reminder emails
+     * Helper function to send reminder emails with timezone awareness
      */
     private function sendReminder(Reminder $reminder)
     {
         $users = $reminder->users()->get();
+        $timezone = $reminder->timezone ?? config('app.timezone', 'UTC');
         
         foreach ($users as $user) {
             try {
-                // Log email (in production, use Mail::send or queue)
-                Log::info("Reminder '{$reminder->title}' sent to {$user->email}");
+                // Convert reminder time to user's timezone for logging/display
+                $scheduledTime = $reminder->scheduled_at->copy()->setTimezone($timezone);
+                
+                Log::info("Reminder '{$reminder->title}' sent to {$user->email} at {$scheduledTime->format('Y-m-d H:i')} {$timezone}");
                 
                 // Mark as opened if email opened (would need pixel tracking)
                 // For now, simulate delivery
             } catch (\Exception $e) {
                 Log::error("Failed to send reminder to {$user->email}: " . $e->getMessage());
             }
+        }
+    }
+
+    /**
+     * Get timezone-aware reminders for scheduling
+     */
+    public function getScheduledReminders(Request $request)
+    {
+        try {
+            $now = now();
+            
+            // Get all scheduled reminders that should be sent now
+            $reminders = Reminder::where('status', 'scheduled')
+                ->where('scheduled_at', '<=', $now)
+                ->with('users', 'department')
+                ->get();
+
+            return response()->json([
+                'pending_count' => $reminders->count(),
+                'reminders' => $reminders,
+                'current_utc_time' => $now->toIso8601String(),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Get scheduled reminders error: ' . $e->getMessage());
+            return response()->json(['error' => $e->getMessage()], 500);
         }
     }
 }

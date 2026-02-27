@@ -12,11 +12,11 @@ use Illuminate\Support\Facades\Log;
 
 class MaterialUploadHandler
 {
-    protected $disk = 'public';
+    protected $disk = 'public';  // Store in public disk: storage/app/public/materials
     
     // Allowed formats per material type
     protected $allowedFormats = [
-        'document' => ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt'],
+        'document' => ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv'],
         'video' => ['mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'mkv'],
         'presentation' => ['ppt', 'pptx', 'pdf'],
         'image' => ['jpg', 'jpeg', 'png', 'gif', 'webp'],
@@ -39,6 +39,38 @@ class MaterialUploadHandler
             $materialType = $context['material_type'] ?? 'document';
             $moduleId = $context['module_id'] ?? null;
             
+            // Map common material type aliases to standard types
+            $materialTypeMap = [
+                'pdf' => 'document',
+                'doc' => 'document',
+                'docx' => 'document',
+                'xls' => 'document',
+                'xlsx' => 'document',
+                'ppt' => 'presentation',
+                'pptx' => 'presentation',
+                'mp4' => 'video',
+                'avi' => 'video',
+                'mov' => 'video',
+                'jpg' => 'image',
+                'jpeg' => 'image',
+                'png' => 'image',
+                'gif' => 'image',
+            ];
+            
+            // Normalize material type from file extension or provided type
+            if (isset($materialTypeMap[$materialType])) {
+                $materialType = $materialTypeMap[$materialType];
+            }
+            
+            Log::info('MaterialUploadHandler.handle() called', [
+                'filename' => $file->getClientOriginalName(),
+                'mime' => $file->getMimeType(),
+                'extension' => $file->getClientOriginalExtension(),
+                'size' => $file->getSize(),
+                'material_type' => $materialType,
+                'module_id' => $moduleId
+            ]);
+            
             // Validate file
             if (!$this->validateFile($file, $materialType)) {
                 Log::warning('File validation failed', [
@@ -51,38 +83,48 @@ class MaterialUploadHandler
             
             // Determine subfolder
             $subfolder = $this->getSubfolder($materialType);
+            Log::info('Using subfolder', ['subfolder' => $subfolder]);
             
             // Generate filename
             $extension = strtolower($file->getClientOriginalExtension());
             $filename = $this->generateFilename($moduleId, $file->getClientOriginalName(), $extension);
+            Log::info('Generated filename', ['filename' => $filename]);
             
             // Store file
             $path = "$subfolder/$filename";
             /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
             $disk = Storage::disk($this->disk);
             
-            if (!$disk->put($path, file_get_contents($file))) {
-                Log::error('Failed to store material file', ['path' => $path]);
+            // Use storeAs method which properly handles UploadedFile and creates directories
+            // The $path variable should just be the filename relative to the disk root
+            $storagePath = $disk->putFileAs($subfolder, $file, $filename);
+            
+            Log::info('File stored', ['storagePath' => $storagePath, 'disk' => $this->disk]);
+            
+            if (!$storagePath) {
+                Log::error('Failed to store material file', ['path' => $path, 'subfolder' => $subfolder, 'filename' => $filename]);
                 return null;
             }
-            
+
             // Verify file was written
-            if (!$disk->exists($path)) {
-                Log::error('Stored material file not found', ['path' => $path]);
+            if (!$disk->exists($storagePath)) {
+                Log::error('Stored material file not found', ['path' => $storagePath, 'disk' => $this->disk]);
                 return null;
             }
-            
-            $url = $disk->url($path);
+
+            // Return relative path only (NOT full URL)
+            // This allows the TrainingMaterial model to build the correct URL via route()
+            $relativePath = $storagePath;
             
             Log::info('Material uploaded successfully', [
                 'filename' => $filename,
                 'path' => $path,
-                'url' => $url,
+                'relative_path' => $relativePath,
                 'material_type' => $materialType,
                 'module_id' => $moduleId
             ]);
             
-            return $url;
+            return $relativePath;
             
         } catch (\Exception $e) {
             Log::error('Material upload exception', [
@@ -176,6 +218,9 @@ class MaterialUploadHandler
     
     /**
      * Get subfolder for material type
+     * 
+     * IMPORTANT: These are relative to the disk root (storage/app/public)
+     * Files are stored in storage/app/public/materials/{type}/
      */
     protected function getSubfolder(string $materialType): string
     {
@@ -186,7 +231,7 @@ class MaterialUploadHandler
             'image' => 'materials/images',
         ];
         
-        return $subfolders[$materialType] ?? 'materials';
+        return $subfolders[$materialType] ?? 'materials';  // Default to materials folder
     }
     
     /**
@@ -214,9 +259,10 @@ class MaterialUploadHandler
         try {
             $disk = Storage::disk($this->disk);
             
-            // Extract path from URL
-            if (str_starts_with($url, '/storage/')) {
-                $path = substr($url, 9); // Remove '/storage/' prefix
+            // Extract path from URL or direct path
+            // For public disk URLs: /storage/materials/documents/...
+            if (str_starts_with($url, '/storage/') || str_starts_with($url, 'materials/')) {
+                $path = str_starts_with($url, '/storage/') ? substr($url, 9) : $url;
                 if ($disk->exists($path)) {
                     $disk->delete($path);
                     Log::info('Material file deleted', ['path' => $path]);

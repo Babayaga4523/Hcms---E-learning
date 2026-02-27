@@ -18,6 +18,7 @@ class AdminAnalyticsController extends Controller
      */
     public function index(Request $request)
     {
+        $this->authorize('view-analytics');
         try {
             $metricsController = app(\App\Http\Controllers\Admin\DashboardMetricsController::class);
 

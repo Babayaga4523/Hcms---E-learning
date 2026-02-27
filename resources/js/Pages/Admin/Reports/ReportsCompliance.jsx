@@ -202,11 +202,16 @@ export default function ReportsCompliance({ auth, stats, learnerProgress, questi
         try {
             setIsLoading(true);
             
-            // Call backend API untuk premium Excel export (correct route with /api prefix)
+            // Get CSRF token from meta tag for security
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+            
+            // Call backend API with CSRF token untuk premium Excel export
             const response = await fetch('/api/admin/reports/export?format=excel', {
-                method: 'GET',
+                method: 'POST',
                 headers: {
-                    'X-Requested-With': 'XMLHttpRequest'
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-TOKEN': csrfToken || '',
+                    'Content-Type': 'application/json'
                 }
             });
             

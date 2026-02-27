@@ -2,18 +2,20 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Http\Controllers\Controller;
 use App\Models\Module;
 use App\Models\Question;
 use App\Models\User;
 use Illuminate\Http\Request;
 
-class ReportingAnalyticsController
+class ReportingAnalyticsController extends Controller
 {
     /**
      * Get learning effectiveness score
      */
     public function getLearningEffectiveness($moduleId = null)
     {
+        $this->authorize('view-reports');
         $query = Module::query();
         
         if ($moduleId) {

@@ -22,6 +22,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->validateCsrfTokens(except: [
             'logout',
             'api/*',
+            'admin/reports/export-excel',
+            'admin/reports/export-tab/*',
         ]);
 
         // Register alias middleware

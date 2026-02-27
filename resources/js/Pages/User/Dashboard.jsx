@@ -1,11 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { Head, Link } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
+import { extractData } from '@/Utilities/apiResponseHandler';
+import ErrorBoundary from '@/Components/ErrorBoundary';
+import { API_BASE, API_ENDPOINTS } from '@/Config/api';
+import { SkeletonStats, SkeletonCards, SkeletonActivity } from '@/Components/SkeletonLoader';
 import { 
     BookOpen, Clock, Award, TrendingUp, Bell, Search, 
     PlayCircle, CheckCircle, Calendar, ArrowRight, 
-    MoreHorizontal, Star, Shield, Zap, ChevronRight, RotateCw 
+    MoreHorizontal, Star, Shield, Zap, ChevronRight, RotateCw, AlertTriangle, Trash2, Eye, ChevronLeft
 } from 'lucide-react';
+import LeaderboardWidget from '@/Components/Dashboard/LeaderboardWidget';
+import GoalTrackerWidget from '@/Components/Dashboard/GoalTrackerWidget';
+import LearningStatsCards from '@/Components/Dashboard/LearningStatsCards';
+import usePagination from '@/Hooks/usePagination';
 
 // --- Wondr Style System ---
 const WondrStyles = () => (
@@ -197,40 +205,57 @@ const AnnouncementWidget = ({ announcements = [], loading = false, error = null 
     );
 };
 
-const RecentActivity = ({ activities = [], loading = false, error = null, onRefresh = null }) => (
+const RecentActivity = ({ activities = [], loading = false, error = null, onRefresh = null, pagination = null, onPageChange = null }) => (
     <div className="glass-card rounded-[24px] p-4">
         <h3 className="font-bold text-slate-900 mb-3 flex items-center justify-between">
             <span>Aktivitas Terbaru</span>
             <div className="flex items-center gap-2">
                 {loading ? <span className="text-xs text-slate-400">Memuat...</span> : null}
-                <button onClick={onRefresh} className="p-1 rounded-full hover:bg-slate-100" title="Segarkan Aktivitas">
+                <button onClick={onRefresh} className="p-1 rounded-full hover:bg-slate-100" aria-label="Segarkan Aktivitas" title="Segarkan Aktivitas">
                     <RotateCw className="w-4 h-4 text-slate-500" />
                 </button>
             </div>
         </h3>
         <div className="space-y-3">
             {loading ? (
-                Array.from({ length: 3 }).map((_, i) => (
-                    <div key={i} className="flex items-start gap-3 animate-pulse">
-                        <div className="w-9 h-9 rounded-full bg-slate-200" />
-                        <div className="flex-1">
-                            <div className="h-4 bg-slate-200 rounded w-3/4 mb-2" />
-                            <div className="h-3 bg-slate-200 rounded w-1/2" />
-                        </div>
-                    </div>
-                ))
+                <SkeletonActivity count={3} />
             ) : error ? (
                 <p className="text-sm text-red-500">{error}</p>
             ) : activities.length > 0 ? (
-                activities.slice(0, 5).map((act, i) => (
-                    <div key={i} className="flex items-start gap-3">
-                        <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-sm font-bold text-[#005E54]">{act.user_initial || (act.actor ? act.actor.charAt(0) : 'U')}</div>
-                        <div>
-                            <div className="text-sm font-medium text-slate-800">{act.title || act.action}</div>
-                            <div className="text-xs text-slate-500">{act.time || new Date(act.created_at || act.date || Date.now()).toLocaleString('id-ID')}</div>
-                        </div>
+                <>
+                    <div className="space-y-3">
+                        {activities.map((act, i) => (
+                            <div key={i} className="flex items-start gap-3">
+                                <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-sm font-bold text-[#005E54]">{act.user_initial || (act.actor ? act.actor.charAt(0) : 'U')}</div>
+                                <div>
+                                    <div className="text-sm font-medium text-slate-800">{act.title || act.action}</div>
+                                    <div className="text-xs text-slate-500">{act.time || new Date(act.created_at || act.date || Date.now()).toLocaleString('id-ID')}</div>
+                                </div>
+                            </div>
+                        ))}
                     </div>
-                ))
+                    {pagination && pagination.totalPages > 1 && (
+                        <div className="flex items-center justify-between gap-2 mt-4 pt-4 border-t border-slate-200">
+                            <button
+                                onClick={() => onPageChange?.(pagination.page - 1)}
+                                disabled={pagination.page === 1}
+                                className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 rounded transition"
+                            >
+                                <ChevronLeft size={14} /> Sebelumnya
+                            </button>
+                            <span className="text-xs font-bold text-slate-600">
+                                Hal. {pagination.page}/{pagination.totalPages}
+                            </span>
+                            <button
+                                onClick={() => onPageChange?.(pagination.page + 1)}
+                                disabled={!pagination.hasMore}
+                                className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold bg-[#005E54] hover:bg-[#003d38] disabled:opacity-50 text-white rounded transition"
+                            >
+                                Selanjutnya <ChevronRight size={14} />
+                            </button>
+                        </div>
+                    )}
+                </>
             ) : (
                 <div className="text-center text-sm text-slate-400">
                     <p>Belum ada aktivitas terbaru</p>
@@ -241,7 +266,7 @@ const RecentActivity = ({ activities = [], loading = false, error = null, onRefr
     </div>
 );
 
-const UnifiedUpdates = ({ updates = [], tab = 'semua', onTabChange = null, loading = false, error = null, unreadCount = 0 }) => {
+const UnifiedUpdates = ({ updates = [], tab = 'semua', onTabChange = null, loading = false, error = null, unreadCount = 0, onDelete = null }) => {
     const filterUpdates = () => {
         if (tab === 'pengumuman') return updates.filter(u => u.type === 'announcement');
         if (tab === 'notifikasi') return updates.filter(u => u.type === 'notification');
@@ -252,51 +277,83 @@ const UnifiedUpdates = ({ updates = [], tab = 'semua', onTabChange = null, loadi
     const announcementCount = updates.filter(u => u.type === 'announcement').length;
     const notificationCount = updates.filter(u => u.type === 'notification').length;
 
-    const getTabColor = (tabName) => {
-        const bgMap = {
-            'semua': 'bg-slate-100 text-slate-900',
-            'pengumuman': 'bg-blue-100 text-blue-900',
-            'notifikasi': 'bg-orange-100 text-orange-900',
-        };
-        return bgMap[tabName] || bgMap['semua'];
-    };
-
-    const getTypeColor = (updateType, category) => {
+    const getTypeColors = (updateType, category) => {
         if (updateType === 'announcement') {
             const colors = {
-                'urgent': 'bg-red-50 border-red-200',
-                'maintenance': 'bg-orange-50 border-orange-200',
-                'event': 'bg-green-50 border-green-200',
-                'general': 'bg-blue-50 border-blue-200',
+                'urgent': { bg: 'bg-red-50', border: 'border-red-200', icon: '🚨', label: 'Urgent' },
+                'maintenance': { bg: 'bg-yellow-50', border: 'border-yellow-200', icon: '🔧', label: 'Maintenance' },
+                'event': { bg: 'bg-green-50', border: 'border-green-200', icon: '📅', label: 'Event' },
+                'general': { bg: 'bg-blue-50', border: 'border-blue-200', icon: '📢', label: 'Pengumuman' },
             };
             return colors[category] || colors.general;
         } else {
             const colors = {
-                'success': 'bg-green-50 border-green-200',
-                'warning': 'bg-orange-50 border-orange-200',
-                'error': 'bg-red-50 border-red-200',
-                'info': 'bg-blue-50 border-blue-200',
+                'success': { bg: 'bg-green-50', border: 'border-green-200', icon: '✅', label: 'Sukses' },
+                'warning': { bg: 'bg-orange-50', border: 'border-orange-200', icon: '⚠️', label: 'Peringatan' },
+                'error': { bg: 'bg-red-50', border: 'border-red-200', icon: '❌', label: 'Error' },
+                'info': { bg: 'bg-blue-50', border: 'border-blue-200', icon: 'ℹ️', label: 'Info' },
             };
             return colors[category] || colors.info;
         }
     };
 
+    const formatTime = (dateString) => {
+        if (!dateString) return 'Baru saja';
+        try {
+            const date = new Date(dateString);
+            if (isNaN(date.getTime())) return 'Baru saja';
+            
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMs / 3600000);
+            const diffDays = Math.floor(diffMs / 86400000);
+
+            if (diffMins < 1) return 'Baru saja';
+            if (diffMins < 60) return `${diffMins}m yang lalu`;
+            if (diffHours < 24) return `${diffHours}h yang lalu`;
+            if (diffDays < 7) return `${diffDays}d yang lalu`;
+            return date.toLocaleDateString('id-ID');
+        } catch (e) {
+            return 'Baru saja';
+        }
+    };
+
+    // Extract content from multiple possible field names
+    const getContent = (update) => {
+        return update.content || update.message || update.body || update.description || '(Konten tidak tersedia)';
+    };
+
+    // Extract date from multiple possible field names
+    const getDate = (update) => {
+        return update.created_at || update.date || update.timestamp || new Date().toISOString();
+    };
+
+    // Extract category with proper defaults
+    const getCategory = (update) => {
+        if (update.type === 'announcement') {
+            return update.category || update.announcement_type || 'general';
+        } else {
+            return update.category || update.notification_type || 'info';
+        }
+    };
+
     return (
-        <div className="glass-card rounded-[24px] p-5">
-            <div className="flex items-center justify-between mb-4">
-                <h3 className="font-bold text-slate-900 flex items-center gap-2">
-                    <Bell className="w-5 h-5" />
-                    Updates & Pengumuman
+        <div className="glass-card rounded-[24px] p-6">
+            <div className="flex items-center justify-between mb-5">
+                <h3 className="font-bold text-lg text-slate-900 flex items-center gap-2">
+                    <Bell className="w-5 h-5 text-[#005E54]" />
+                    Notifikasi & Pengumuman
                     {unreadCount > 0 && (
-                        <span className="inline-flex items-center justify-center w-6 h-6 bg-red-500 text-white text-xs font-bold rounded-full">
-                            {unreadCount}
+                        <span className="inline-flex items-center justify-center w-6 h-6 bg-red-500 text-white text-xs font-extrabold rounded-full animate-pulse">
+                            {unreadCount > 99 ? '99+' : unreadCount}
                         </span>
                     )}
                 </h3>
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-2 mb-4 border-b border-slate-200 pb-3">
+            <div className="flex gap-2 mb-5 border-b border-slate-200 pb-3 overflow-x-auto">
                 {[
                     { key: 'semua', label: 'Semua', count: updates.length },
                     { key: 'pengumuman', label: '📢 Pengumuman', count: announcementCount },
@@ -305,67 +362,110 @@ const UnifiedUpdates = ({ updates = [], tab = 'semua', onTabChange = null, loadi
                     <button
                         key={t.key}
                         onClick={() => onTabChange?.(t.key)}
-                        className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all whitespace-nowrap flex-shrink-0 ${
                             tab === t.key
-                                ? 'bg-[#D6F84C] text-[#002824]'
+                                ? 'bg-[#D6F84C] text-[#002824] shadow-md'
                                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                         }`}
                     >
-                        {t.label} {t.count > 0 && `(${t.count})`}
+                        {t.label}
+                        {t.count > 0 && <span className="ml-2 text-xs bg-slate-200/70 px-2 py-0.5 rounded-full">{t.count}</span>}
                     </button>
                 ))}
             </div>
 
             {/* Content */}
             {loading ? (
-                <div className="space-y-3">
-                    {Array.from({ length: 3 }).map((_, i) => (
-                        <div key={i} className="p-3 bg-slate-100 rounded-lg animate-pulse h-20" />
-                    ))}
-                </div>
+                <SkeletonCards count={3} />
             ) : error ? (
-                <div className="text-center py-6 text-slate-500">
-                    <p className="text-sm">{error}</p>
+                <div className="text-center py-8 text-slate-500">
+                    <AlertTriangle className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                    <p className="text-sm font-medium">{error}</p>
+                    <button 
+                        onClick={() => window.location.reload()}
+                        className="mt-3 text-xs text-[#005E54] font-bold hover:underline"
+                    >
+                        Coba Lagi
+                    </button>
                 </div>
             ) : filtered.length === 0 ? (
-                <div className="text-center py-8 text-slate-400">
-                    <Bell className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                    <p className="text-sm">
+                <div className="text-center py-12 text-slate-400">
+                    <Bell className="w-16 h-16 mx-auto mb-4 opacity-30" />
+                    <p className="text-sm font-medium mb-1">
                         {tab === 'semua' ? 'Tidak ada update' : `Tidak ada ${tab === 'pengumuman' ? 'pengumuman' : 'notifikasi'}`}
                     </p>
+                    <p className="text-xs">Kembali kemudian untuk melihat update terbaru</p>
                 </div>
             ) : (
-                <div className="space-y-2 max-h-96 overflow-y-auto">
-                    {filtered.map(update => (
-                        <div
-                            key={`${update.type}-${update.id}`}
-                            className={`p-3 rounded-lg border ${getTypeColor(update.type, update.category)} transition hover:shadow-md cursor-pointer`}
-                        >
-                            <div className="flex items-start gap-3">
-                                <div className="text-lg mt-0.5">{update.icon}</div>
-                                <div className="flex-1 min-w-0">
-                                    <div className="flex items-start justify-between gap-2">
-                                        <h4 className="font-semibold text-sm text-slate-900 line-clamp-1">
-                                            {update.title}
-                                        </h4>
-                                        <span className={`px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${
-                                            update.type === 'announcement'
-                                                ? 'bg-blue-100 text-blue-700'
-                                                : 'bg-orange-100 text-orange-700'
-                                        }`}>
-                                            {update.type === 'announcement' ? '📢' : '🔔'}
-                                        </span>
+                <div className="space-y-3 max-h-[520px] overflow-y-auto pr-2 custom-scrollbar">
+                    {filtered.map(update => {
+                        const category = getCategory(update);
+                        const colors = getTypeColors(update.type, category);
+                        const content = getContent(update);
+                        const dateStr = getDate(update);
+                        const title = update.title || '(Tanpa judul)';
+
+                        return (
+                            <div
+                                key={`${update.type}-${update.id}`}
+                                className={`p-4 rounded-xl border-2 ${colors.bg} ${colors.border} transition-all hover:shadow-lg hover:scale-[1.01] cursor-pointer group`}
+                            >
+                                <div className="flex items-start gap-3">
+                                    {/* Icon Badge */}
+                                    <div className="flex-shrink-0 mt-1">
+                                        <div className="text-2xl">{colors.icon}</div>
                                     </div>
-                                    <p className="text-xs text-slate-600 line-clamp-2 mt-1">
-                                        {update.content || update.body}
-                                    </p>
-                                    <div className="text-xs text-slate-400 mt-2">
-                                        {new Date(update.created_at).toLocaleString('id-ID')}
+
+                                    {/* Content */}
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-start justify-between gap-2 mb-1">
+                                            <h4 className="font-bold text-sm text-slate-900 line-clamp-1 group-hover:text-[#005E54] transition flex-1">
+                                                {title}
+                                            </h4>
+                                            <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider flex-shrink-0 ${
+                                                update.type === 'announcement'
+                                                    ? 'bg-blue-100 text-blue-700'
+                                                    : 'bg-orange-100 text-orange-700'
+                                            }`}>
+                                                {colors.label}
+                                            </span>
+                                        </div>
+
+                                        {/* Message Preview */}
+                                        <p className="text-xs text-slate-700 line-clamp-2 mb-3 leading-relaxed break-words">
+                                            {content}
+                                        </p>
+
+                                        {/* Footer */}
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-xs text-slate-500 font-medium flex items-center gap-1">
+                                                <Clock className="w-3 h-3" />
+                                                {formatTime(dateStr)}
+                                            </span>
+                                            <div className="flex gap-2">
+                                                <button 
+                                                    onClick={() => alert(title + '\n\n' + content)}
+                                                    aria-label="Lihat Detail"
+                                                    title="Lihat Detail"
+                                                    className="p-1.5 text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-all border border-blue-200 flex items-center justify-center hover:shadow-sm"
+                                                >
+                                                    <Eye className="w-3.5 h-3.5" />
+                                                </button>
+                                                <button 
+                                                    onClick={() => onDelete?.(update.id, update.type)}
+                                                    aria-label="Hapus"
+                                                    title="Hapus"
+                                                    className="p-1.5 text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-all border border-red-200 flex items-center justify-center hover:shadow-sm"
+                                                >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                </button>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
         </div>
@@ -374,7 +474,7 @@ const UnifiedUpdates = ({ updates = [], tab = 'semua', onTabChange = null, loadi
 
 // --- Main Layout ---
 
-export default function Dashboard({ auth, trainings = [], completedTrainings = [], upcomingTrainings = [], recentActivity = [], announcements = [], notifications = { unread_count: 0 } }) {
+export default function Dashboard({ auth, trainings = [], assignedTrainings = [], completedTrainings = [], upcomingTrainings = [], recentActivity = [], announcements = [], notifications = { unread_count: 0 } }) {
     const user = auth?.user || {};
 
     // Search state (uses backend API when searching)
@@ -392,6 +492,8 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
 
     // Recent activity (initialize from server prop, allow refresh)
     const [recentActivities, setRecentActivities] = useState(Array.isArray(recentActivity) ? recentActivity : []);
+    const recentPagination = usePagination(1, 5);
+    const [recentActivityMeta, setRecentActivityMeta] = useState({ last_page: 1, total: 0 });
     const [recentLoading, setRecentLoading] = useState(false);
     const [recentError, setRecentError] = useState(null);
 
@@ -410,107 +512,317 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
     const [statsLoading, setStatsLoading] = useState(false);
     const [statsError, setStatsError] = useState(null);
 
-    const fetchSchedules = async () => {
-        setSchedulesLoading(true);
-        setSchedulesError(null);
+    const fetchSchedules = async (isMounted, signal) => {
         try {
-            const res = await fetch('/api/user/training-schedules', { headers: { Accept: 'application/json' }});
+            const res = await fetch(`${API_BASE}${API_ENDPOINTS.USER_SCHEDULES}`, { 
+                headers: { Accept: 'application/json' },
+                signal // Add AbortController signal
+            });
             if (!res.ok) throw new Error('Network response was not ok');
             const data = await res.json();
             console.log('Training schedules data:', data);
             
-            // Handle both direct array and nested response (data.data)
-            const events = Array.isArray(data.data) ? data.data : Array.isArray(data) ? data : [];
+            // Only update state if component is still mounted
+            if (!isMounted) return;
+            
+            // Extract data from inconsistent API response format
+            const events = extractData(data);
             setSchedules(events);
         } catch (err) {
+            // Don't log or update state if request was aborted (expected on unmount)
+            if (err.name === 'AbortError') {
+                console.log('Schedules fetch aborted on component unmount');
+                return;
+            }
+            
             console.error('Error fetching schedules:', err);
+            // Only update state if component is still mounted
+            if (!isMounted) return;
             setSchedulesError('Gagal memuat jadwal pelatihan');
         } finally {
+            // Only update state if component is still mounted
+            if (!isMounted) return;
             setSchedulesLoading(false);
         }
     };
 
-    const fetchRecommendations = async () => {
-        setRecommendationsLoading(true);
-        setRecommendationsError(null);
+    const fetchRecommendations = async (isMounted, signal) => {
         try {
-            const res = await fetch('/api/user/training-recommendations', { headers: { Accept: 'application/json' }});
+            const res = await fetch(`${API_BASE}${API_ENDPOINTS.DASHBOARD_RECOMMENDATIONS}`, { 
+                headers: { Accept: 'application/json' },
+                signal // Add AbortController signal
+            });
             if (!res.ok) throw new Error('Network response was not ok');
             const data = await res.json();
             console.log('Training recommendations data:', data);
             
-            // Handle both direct array and nested response (data.data)
-            const recos = Array.isArray(data.data) ? data.data : Array.isArray(data) ? data : [];
+            // Only update state if component is still mounted
+            if (!isMounted) return;
+            
+            // Extract data from inconsistent API response format
+            const recos = extractData(data);
             setRecommendations(recos);
         } catch (err) {
+            // Don't log or update state if request was aborted (expected on unmount)
+            if (err.name === 'AbortError') {
+                console.log('Recommendations fetch aborted on component unmount');
+                return;
+            }
+            
             console.error('Error fetching recommendations:', err);
+            // Only update state if component is still mounted
+            if (!isMounted) return;
             setRecommendationsError('Gagal memuat rekomendasi pelatihan');
         } finally {
+            // Only update state if component is still mounted
+            if (!isMounted) return;
             setRecommendationsLoading(false);
         }
     };
 
-    const fetchStats = async () => {
-        setStatsLoading(true);
-        setStatsError(null);
+    const fetchStats = async (isMounted, signal) => {
         try {
-            const res = await fetch('/api/dashboard/statistics', { headers: { Accept: 'application/json' }});
+            const res = await fetch(`${API_BASE}${API_ENDPOINTS.DASHBOARD_STATS}`, { 
+                headers: { Accept: 'application/json' },
+                signal // Add AbortController signal
+            });
             if (!res.ok) throw new Error('Network response was not ok');
             const data = await res.json();
+            
+            // Only update state if component is still mounted
+            if (!isMounted) return;
+            
             setStats(data);
         } catch (err) {
+            // Don't log or update state if request was aborted (expected on unmount)
+            if (err.name === 'AbortError') {
+                console.log('Stats fetch aborted on component unmount');
+                return;
+            }
+            
+            // Only update state if component is still mounted
+            if (!isMounted) return;
             setStatsError('Gagal memuat statistik');
         } finally {
+            // Only update state if component is still mounted
+            if (!isMounted) return;
             setStatsLoading(false);
         }
     };
 
-    const fetchAnnouncements = async () => {
-        setUnifiedLoading(true);
-        setUnifiedError(null);
+    const fetchAnnouncements = async (isMounted, signal) => {
         try {
-            const res = await fetch('/api/dashboard/unified-updates', { headers: { Accept: 'application/json' }});
+            const res = await fetch(`${API_BASE}${API_ENDPOINTS.DASHBOARD_UNIFIED_UPDATES}`, { 
+                headers: { Accept: 'application/json' },
+                signal // Add AbortController signal
+            });
             if (!res.ok) throw new Error('Network response was not ok');
             const data = await res.json();
             console.log('Unified updates:', data);
+            
+            // Only update state if component is still mounted
+            if (!isMounted) return;
+            
             setUnifiedUpdates(data.data || []);
             setUnreadCount(data.unread_count || 0);
         } catch (err) {
+            // Don't log or update state if request was aborted (expected on unmount)
+            if (err.name === 'AbortError') {
+                console.log('Announcements fetch aborted on component unmount');
+                return;
+            }
+            
             console.error('Error fetching unified updates:', err);
+            // Only update state if component is still mounted
+            if (!isMounted) return;
             setUnifiedError('Gagal memuat update');
         } finally {
+            // Only update state if component is still mounted
+            if (!isMounted) return;
             setUnifiedLoading(false);
         }
     };
 
-    const fetchRecent = async () => {
-        setRecentLoading(true);
-        setRecentError(null);
+    const deleteNotification = async (notificationId, type) => {
         try {
-            const res = await fetch('/api/user/recent-activity', { headers: { Accept: 'application/json' }});
+            // Determine the correct endpoint
+            const endpoint = type === 'announcement' 
+                ? `/api/user/announcements/${notificationId}` 
+                : `/api/user/notifications/${notificationId}`;
+            
+            console.log(`Deleting ${type} with ID ${notificationId} from endpoint: ${endpoint}`);
+            
+            const res = await fetch(endpoint, {
+                method: 'DELETE',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content
+                }
+            });
+            
+            const data = await res.json();
+            console.log(`Delete response:`, data);
+            
+            if (!res.ok) {
+                console.error(`Delete failed with status ${res.status}:`, data);
+                alert(`Gagal menghapus ${type === 'announcement' ? 'pengumuman' : 'notifikasi'}: ${data.message || 'Unknown error'}`);
+                return;
+            }
+            
+            // Remove from UI immediately (optimistic update)
+            setUnifiedUpdates(prev => prev.filter(u => !(u.id === notificationId && u.type === type)));
+            console.log(`Successfully deleted ${type} ID ${notificationId}`);
+            
+            // Refresh to sync with backend after a short delay
+            setTimeout(() => fetchAnnouncements(), 500);
+        } catch (err) {
+            console.error('Error deleting notification:', err);
+            alert(`Gagal menghapus: ${err.message}`);
+        }
+    };
+
+    const fetchRecent = async (isMounted, signal) => {
+        try {
+            const params = new URLSearchParams();
+            params.append('page', recentPagination.page);
+            params.append('per_page', recentPagination.pageSize);
+            
+            const res = await fetch(`${API_BASE}${API_ENDPOINTS.USER_ACTIVITY}?${params.toString()}`, { 
+                headers: { Accept: 'application/json' },
+                signal // Add AbortController signal
+            });
             if (!res.ok) throw new Error('Network response was not ok');
             const data = await res.json();
-            setRecentActivities(Array.isArray(data) ? data : []);
+            
+            // Only update state if component is still mounted
+            if (!isMounted) return;
+            
+            const activityData = Array.isArray(data) ? data : (data.data || []);
+            setRecentActivities(activityData);
+            
+            // Update pagination meta if available
+            if (data.meta) {
+                setRecentActivityMeta(data.meta);
+                recentPagination.updateMeta(activityData, data.meta);
+            }
         } catch (err) {
+            // Don't log or update state if request was aborted (expected on unmount)
+            if (err.name === 'AbortError') {
+                console.log('Recent activity fetch aborted on component unmount');
+                return;
+            }
+            
+            // Only update state if component is still mounted
+            if (!isMounted) return;
             setRecentError('Gagal memuat aktivitas terbaru');
         } finally {
+            // Only update state if component is still mounted
+            if (!isMounted) return;
             setRecentLoading(false);
         }
     };
 
+    // Handle pagination page changes for recent activity
     useEffect(() => {
-        // Fetch both on mount to keep UI live (server props provide initial state)
-        fetchAnnouncements();
-        fetchRecent();
-        fetchSchedules();
-        fetchRecommendations();
-        fetchStats();
+        let isMounted = true;
+        const abortController = new AbortController();
+        const signal = abortController.signal;
+        
+        fetchRecent(isMounted, signal);
+        
+        return () => { 
+            isMounted = false;
+            abortController.abort(); // Cancel fetch if component unmounts
+        };
+    }, [recentPagination.page]);
+
+    const handleRecentActivityPageChange = (newPage) => {
+        recentPagination.setPage(newPage);
+    };
+
+    useEffect(() => {
+        // Track if component is still mounted to prevent setState on unmounted component
+        let isMounted = true;
+        
+        // Create an AbortController for all fetch requests in this effect
+        const abortController = new AbortController();
+        const signal = abortController.signal;
+        
+        // Fetch all data on mount using concurrent requests
+        const loadAllData = async () => {
+            try {
+                // Use Promise.all for concurrent requests (better performance)
+                await Promise.all([
+                    fetchAnnouncements(isMounted, signal),
+                    fetchRecent(isMounted, signal),
+                    fetchSchedules(isMounted, signal),
+                    fetchRecommendations(isMounted, signal),
+                    fetchStats(isMounted, signal)
+                ]);
+            } catch (error) {
+                // Log error but don't crash - individual fetch functions handle errors
+                // AbortError is expected on unmount, so don't log it
+                if (error?.name !== 'AbortError') {
+                    console.error('Error loading dashboard data:', error);
+                }
+            }
+        };
+        
+        // Load data immediately on mount
+        loadAllData();
+
+        // Auto-refresh announcements every 30 seconds (only if mounted)
+        // This keeps the updates and unread count fresh
+        const refreshInterval = setInterval(() => {
+            if (isMounted && !signal.aborted) {
+                fetchAnnouncements(isMounted, signal);
+            }
+        }, 30000); // 30 second polling interval
+
+        // Listen for storage changes (when user deletes from another tab/window)
+        const handleStorageChange = (e) => {
+            if (!isMounted || signal.aborted) return;
+            if (e.key === 'notification-refresh' || e.key === 'announcement-refresh') {
+                console.log('Detected change from another tab, refreshing...');
+                fetchAnnouncements(isMounted, signal);
+            }
+        };
+
+        // Listen for custom events (when user deletes from same tab)
+        const handleCustomEvent = () => {
+            if (!isMounted || signal.aborted) return;
+            console.log('Custom event triggered, refreshing...');
+            fetchAnnouncements(isMounted, signal);
+        };
+
+        window.addEventListener('storage', handleStorageChange);
+        window.addEventListener('notification-updated', handleCustomEvent);
+
+        // Cleanup function - called when component unmounts
+        return () => {
+            // Mark component as unmounted to prevent setState
+            isMounted = false;
+            
+            // Abort all pending fetch requests to prevent memory leaks and zombie requests
+            abortController.abort();
+            
+            // Clear interval to prevent memory leaks
+            clearInterval(refreshInterval);
+            
+            // Remove event listeners
+            window.removeEventListener('storage', handleStorageChange);
+            window.removeEventListener('notification-updated', handleCustomEvent);
+            
+            console.log('Dashboard cleanup: all polling and requests cancelled');
+        };
     }, []);
 
-    const handleSearch = async (e) => {
-        e?.preventDefault?.();
-        if (!searchQuery.trim()) {
+    // Debounced search function with AbortController support
+    const performSearch = async (query, signal) => {
+        if (!query.trim()) {
             setSearchResults(null);
+            setSearchError(null);
             return;
         }
 
@@ -518,42 +830,111 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
         setSearchError(null);
 
         try {
-            const res = await fetch(`/api/user/trainings?search=${encodeURIComponent(searchQuery)}`, {
-                headers: { Accept: 'application/json' }
+            const res = await fetch(`${API_BASE}${API_ENDPOINTS.USER_TRAININGS}?search=${encodeURIComponent(query)}&per_page=50`, {
+                headers: { Accept: 'application/json' },
+                signal // Add AbortController signal
             });
 
             if (!res.ok) throw new Error('Network response was not ok');
 
-            const data = await res.json();
+            const responseData = await res.json();
+            // Handle both paginated and direct array responses
+            const data = responseData.data || (Array.isArray(responseData) ? responseData : []);
             setSearchResults(Array.isArray(data) ? data : []);
         } catch (err) {
-            setSearchError('Gagal mengambil hasil pencarian');
-            // fallback: client-side filter (derive from `trainings` prop to avoid referencing `trainingsArray` before it's declared)
-            const fallback = (Array.isArray(trainings) ? trainings : Object.values(trainings || {})).filter(t => (t.title || '').toLowerCase().includes(searchQuery.toLowerCase()));
+            // Don't log or show error if request was aborted (expected on new search or unmount)
+            if (err.name === 'AbortError') {
+                console.log('Search request cancelled');
+                return;
+            }
+            
+            console.error('Search error:', err);
+            setSearchError('Gagal mencari. Menggunakan pencarian lokal...');
+            // Fallback: client-side filter
+            const fallback = (Array.isArray(trainings) ? trainings : Object.values(trainings || {})).filter(t => 
+                (t.title || '').toLowerCase().includes(query.toLowerCase()) ||
+                (t.description || '').toLowerCase().includes(query.toLowerCase())
+            );
             setSearchResults(fallback);
         } finally {
             setIsSearching(false);
         }
     };
 
+    // Debounce search with useEffect and AbortController
+    const searchTimeoutRef = React.useRef(null);
+    const searchAbortControllerRef = React.useRef(null);
+
+    React.useEffect(() => {
+        // Abort any previous search request
+        if (searchAbortControllerRef.current) {
+            searchAbortControllerRef.current.abort();
+        }
+        
+        // Clear existing timeout
+        if (searchTimeoutRef.current) {
+            clearTimeout(searchTimeoutRef.current);
+        }
+
+        // Only search if query is not empty
+        if (searchQuery.trim()) {
+            setIsSearching(true);
+            searchTimeoutRef.current = setTimeout(() => {
+                // Create new AbortController for this search
+                searchAbortControllerRef.current = new AbortController();
+                performSearch(searchQuery, searchAbortControllerRef.current.signal);
+            }, 300); // 300ms debounce
+        } else {
+            setSearchResults(null);
+            setSearchError(null);
+            setIsSearching(false);
+        }
+
+        return () => {
+            // Cleanup: abort search and clear timeout on unmount or query change
+            if (searchTimeoutRef.current) {
+                clearTimeout(searchTimeoutRef.current);
+            }
+            if (searchAbortControllerRef.current) {
+                searchAbortControllerRef.current.abort();
+            }
+        };
+    }, [searchQuery]);
+
+    const handleSearch = (e) => {
+        e?.preventDefault?.();
+        if (!searchQuery.trim()) {
+            setSearchResults(null);
+            return;
+        }
+        
+        // Abort any previous search
+        if (searchAbortControllerRef.current) {
+            searchAbortControllerRef.current.abort();
+        }
+        
+        // Create new AbortController for this search
+        searchAbortControllerRef.current = new AbortController();
+        performSearch(searchQuery, searchAbortControllerRef.current.signal);
+    };
+
     // Ensure trainings is always an array
     const trainingsArray = Array.isArray(trainings) ? trainings : Object.values(trainings || {});
+    const assignedArray = Array.isArray(assignedTrainings) ? assignedTrainings : Object.values(assignedTrainings || {});
     const completedArray = Array.isArray(completedTrainings) ? completedTrainings : Object.values(completedTrainings || {});
 
     // Calculate statistics
     const totalTrainings = trainingsArray.length || 0;
     const completedCount = completedArray.length || 0;
     const inProgressCount = trainingsArray.filter(t => t?.status === 'in_progress').length || 0;
-    const certifications = trainingsArray.filter(t => t?.is_certified).length || 0;
+    const certifications = trainingsArray.filter(t => t?.is_certified === 1 || t?.is_certified === true).length || 0;
     
-    // Get active courses (in progress or can be started: enrolled/not_started)
+    // Get active courses (sorted by progress, highest first)
     const activeCourses = trainingsArray
-        .filter(t => ['in_progress', 'enrolled', 'not_started'].includes(t?.status))
-        // Sort so in-progress & higher progress items show first
         .sort((a, b) => (b.progress || 0) - (a.progress || 0));
 
-    // Build assigned list from recommendations
-    const assignedList = recommendations || [];
+    // Build assigned list (trainings that haven't been started)
+    const assignedList = assignedArray || [];
 
     // Get first active course for "Continue Learning"
     const continueCourse = activeCourses[0] || trainingsArray[0] || assignedList[0];
@@ -604,11 +985,57 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
                                         placeholder="Cari kursus..." 
                                         value={searchQuery}
                                         onChange={(e) => setSearchQuery(e.target.value)}
+                                        autoComplete="off"
                                         className="pl-10 pr-20 py-2 bg-white/10 border border-white/10 rounded-full text-white placeholder-white/50 text-sm focus:outline-none focus:bg-white/20 transition-all w-48 focus:w-64"
                                     />
-                                    <button type="submit" className="absolute right-1 top-1/2 -translate-y-1/2 px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs">Cari</button>
+                                    <button type="submit" aria-label="Cari kursus" title="Submit search" className="absolute right-1 top-1/2 -translate-y-1/2 px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs transition">Cari</button>
                                     <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/50" />
-                                    {isSearching && <span className="absolute left-10 top-full text-xs mt-1 text-white">Mencari...</span>}
+                                    
+                                    {/* Search Dropdown */}
+                                    {(searchQuery || isSearching) && (
+                                        <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-xl z-50 max-h-96 overflow-y-auto border border-slate-200">
+                                            {isSearching ? (
+                                                <div className="p-4 text-center">
+                                                    <div className="inline-block animate-spin rounded-full h-5 w-5 border-b-2 border-[#005E54]"></div>
+                                                    <p className="text-sm text-slate-600 mt-2">Mencari...</p>
+                                                </div>
+                                            ) : searchError ? (
+                                                <div className="p-4 text-center text-yellow-600 text-sm">{searchError}</div>
+                                            ) : searchResults && searchResults.length > 0 ? (
+                                                <div className="divide-y divide-slate-100">
+                                                    <div className="p-3 bg-slate-50 text-xs font-bold text-slate-500">
+                                                        Ditemukan {searchResults.length} kursus
+                                                    </div>
+                                                    {searchResults.slice(0, 5).map(result => (
+                                                        <Link
+                                                            key={`${result.id}`}
+                                                            href={`/training/${result.id}`}
+                                                            className="block p-3 hover:bg-slate-50 transition"
+                                                        >
+                                                            <p className="font-bold text-sm text-slate-900 line-clamp-1">{result.title}</p>
+                                                            <p className="text-xs text-slate-600 line-clamp-1">{result.description || 'Tidak ada deskripsi'}</p>
+                                                            {result.progress > 0 && (
+                                                                <div className="mt-2 w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                                                    <div className="h-full bg-[#005E54]" style={{ width: `${result.progress}%` }}></div>
+                                                                </div>
+                                                            )}
+                                                        </Link>
+                                                    ))}
+                                                    {searchResults.length > 5 && (
+                                                        <div className="p-3 text-center">
+                                                            <Link href={`/my-trainings?search=${encodeURIComponent(searchQuery)}`} className="text-sm font-bold text-[#005E54] hover:underline">
+                                                                Lihat semua ({searchResults.length})
+                                                            </Link>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ) : searchQuery && !isSearching ? (
+                                                <div className="p-4 text-center text-slate-600 text-sm">
+                                                    Tidak ada kursus ditemukan untuk "{searchQuery}"
+                                                </div>
+                                            ) : null}
+                                        </div>
+                                    )}
                                 </form>
                                 <Link href="/notifications" className="relative p-2 bg-white/10 rounded-full hover:bg-white/20 transition text-white">
                                     <Bell className="w-5 h-5" />
@@ -730,7 +1157,12 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
                             </div>
 
                             {/* 3. Recommended For You */}
-                            {recommendations.length > 0 && (
+                            {recommendationsLoading ? (
+                                <div>
+                                    <h3 className="text-xl font-bold text-slate-900 mb-4">Rekomendasi Untuk Anda</h3>
+                                    <SkeletonCards count={3} />
+                                </div>
+                            ) : recommendations.length > 0 && (
                                 <div>
                                     <h3 className="text-xl font-bold text-slate-900 mb-4">Rekomendasi Untuk Anda</h3>
                                     <div className="space-y-4 animate-enter" style={{ animationDelay: '400ms' }}>
@@ -741,23 +1173,51 @@ export default function Dashboard({ auth, trainings = [], completedTrainings = [
                                 </div>
                             )}
 
+                            {/* 4. New Dashboard Features */}
+                            
+                            {/* Learning Statistics Cards */}
+                            <ErrorBoundary label="Kartu Statistik">
+                                <div style={{ animationDelay: '500ms' }} className="animate-enter">
+                                    <LearningStatsCards />
+                                </div>
+                            </ErrorBoundary>
+
+                            {/* Goal Tracker Widget */}
+                            <ErrorBoundary label="Pelacak Tujuan">
+                                <div style={{ animationDelay: '600ms' }} className="animate-enter">
+                                    <GoalTrackerWidget />
+                                </div>
+                            </ErrorBoundary>
+
+                            {/* Leaderboard Widget */}
+                            <ErrorBoundary label="Papan Peringkat">
+                                <div style={{ animationDelay: '700ms' }} className="animate-enter">
+                                    <LeaderboardWidget />
+                                </div>
+                            </ErrorBoundary>
+
                         </div>
 
                         {/* Right Column (Sidebar) - 4 cols */}
                         <div className="lg:col-span-4 space-y-6">
                             
                             {/* Unified Updates & Announcements (Tabbed) */}
-                            <UnifiedUpdates 
-                                updates={unifiedUpdates} 
-                                tab={updatesTab}
-                                onTabChange={setUpdatesTab}
-                                loading={unifiedLoading}
-                                error={unifiedError}
-                                unreadCount={unreadCount}
-                            />
+                            <ErrorBoundary label="Notifikasi & Pengumuman">
+                                <UnifiedUpdates 
+                                    updates={unifiedUpdates} 
+                                    tab={updatesTab}
+                                    onTabChange={setUpdatesTab}
+                                    loading={unifiedLoading}
+                                    error={unifiedError}
+                                    unreadCount={unreadCount}
+                                    onDelete={deleteNotification}
+                                />
+                            </ErrorBoundary>
 
                             {/* Recent Activity */}
-                            <RecentActivity activities={recentActivities} loading={recentLoading} error={recentError} onRefresh={fetchRecent} />
+                            <ErrorBoundary label="Aktivitas Terbaru">
+                                <RecentActivity activities={recentActivities} loading={recentLoading} error={recentError} onRefresh={() => { setRecentLoading(true); const isMounted = true; fetchRecent(isMounted); }} pagination={recentPagination} onPageChange={handleRecentActivityPageChange} />
+                            </ErrorBoundary>
 
                             {/* Calendar / Upcoming Widget */}
                             <div className="glass-card rounded-[24px] p-6">

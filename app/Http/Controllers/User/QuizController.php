@@ -298,6 +298,22 @@ class QuizController extends Controller
                     'message' => 'Program ini berakhir pada ' . $module->end_date->format('d M Y H:i') . '. Anda tidak dapat submit jawaban.'
                 ], 403);
             }
+
+            // VALIDATION: Check if module has questions for this exam type
+            // Normalize exam type: convert pre_test -> pretest, post_test -> posttest
+            $normalizedExamType = str_replace('_', '', $attempt->exam_type);
+            
+            $questionCount = Question::where('module_id', $attempt->module_id)
+                ->where('question_type', $normalizedExamType)
+                ->count();
+            
+            if ($questionCount === 0) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Quiz belum tersedia',
+                    'message' => "Quiz jenis {$attempt->exam_type} untuk module ini belum memiliki soal. Hubungi admin."
+                ], 400);
+            }
             
             $answers = $request->input('answers', []);
             
@@ -372,7 +388,8 @@ class QuizController extends Controller
             $questions = $userAnswers->map(function($answer) {
                 $question = $answer->question;
                 $imageUrl = null;
-                if ($question->image_url && Storage::disk('public')->exists(str_replace('/storage/', '', $question->image_url))) {
+                // Include image_url directly if it exists
+                if ($question->image_url) {
                     $imageUrl = $question->image_url;
                 }
                 
@@ -413,11 +430,11 @@ class QuizController extends Controller
             // Default to 00:00 instead of '-' so UI can display 0s rather than '-'
             $timeSpent = '00:00';
             if ($attempt->started_at && $attempt->finished_at) {
-                $diffInSeconds = $attempt->finished_at->diffInSeconds($attempt->started_at);
+                $diffInSeconds = max(0, $attempt->finished_at->getTimestamp() - $attempt->started_at->getTimestamp());
                 $minutes = floor($diffInSeconds / 60);
                 $seconds = $diffInSeconds % 60;
                 $timeSpent = sprintf('%02d:%02d', $minutes, $seconds);
-            } elseif (isset($attempt->duration_minutes) && $attempt->duration_minutes !== null) {
+            } elseif (isset($attempt->duration_minutes) && $attempt->duration_minutes !== null && $attempt->duration_minutes >= 0) {
                 $minutes = floor($attempt->duration_minutes);
                 $seconds = round(($attempt->duration_minutes - $minutes) * 60);
                 $timeSpent = sprintf('%02d:%02d', $minutes, $seconds);

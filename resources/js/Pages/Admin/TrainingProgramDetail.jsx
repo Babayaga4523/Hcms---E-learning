@@ -110,31 +110,20 @@ const MaterialCard = ({ material }) => (
 // --- Main Component ---
 
 export default function TrainingProgramDetail({ program: initialProgram, materials: initialMaterials = [], quizzes: initialQuizzes = [] }) {
-    // Mock Data if props are empty for preview
-    const program = initialProgram || {
-        id: 1,
-        name: 'Wondr Service Excellence 2025',
-        description: 'Comprehensive training designed to elevate customer service standards across all BNI branches. Includes modules on empathy, digital handling, and conflict resolution.',
-        duration_hours: 12.5,
-        target_audience: 'Frontliners & CS',
-        instructor_name: 'Dr. Sarah Wijaya',
-        status: 'published',
-        category: 'Soft Skills',
-        created_at: '2024-01-20',
-        enrollment_count: 1250,
-        completion_rate: 82,
-        rating: 4.8
-    };
-
-    const materials = initialMaterials.length ? initialMaterials : [
+    // Use ONLY real data from backend - no mock data
+    const program = initialProgram;
+    const materials = initialMaterials && initialMaterials.length > 0 ? initialMaterials : [];
+    
+    // Show warning if no real data
+    const showWarning = !program;
+    
+    const quizzes = initialQuizzes && initialQuizzes.length > 0 ? initialQuizzes : [];
+    
+    // Fallback render for empty data
+    const fallbackRender = [
         { id: 1, title: 'Modul 1: Dasar Pelayanan', type: 'pdf', size: '2.4 MB' },
         { id: 2, title: 'Video: Roleplay Skenario Sulit', type: 'video', duration: '15:20' },
         { id: 3, title: 'Panduan Teknis Wondr App', type: 'pdf', size: '5.1 MB' },
-    ];
-
-    const quizzes = initialQuizzes.length ? initialQuizzes : [
-        { id: 1, title: 'Pre-Test: Knowledge Check', questions: 10, passing: 70 },
-        { id: 2, title: 'Final Assessment', questions: 50, passing: 85 },
     ];
 
     // State

@@ -53,7 +53,7 @@ trait LearningAnalyticsTrait
     public static function countCertifications($userId)
     {
         return UserTraining::where('user_id', $userId)
-            ->where('is_certified', true)
+            ->where('is_certified', 1)
             ->count();
     }
 

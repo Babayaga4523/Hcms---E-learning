@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Head, Link, router } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
+import { extractData, extractMeta } from '@/Utilities/apiResponseHandler';
+import ErrorBoundary from '@/Components/ErrorBoundary';
+import axiosInstance from '@/Services/axiosInstance';
+import { API_BASE, API_ENDPOINTS } from '@/Config/api';
+import { getErrorMessage, isRetryableError, getRetryDelay, getMaxRetries, logError } from '@/Utils/errorHandler';
 import { 
     Search, Filter, Star, Clock, Users, BookOpen, 
     TrendingUp, Award, Play, ChevronDown, Grid3x3, 
@@ -53,7 +58,7 @@ const WondrStyles = () => (
 );
 
 // --- Sample Data (Replace with API call) ---
-const CATEGORIES = [
+const DEFAULT_CATEGORIES = [
     { id: 'all', name: 'Semua', icon: Grid3x3, color: 'slate' },
     { id: 'compliance', name: 'Compliance', icon: Shield, color: 'blue' },
     { id: 'leadership', name: 'Leadership', icon: Target, color: 'purple' },
@@ -61,6 +66,8 @@ const CATEGORIES = [
     { id: 'soft-skills', name: 'Soft Skills', icon: Users, color: 'green' },
     { id: 'product', name: 'Product Knowledge', icon: Briefcase, color: 'red' }
 ];
+
+let CATEGORIES = DEFAULT_CATEGORIES;
 
 const DIFFICULTY_LEVELS = [
     { value: 'all', label: 'Semua Level' },
@@ -79,7 +86,7 @@ const SORT_OPTIONS = [
 // --- Sub Components ---
 const TrainingCard = ({ training }) => {
     const getCategoryColor = (category) => {
-        const cat = CATEGORIES.find(c => c.id === category);
+        const cat = categories.find(c => c.id === category);
         return cat?.color || 'slate';
     };
 
@@ -118,7 +125,7 @@ const TrainingCard = ({ training }) => {
                 {/* Overlay Info */}
                 <div className="absolute top-3 left-3 flex gap-2">
                     <span className={`category-badge px-3 py-1 ${colorMap[getCategoryColor(training.category)]} rounded-full text-xs font-bold`}>
-                        {CATEGORIES.find(c => c.id === training.category)?.name}
+                        {categories.find(c => c.id === training.category)?.name}
                     </span>
                     {training.is_new && (
                         <span className="px-3 py-1 bg-[#D6F84C] text-[#002824] rounded-full text-xs font-bold flex items-center gap-1">
@@ -206,7 +213,7 @@ const TrainingCard = ({ training }) => {
                                     // Disable/enroll feedback
                                     btn.setAttribute('disabled', 'disabled');
 
-                                    await axios.post(`/api/training/${training.id}/start`);
+                                    await axiosInstance.post(API_ENDPOINTS.TRAINING_ENROLL(training.id));
 
                                     // navigate to training detail
                                     window.location.href = `/training/${training.id}`;
@@ -239,6 +246,7 @@ const TrainingCard = ({ training }) => {
 const EnrolledCard = ({ training }) => {
     const status = training.enrollment_status || training.enrollment_status || '';
     const progress = training.progress ?? 0;
+    const isCompleted = status === 'completed' && progress >= 100;
 
     return (
         <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col justify-between">
@@ -257,7 +265,7 @@ const EnrolledCard = ({ training }) => {
                 </div>
             </div>
             <div className="mt-4 flex items-center gap-2">
-                {status === 'completed' ? (
+                {isCompleted ? (
                     <Link href={`/training/${training.id}/results`} className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold hover:bg-slate-50">Review Hasil</Link>
                 ) : (
                     <Link href={`/training/${training.id}`} className="px-4 py-2 bg-[#005E54] text-white rounded-xl text-sm font-bold hover:bg-[#00403a]">Lanjutkan</Link>
@@ -267,7 +275,7 @@ const EnrolledCard = ({ training }) => {
     );
 };
 
-const FilterSidebar = ({ filters, setFilters, onFilterChange, isMobile, onClose }) => {
+const FilterSidebar = ({ filters, setFilters, onFilterChange, isMobile, onClose, categories = DEFAULT_CATEGORIES }) => {
     const FilterSection = ({ title, children }) => (
         <div className="space-y-3">
             <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wide">{title}</h4>
@@ -287,7 +295,7 @@ const FilterSidebar = ({ filters, setFilters, onFilterChange, isMobile, onClose 
             {/* Category Filter */}
             <FilterSection title="Kategori">
                 <div className="space-y-2">
-                    {CATEGORIES.map(category => {
+                    {categories.map(category => {
                         const Icon = category.icon;
                         const isActive = filters.category === category.id;
                         return (
@@ -379,6 +387,7 @@ const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {
     const [sortBy, setSortBy] = useState(initialSort);
     const [viewMode, setViewMode] = useState('grid'); // grid or list
     const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
+    const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
 
     // Trainings state (fetched from backend). Initialize from server-passed prop if present
     const [trainings, setTrainings] = useState(Array.isArray(initialTrainings) ? initialTrainings : []);
@@ -465,7 +474,10 @@ const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {
         try {
             const url = `/api/user/trainings?${params.toString()}`;
             console.log('fetchTrainings requesting', url);
-            const res = await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+            const res = await fetch(`${API_BASE}${API_ENDPOINTS.USER_TRAININGS}?${params.toString()}`, { 
+                headers: { Accept: 'application/json' }, 
+                credentials: 'same-origin' 
+            });
 
             // If the server redirected us to login or returned 401, go to login
             if (res.redirected || res.status === 401 || (res.url && res.url.includes('/login'))) {
@@ -485,24 +497,25 @@ const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {
 
             const data = await res.json();
 
-            if (Array.isArray(data)) {
-                setTrainings(data);
-                setTrainingsTotalPages(1);
-            } else if (data.data) {
-                setTrainings(Array.isArray(data.data) ? data.data : []);
-                const last = data?.meta?.last_page || data?.last_page || 1;
-                setTrainingsTotalPages(Number(last));
-            } else {
-                setTrainings([]);
-                setTrainingsTotalPages(1);
-            }
+            // Extract data from inconsistent API response format
+            const trainingsData = extractData(data);
+            const meta = extractMeta(data);
+            
+            setTrainings(trainingsData);
+            setTrainingsTotalPages(meta.totalPages);
 
             setTrainingsPage(page);
         } catch (err) {
-            console.error('Fetch trainings failed:', err);
-            setTrainingsError(err?.message || 'Gagal memuat daftar training');
+            // Use centralized error handler for consistent messaging
+            const errorMsg = getErrorMessage(err);
+            logError(err, 'fetchTrainings', 'error');
+            
+            setTrainingsError(errorMsg);
             setTrainings([]);
             setTrainingsTotalPages(1);
+            
+            // Show user-friendly error message
+            showToast(errorMsg, 'error');
         } finally {
             setTrainingsLoading(false);
             setIsSearching(false);
@@ -544,7 +557,9 @@ const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {
         try {
             const url = `/api/user/trainings?${params.toString()}`;
             console.log('fetchEnrolledTrainings requesting', url);
-            const res = await fetch(url, { headers: { Accept: 'application/json' } });
+            const res = await fetch(`${API_BASE}${API_ENDPOINTS.USER_TRAININGS}?${params.toString()}`, { 
+                headers: { Accept: 'application/json' } 
+            });
             if (!res.ok) {
                 console.error('fetchEnrolledTrainings response', res.status, res.statusText, url);
                 throw new Error(`Network response not ok: ${res.status}`);
@@ -561,10 +576,16 @@ const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {
 
             if (data.stats) setEnrolledStats(data.stats);
         } catch (err) {
-            console.error('Fetch enrolled trainings failed:', err);
-            setEnrolledError('Gagal memuat daftar training Anda');
+            // Use centralized error handler for consistent messaging
+            const errorMsg = getErrorMessage(err);
+            logError(err, 'fetchEnrolledTrainings', 'error');
+            
+            setEnrolledError(errorMsg);
             setEnrolledTrainings([]);
             setEnrolledTotalPages(1);
+            
+            // Show user-friendly error message
+            showToast(errorMsg, 'error');
         } finally {
             setEnrolledLoading(false);
         }
@@ -573,6 +594,44 @@ const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {
     // Load enrolled trainings on mount
     useEffect(() => {
         fetchEnrolledTrainings(enrolledStatusFilter, 1);
+    }, []);
+
+    // Fetch categories from backend (optional - fallback to defaults if API unavailable)
+    useEffect(() => {
+        const fetchCategories = async () => {
+            try {
+                const res = await fetch(`${API_BASE}/categories`, { 
+                    headers: { Accept: 'application/json' },
+                    credentials: 'same-origin'
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (Array.isArray(data)) {
+                        // Transform backend categories to match CATEGORIES format
+                        // Add "all" first, then API categories
+                        const transformed = [
+                            { id: 'all', name: 'Semua', icon: Grid3x3, color: 'slate' },
+                            ...data.map(cat => ({
+                                id: cat.id || cat.slug,
+                                name: cat.name || cat.title,
+                                icon: Grid3x3, // Use default icon
+                                color: cat.color || 'slate' // Use API color if provided
+                            }))
+                        ];
+                        setCategories(transformed);
+                        console.log('Categories loaded from API:', transformed);
+                    }
+                } else {
+                    console.log('Categories API not available, using defaults');
+                    setCategories(DEFAULT_CATEGORIES);
+                }
+            } catch (err) {
+                // API tidak tersedia, gunakan defaults
+                console.log('Failed to fetch categories (API not available), using defaults:', err.message);
+                setCategories(DEFAULT_CATEGORIES);
+            }
+        };
+        fetchCategories();
     }, []);
 
     return (
@@ -722,6 +781,7 @@ const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {
                             filters={filters} 
                             setFilters={setFilters} 
                             onFilterChange={handleFilterChange}
+                            categories={categories}
                             isMobile={false} 
                         />
                     </div>
@@ -738,15 +798,17 @@ const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {
 
                         {/* Merged trainings: enrolled trainings first, then available trainings */}
                         {mergedTrainings.length > 0 ? (
-                            <div className={`grid gap-6 ${viewMode === 'grid' ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3' : 'grid-cols-1'}`}>
-                                {mergedTrainings.map((t) => (
-                                    (t.enrollment_status || t._isEnrolled || t.enrolled) ? (
-                                        <EnrolledCard key={t.id} training={t} />
-                                    ) : (
-                                        <TrainingCard key={t.id} training={t} />
-                                    )
-                                ))}
-                            </div>
+                            <ErrorBoundary label="Grid Training\">
+                                <div className={`grid gap-6 ${viewMode === 'grid' ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3' : 'grid-cols-1'}`}>
+                                    {mergedTrainings.map((t) => (
+                                        (t.enrollment_status || t._isEnrolled || t.enrolled) ? (
+                                            <EnrolledCard key={t.id} training={t} />
+                                        ) : (
+                                            <TrainingCard key={t.id} training={t} />
+                                        )
+                                    ))}
+                                </div>
+                            </ErrorBoundary>
                         ) : (
                             <div className="text-center py-16">
                                 <div className="inline-flex items-center justify-center w-20 h-20 bg-slate-100 rounded-full mb-4">
@@ -786,6 +848,7 @@ const Catalog = ({ trainings: initialTrainings = [], filters: initialFilters = {
                         filters={filters} 
                         setFilters={setFilters} 
                         onFilterChange={handleFilterChange}
+                        categories={categories}
                         isMobile={true}
                         onClose={() => setMobileFilterOpen(false)}
                     />

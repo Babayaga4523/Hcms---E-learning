@@ -1,12 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { Head, usePage } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
+import { extractData } from '@/Utilities/apiResponseHandler';
+import ErrorBoundary from '@/Components/ErrorBoundary';
+import LearningTimeStats from '@/Components/LearningTimeStats';
+import { SkeletonChart, SkeletonRadar, SkeletonStats } from '@/Components/SkeletonLoader';
+import { API_BASE, API_ENDPOINTS } from '@/Config/api';
+import { getErrorMessage, isRetryableError, getRetryDelay, getMaxRetries, logError } from '@/Utils/errorHandler';
+import { normalizeChartData, isChartDataValid, getEmptyStateMessage, getSafeNumericValue } from '@/Utils/chartDataNormalizer';
 import { 
     TrendingUp, BarChart3, Award, Clock, Target, Activity, 
     Download, ArrowUpRight, ArrowDownRight, Zap, ChevronDown, 
     CheckCircle, AlertCircle, BookOpen, Filter
 } from 'lucide-react';
 import showToast from '@/Utils/toast';
+import { handleAuthError } from '@/Utils/authGuard';
 import { 
     LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
     ResponsiveContainer, AreaChart, Area, RadarChart, PolarGrid, 
@@ -129,8 +137,34 @@ export default function LearnerPerformance() {
     const [loading, setLoading] = useState(true);
     const [performanceData, setPerformanceData] = useState(null);
     const [progressData, setProgressData] = useState(null);
+    const [learningStats, setLearningStats] = useState(null);
     const [selectedProgram, setSelectedProgram] = useState(null);
     const [expandedModule, setExpandedModule] = useState(null);
+
+    // Fetch learning stats (real-time tracking)
+    useEffect(() => {
+        const fetchLearningStats = async () => {
+            try {
+                const response = await fetch(`${API_BASE}${API_ENDPOINTS.LEARNER_ANALYTICS}`, {
+                    headers: { 'Accept': 'application/json' },
+                });
+                if (response.status === 401) {
+                    handleAuthError({ response }, '/login');
+                    return;
+                }
+                if (response.ok) {
+                    const data = await response.json();
+                    // Extract data from inconsistent API response format
+                    const stats = extractData(data, data); // Use full response as fallback
+                    setLearningStats(stats);
+                }
+            } catch (error) {
+                console.error('Error fetching learning stats:', error);
+            }
+        };
+        
+        fetchLearningStats();
+    }, []);
 
     // Fetch data on mount and when filters change
     useEffect(() => {
@@ -148,17 +182,25 @@ export default function LearnerPerformance() {
     const fetchPerformanceData = async () => {
         try {
             setLoading(true);
-            const response = await fetch(`/api/learner/performance?period=${period}`, {
+            const response = await fetch(`${API_BASE}${API_ENDPOINTS.LEARNER_PERFORMANCE}?period=${period}`, {
                 headers: { 'Accept': 'application/json' },
             });
+            if (response.status === 401) {
+                handleAuthError({ response }, '/login');
+                setLoading(false);
+                return;
+            }
             if (!response.ok) {
                 const errText = await response.text().catch(() => 'Failed to fetch');
                 console.error('Error fetching performance data, status:', response.status, errText);
                 showToast('Gagal memuat data performa. Silakan coba lagi.', 'error');
+                setLoading(false);
                 return;
             }
             const data = await response.json();
-            setPerformanceData(data);
+            // Extract data from inconsistent API response format
+            const performanceData = extractData(data, data); // Use full response as fallback
+            setPerformanceData(performanceData);
         } catch (error) {
             console.error('Error fetching performance data:', error);
             showToast('Gagal memuat data performa. Silakan coba lagi.', 'error');
@@ -176,10 +218,16 @@ export default function LearnerPerformance() {
             const response = await fetch(url, {
                 headers: { 'Accept': 'application/json' },
             });
+            if (response.status === 401) {
+                handleAuthError({ response }, '/login');
+                setLoading(false);
+                return;
+            }
             if (!response.ok) {
                 const errText = await response.text().catch(() => 'Failed to fetch');
                 console.error('Error fetching progress data, status:', response.status, errText);
                 showToast('Gagal memuat data progress. Silakan coba lagi.', 'error');
+                setLoading(false);
                 return;
             }
             const data = await response.json();
@@ -218,22 +266,27 @@ export default function LearnerPerformance() {
     const data = performanceData || {};
     const pdata = progressData || {};
     
-    const scoresTrendData = data.scoresTrend || [];
-    const skillRadarData = data.skillRadar || [];
-    const learningActivityData = data.learningActivity || [];
-    const moduleProgressData = pdata.modules || [];
-    const programs = pdata.programs || [];
+    // Handle both response structures: when viewing all programs vs single program
+    const programs = selectedProgram && pdata.program 
+        ? [pdata.program] 
+        : pdata.programs || [];
+    
+    const moduleProgressData = selectedProgram && pdata.program
+        ? pdata.program.modules || []
+        : pdata.modules || [];
+    
+    // Normalize chart data to ensure all numeric fields are properly typed
+    const scoresTrendData = normalizeChartData(data.scoresTrend, 'trend', []);
+    const skillRadarData = normalizeChartData(data.skillRadar, 'radar', []);
+    const learningActivityData = normalizeChartData(data.learningActivity, 'activity', []);
 
     const averageScore = data.averageScore ?? 0;
-    const hoursSpent = data.hoursSpent ?? 0;
+    // Use real-time learning stats if available, otherwise fallback to performance data
+    const hoursSpent = learningStats?.total_hours ?? data.hoursSpent ?? 0;
     const completionRate = data.completionRate ?? 0;
     const certifications = data.certifications ?? 0;
     const scoreChange = data.scoreChange ?? 0;
     const completionChange = data.completionChange ?? 0;
-
-    const selectedProgramData = selectedProgram
-        ? programs.find(p => p.id === selectedProgram)
-        : programs[0];
 
     return (
         <AppLayout user={user}>
@@ -328,6 +381,7 @@ export default function LearnerPerformance() {
                         {[
                             { id: 'performance', label: 'Analisis Performa', icon: TrendingUp },
                             { id: 'progress', label: 'Detail Progress', icon: BookOpen },
+                            { id: 'learning-time', label: 'Jam Belajar', icon: Clock },
                         ].map(tab => (
                             <button
                                 key={tab.id}
@@ -344,13 +398,22 @@ export default function LearnerPerformance() {
 
                     {/* 3. Tab Content */}
                     {loading ? (
-                        <div className="h-96 glass-panel rounded-[32px] flex items-center justify-center">
-                            <div className="animate-spin w-12 h-12 border-4 border-[#005E54] border-t-transparent rounded-full"></div>
+                        <div className="animate-enter">
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                                <div className="lg:col-span-2">
+                                    <SkeletonChart />
+                                </div>
+                                <SkeletonRadar />
+                                <div className="lg:col-span-3">
+                                    <SkeletonChart />
+                                </div>
+                            </div>
                         </div>
                     ) : (
                         <div className="animate-enter">
                             {activeTab === 'performance' && (
-                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                                <ErrorBoundary label="Analisis Performa\">
+                                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                                     {/* Score Trend Chart */}
                                     <div className="lg:col-span-2 glass-panel rounded-[32px] p-8">
                                         <div className="flex items-center justify-between mb-6">
@@ -360,7 +423,7 @@ export default function LearnerPerformance() {
                                             </div>
                                         </div>
                                         <div className="h-[350px] w-full flex-shrink-0">
-                                            {scoresTrendData.length > 0 ? (
+                                            {isChartDataValid(scoresTrendData) ? (
                                                 <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={300}>
                                                     <AreaChart data={scoresTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                                                         <defs>
@@ -382,7 +445,7 @@ export default function LearnerPerformance() {
                                                 <div className="flex items-center justify-center h-full bg-gray-50 rounded-lg">
                                                     <div className="text-center">
                                                         <TrendingUp size={40} className="mx-auto text-gray-300 mb-2" />
-                                                        <p className="text-gray-500 text-sm">Belum ada data skor</p>
+                                                        <p className="text-gray-500 text-sm">{getEmptyStateMessage('trend')}</p>
                                                     </div>
                                                 </div>
                                             )}
@@ -395,7 +458,7 @@ export default function LearnerPerformance() {
                                         <p className="text-sm text-slate-500 mb-4">Pemetaan skill berdasarkan modul</p>
                                         
                                         <div className="h-[300px] w-full relative flex-shrink-0">
-                                            {skillRadarData.length > 0 ? (
+                                            {isChartDataValid(skillRadarData) ? (
                                                 <ResponsiveContainer width="100%" height="100%" minWidth={250} minHeight={250}>
                                                     <RadarChart cx="50%" cy="50%" outerRadius="80%" data={skillRadarData}>
                                                         <PolarGrid stroke="#E2E8F0" />
@@ -414,7 +477,7 @@ export default function LearnerPerformance() {
                                                 </ResponsiveContainer>
                                             ) : (
                                                 <div className="flex items-center justify-center h-full">
-                                                    <p className="text-gray-400 text-sm">Belum ada data skill</p>
+                                                    <p className="text-gray-400 text-sm">{getEmptyStateMessage('radar')}</p>
                                                 </div>
                                             )}
                                         </div>
@@ -430,7 +493,7 @@ export default function LearnerPerformance() {
                                             </div>
                                         </div>
                                         <div className="h-[200px] w-full flex-shrink-0">
-                                            {learningActivityData.length > 0 ? (
+                                            {isChartDataValid(learningActivityData) ? (
                                                 <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={200}>
                                                     <BarChart data={learningActivityData}>
                                                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
@@ -439,22 +502,32 @@ export default function LearnerPerformance() {
                                                         <Tooltip content={<CustomTooltip />} />
                                                         <Bar dataKey="hours" fill="#005E54" radius={[8, 8, 0, 0]} barSize={40}>
                                                             {learningActivityData.map((entry, index) => (
-                                                                <Cell key={`cell-${index}`} fill={entry.hours > 3 ? '#005E54' : '#94A3B8'} />
+                                                                <Cell key={`cell-${index}`} fill={getSafeNumericValue(entry, 'hours') > 3 ? '#005E54' : '#94A3B8'} />
                                                             ))}
                                                         </Bar>
                                                     </BarChart>
                                                 </ResponsiveContainer>
                                             ) : (
                                                 <div className="flex items-center justify-center h-full bg-gray-50 rounded-lg">
-                                                    <p className="text-gray-500 text-sm">Belum ada data aktivitas</p>
+                                                    <p className="text-gray-500 text-sm">{getEmptyStateMessage('activity')}</p>
                                                 </div>
                                             )}
                                         </div>
                                     </div>
                                 </div>
+                                </ErrorBoundary>
+                            )}
+
+                            {activeTab === 'learning-time' && (
+                                <ErrorBoundary label="Statistik Jam Belajar">
+                                    <div className="animate-enter">
+                                        <LearningTimeStats />
+                                    </div>
+                                </ErrorBoundary>
                             )}
 
                             {activeTab === 'progress' && (
+                                <ErrorBoundary label="Detail Progress">
                                 <div className="space-y-6">
                                     {programs.length === 0 ? (
                                         <div className="glass-panel rounded-[32px] p-12 text-center">
@@ -612,6 +685,7 @@ export default function LearnerPerformance() {
                                         </>
                                     )}
                                 </div>
+                                </ErrorBoundary>
                             )}
                         </div>
                     )}

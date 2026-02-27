@@ -135,9 +135,48 @@ Route::get('/storage/materials/{path}', function ($path) {
     ]);
 })->where('path', '.*')->middleware('auth');
 
+// Admin material preview route: allows admins to preview uploaded materials before publishing
+Route::get('/admin/material-preview/{materialId}', function ($materialId) {
+    // Only admin can preview
+    if (!Auth::check() || Auth::user()->role !== 'admin') {
+        abort(403);
+    }
+
+    $material = \App\Models\TrainingMaterial::findOrFail($materialId);
+    $filePath = $material->file_path ?: $material->pdf_path;
+    
+    if (!$filePath) {
+        abort(404);
+    }
+
+    // Check private disk first (NEW files)
+    $privateCandidate = storage_path('app/materials/' . ltrim($filePath, 'materials/'));
+    if (file_exists($privateCandidate)) {
+        return response()->file($privateCandidate, [
+            'Cache-Control' => 'private, max-age=3600',
+            'Content-Disposition' => 'inline'
+        ]);
+    }
+
+    // Fallback to public disk (OLD files)
+    $publicCandidate = storage_path('app/public/' . ltrim($filePath, 'public/'));
+    if (file_exists($publicCandidate)) {
+        return response()->file($publicCandidate, [
+            'Cache-Control' => 'private, max-age=3600',
+            'Content-Disposition' => 'inline'
+        ]);
+    }
+
+    abort(404);
+})->name('admin.material.preview')->middleware('auth');
+
+// PUBLIC API ROUTES (No authentication required)
+Route::get('/api/categories', [\App\Http\Controllers\CategoryController::class, 'index'])->name('api.categories');
+
 Route::middleware(['auth'])->group(function () {
     // Dashboard
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('/activity', [DashboardController::class, 'activity'])->name('activity');
     Route::get('/api/dashboard/statistics', [DashboardController::class, 'getStatistics'])->name('dashboard.statistics');
     Route::get('/api/dashboard/training-cards', [DashboardController::class, 'getTrainingCards'])->name('dashboard.training-cards');
     Route::get('/api/dashboard/unified-updates', [DashboardController::class, 'getUnifiedUpdates'])->name('dashboard.unified-updates');
@@ -151,6 +190,7 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/api/learner/progress/{programId}', [\App\Http\Controllers\Learner\LearnerProgressController::class, 'getProgramProgress'])->name('learner.api.progress.program');
     Route::get('/api/learner/certifications', [\App\Http\Controllers\Learner\LearnerPerformanceController::class, 'getCertifications'])->name('learner.api.certifications');
     Route::get('/api/learner/time-analytics', [\App\Http\Controllers\Learner\LearnerPerformanceController::class, 'getTimeAnalytics'])->name('learner.api.time-analytics');
+    Route::get('/api/learner/learning-stats', [\App\Http\Controllers\Learner\LearnerPerformanceController::class, 'getLearningStats'])->name('learner.api.learning-stats');
 
     // Profile
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
@@ -230,7 +270,7 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/api/user/trainings', [\App\Http\Controllers\User\TrainingController::class, 'index'])->name('user.api.trainings');
     Route::get('/api/user/trainings/{id}', [\App\Http\Controllers\User\TrainingController::class, 'showApi'])->name('user.api.training.show');
     Route::post('/api/training/{id}/start', [\App\Http\Controllers\User\TrainingController::class, 'start'])->name('user.api.training.start');
-    Route::get('/api/user/training-schedules', [\App\Http\Controllers\User\TrainingController::class, 'getSchedules'])->name('user.api.training.schedules');
+    Route::get('/api/user/training-schedules', [\App\Http\Controllers\API\UserTrainingController::class, 'getSchedules'])->name('user.api.training.schedules');
     Route::get('/api/user/training-recommendations', [\App\Http\Controllers\User\TrainingController::class, 'getRecommendations'])->name('user.api.training.recommendations');
     
     // Material API
@@ -245,13 +285,20 @@ Route::middleware(['auth'])->group(function () {
     Route::post('/api/quiz/{attemptId}/submit', [\App\Http\Controllers\User\QuizController::class, 'submit'])->name('user.api.quiz.submit');
     Route::get('/api/quiz/{attemptId}/result', [\App\Http\Controllers\User\QuizController::class, 'result'])->name('user.api.quiz.result');
     
+    // Learning Session Tracking API
+    Route::post('/api/learning/session/start', [\App\Http\Controllers\User\LearningSessionController::class, 'startSession'])->name('learning.session.start');
+    Route::post('/api/learning/session/{sessionId}/end', [\App\Http\Controllers\User\LearningSessionController::class, 'endSession'])->name('learning.session.end');
+    Route::get('/api/learning/session/active', [\App\Http\Controllers\User\LearningSessionController::class, 'getActiveSession'])->name('learning.session.active');
+    Route::get('/api/learning/stats', [\App\Http\Controllers\User\LearningSessionController::class, 'getStats'])->name('learning.stats');
+    Route::get('/api/learning/daily-activity', [\App\Http\Controllers\User\LearningSessionController::class, 'getDailyActivity'])->name('learning.daily-activity');
+    
     // Reports API
     Route::get('/api/user/reports', [\App\Http\Controllers\User\ReportController::class, 'index'])->name('user.api.reports');
     Route::get('/api/user/reports/export', [\App\Http\Controllers\User\ReportController::class, 'export'])->name('user.api.reports.export');
     
     // Certificate API
-    Route::get('/api/certificate/{id}', [\App\Http\Controllers\User\CertificateController::class, 'show'])->name('user.api.certificate.show');
-    Route::get('/api/certificate/{id}/download', [\App\Http\Controllers\User\CertificateController::class, 'download'])->name('user.api.certificate.download');
+    Route::get('/api/certificates/{id}', [\App\Http\Controllers\User\CertificateController::class, 'show'])->name('user.api.certificate.show');
+    Route::get('/api/certificates/{id}/download', [\App\Http\Controllers\User\CertificateController::class, 'download'])->name('user.api.certificate.download');
 
     // Debug: certificate eligibility (local only)
     Route::get('/api/debug/certificate-eligibility', [\App\Http\Controllers\User\CertificateController::class, 'debugEligibility'])->name('api.debug.certificate-eligibility');
@@ -274,10 +321,37 @@ Route::middleware(['auth'])->group(function () {
         Route::delete('/api/user/notifications/{id}', [\App\Http\Controllers\NotificationController::class, 'delete'])->name('api.user.notifications.delete');
         Route::delete('/api/user/notifications', [\App\Http\Controllers\NotificationController::class, 'deleteAll'])->name('api.user.notifications.delete-all');
         Route::get('/api/user/notifications/{id}', [\App\Http\Controllers\NotificationController::class, 'show'])->name('api.user.notifications.show');
+        
+        // Announcement deletion route for users
+        Route::delete('/api/user/announcements/{id}', function(\Illuminate\Http\Request $request, $id) {
+            try {
+                DB::table('announcements')->where('id', $id)->delete();
+                return response()->json(['message' => 'Announcement deleted successfully']);
+            } catch (\Exception $e) {
+                return response()->json(['message' => 'Failed to delete announcement', 'error' => $e->getMessage()], 500);
+            }
+        })->name('api.user.announcements.delete');
     });
 
 });
 
+// Reports Export Routes - No web middleware to avoid Inertia
+// Reports Export Routes - SOLUTION: Minimal middleware stack (No Inertia)
+// Hanya load middleware yang diperlukan: Session, Auth, CSRF
+// Tanpa HandleInertiaRequests untuk mencegah binary response dikonversi ke HTML
+Route::get('/admin/reports/export-excel', [AdminReportController::class, 'exportUnifiedReportsExcel'])
+    ->middleware([
+        \Illuminate\Session\Middleware\StartSession::class,       // Start session (untuk Auth)
+        'auth'                                                      // Check authentication
+    ])
+    ->name('admin.reports.export');
+
+Route::get('/admin/reports/export-tab/{tab}', [AdminReportController::class, 'exportTabAsExcel'])
+    ->middleware([
+        \Illuminate\Session\Middleware\StartSession::class,       // Start session (untuk Auth)
+        'auth'                                                      // Check authentication
+    ])
+    ->name('admin.reports.export-tab');
 
 // Admin Routes
 Route::middleware(['auth', 'admin'])->group(function () {
@@ -300,6 +374,15 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::get('/api/admin/reports/recent', [\App\Http\Controllers\Api\AdminMetricsController::class, 'recentReports'])->name('admin.api.reports.recent');
     Route::get('/api/admin/actions/pending', [\App\Http\Controllers\Api\AdminMetricsController::class, 'pendingActions'])->name('admin.api.actions.pending');
     
+    // Categories API Routes
+    Route::get('/api/admin/categories', [\App\Http\Controllers\Admin\CategoriesController::class, 'index'])->name('admin.api.categories.index');
+    Route::get('/api/admin/categories/with-metadata', [\App\Http\Controllers\Admin\CategoriesController::class, 'indexWithMetadata'])->name('admin.api.categories.metadata');
+    Route::post('/api/admin/categories', [\App\Http\Controllers\Admin\CategoriesController::class, 'store'])->name('admin.api.categories.store');
+    Route::delete('/api/admin/categories', [\App\Http\Controllers\Admin\CategoriesController::class, 'destroy'])->name('admin.api.categories.destroy');
+    
+    // Trend Analysis API Route
+    Route::get('/api/admin/trend-analysis', [\App\Http\Controllers\Admin\DashboardMetricsController::class, 'trendAnalysis'])->name('admin.api.trend-analysis');
+    
     // User Management Routes
     Route::get('/admin/users', [AdminUserController::class, 'index'])->name('admin.users.index');
     Route::get('/admin/users/{id}', [AdminUserController::class, 'detail'])->name('admin.users.detail');
@@ -307,12 +390,16 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::get('/api/admin/users/{id}', [AdminUserController::class, 'show'])->name('admin.users.show');
     Route::put('/api/admin/users/{id}', [AdminUserController::class, 'update'])->name('admin.users.update');
     Route::put('/api/admin/users/{id}/info', [UserController::class, 'updateUserInfo'])->name('admin.users.update-info');
+    Route::put('/api/admin/users/{id}/status', [AdminUserController::class, 'updateStatus'])->name('admin.users.update-status');
     Route::delete('/api/admin/users/{id}', [AdminUserController::class, 'destroy'])->name('admin.users.destroy');
     Route::post('/api/admin/users/bulk/status', [AdminUserController::class, 'bulkUpdateStatus'])->name('admin.users.bulk-status');
     Route::post('/api/admin/users/bulk/delete', [AdminUserController::class, 'bulkDelete'])->name('admin.users.bulk-delete');
     Route::post('/api/admin/users/{id}/reset-password', [AdminUserController::class, 'resetPassword'])->name('admin.users.reset-password');
     Route::post('/api/admin/users/import', [AdminUserController::class, 'import'])->name('admin.users.import');
     Route::get('/api/admin/users/export', [AdminUserController::class, 'export'])->name('admin.users.export')->withoutMiddleware('throttle');
+    Route::get('/api/admin/users-stats', [AdminUserController::class, 'getStats'])->name('admin.users.stats');
+    Route::get('/api/admin/users/{userId}/program-history', [AdminUserController::class, 'getProgramHistory'])->name('admin.users.program-history');
+    Route::get('/api/admin/enrollment-history', [AdminUserController::class, 'getEnrollmentHistory'])->name('admin.enrollment.history');
     
     // Training Programs Routes
     Route::get('/admin/training-programs', [AdminTrainingProgramController::class, 'index'])->name('admin.training-programs.index');
@@ -519,7 +606,7 @@ Route::middleware(['auth', 'admin'])->group(function () {
 
     // Training Schedule Pages
     Route::get('/admin/training-schedule', function() {
-        return Inertia::render('Admin/TrainingCalendar');
+        return Inertia::render('Admin/TrainingCalendarLight');
     })->name('admin.training-schedule');
 
     Route::get('/admin/schedule-manager', function() {
@@ -542,6 +629,7 @@ Route::middleware(['auth', 'admin'])->group(function () {
     // Training Materials Routes
     Route::post('/api/admin/training-programs/{id}/upload-material', [AdminTrainingProgramController::class, 'uploadMaterial'])->name('admin.training-programs.upload-material');
     Route::delete('/api/admin/training-programs/materials/{id}', [AdminTrainingProgramController::class, 'deleteMaterial'])->name('admin.training-programs.delete-material');
+    Route::delete('/api/admin/materials/{id}', [AdminTrainingProgramController::class, 'deleteMaterial'])->name('admin.materials.delete');
     
     // Training Questions Routes (Quiz Management)
     Route::get('/admin/questions', function() {
@@ -622,6 +710,8 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::post('/api/admin/backup', [\App\Http\Controllers\Admin\SettingsController::class, 'createBackup'])->name('admin.api.backup.create');
     Route::get('/api/admin/backups', [\App\Http\Controllers\Admin\SettingsController::class, 'getBackups'])->name('admin.api.backups.list');
     Route::get('/api/admin/backup-download/{backupId}', [\App\Http\Controllers\Admin\SettingsController::class, 'downloadBackup'])->name('admin.api.backup.download');
+    Route::get('/api/admin/settings/audit-logs', [\App\Http\Controllers\Admin\SettingsController::class, 'getAuditLogs'])->name('admin.api.settings.audit-logs');
+    Route::get('/api/admin/settings/history/{settingName}', [\App\Http\Controllers\Admin\SettingsController::class, 'getSettingHistory'])->name('admin.api.settings.history');
     
     // Email Configuration API Routes
     Route::get('/api/admin/email-config', [\App\Http\Controllers\Admin\EmailConfigurationController::class, 'getConfiguration'])->name('admin.api.email.get');
@@ -645,26 +735,30 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::get('/api/admin/training-programs/{id}/assigned-users', [AdminTrainingProgramController::class, 'getAssignedUsers'])->name('admin.training-programs.get-assigned');
     Route::delete('/api/admin/training-programs/{id}/remove-users', [AdminTrainingProgramController::class, 'removeAssignedUsers'])->name('admin.training-programs.remove-assigned');
     
+    // Exam Attempts Export
+    Route::get('/api/admin/training-programs/{id}/exam-attempts/export', [AdminTrainingProgramController::class, 'exportExamAttempts'])->name('admin.training-programs.exam-attempts.export')->withoutMiddleware('throttle');
+    Route::get('/admin/training-programs/{id}/export-analytics', [AdminTrainingProgramController::class, 'exportAnalytics'])->name('admin.training-programs.export-analytics')->withoutMiddleware('throttle');
+    Route::get('/api/admin/exam-attempts/{attemptId}', [AdminTrainingProgramController::class, 'getExamAttemptDetail'])->name('admin.exam-attempts.detail');
+    
     // Reporting Routes
     Route::get('/api/admin/training-programs/stats/reporting', [AdminTrainingProgramController::class, 'getReportingStats'])->name('admin.training-programs.reporting-stats');
     Route::get('/api/admin/training-programs/analytics/overview', [AdminTrainingProgramController::class, 'getAnalytics'])->name('admin.training-programs.analytics.overview');
     Route::get('/api/admin/training-programs/reports/overview', [AdminTrainingProgramController::class, 'getReports'])->name('admin.training-programs.reports');
     Route::get('/api/admin/training-programs/compliance/overview', [AdminTrainingProgramController::class, 'getCompliance'])->name('admin.training-programs.compliance');
     
+// Reports Export Routes (outside admin group to avoid middleware issues)
+Route::middleware('auth')->group(function () {
+    
     // Reports & Compliance Routes
-    Route::get('/admin/reports', [AdminReportController::class, 'index'])->name('admin.reports.index');
+    // ===== UNIFIED REPORTS (Comprehensive + Unified merged) =====
+    Route::get('/admin/reports', [AdminReportController::class, 'indexUnified'])->name('admin.reports.index');    // Additional report export routes inside admin group
+    // 
+    Route::get('/admin/reports/comprehensive', function() { return redirect('/admin/reports?tab=programs'); })->name('admin.reports.comprehensive');
+    
     Route::post('/admin/reports/export', [AdminReportController::class, 'exportReport'])->name('admin.reports.export.post')->withoutMiddleware('throttle');
     Route::get('/admin/reports/{id}/download', [AdminReportController::class, 'downloadReport'])->name('admin.reports.file.download')->withoutMiddleware('throttle');
-    Route::get('/api/admin/reports/export', [AdminReportController::class, 'export'])->name('admin.reports.export')->withoutMiddleware('throttle');
+    Route::get('/api/admin/reports/export', [AdminReportController::class, 'export'])->name('admin.reports.api.export')->withoutMiddleware('throttle');
     Route::get('/api/admin/reports/user/{id}', [AdminReportController::class, 'getUserCompliance'])->name('admin.reports.user');
-
-    // Comprehensive Reports - All E-Learning Data
-    Route::get('/admin/reports/comprehensive', [AdminReportController::class, 'indexComprehensive'])->name('admin.reports.comprehensive');
-    
-    // Unified Reports - Combined Dashboard + Compliance + Analytics
-    Route::get('/admin/reports/unified', [AdminReportController::class, 'indexUnified'])->name('admin.reports.unified');
-    Route::get('/admin/reports/unified/export-excel', [AdminReportController::class, 'exportUnifiedReportsExcel'])->name('admin.reports.unified.export')->withoutMiddleware('throttle');
-    Route::get('/admin/reports/unified/export-tab/{tab}', [AdminReportController::class, 'exportTabAsExcel'])->name('admin.reports.unified.export-tab')->withoutMiddleware('throttle');
     
     // FEATURE 1: Learner Report Card (Rapor Karyawan)
     Route::get('/api/admin/learner-reportcard/{userId}', [AdminReportController::class, 'getLearnerReportCard'])->name('admin.learner.reportcard');
@@ -702,16 +796,16 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::get('/api/admin/reporting/export-pdf/{id}', [ReportingAnalyticsController::class, 'exportReportPDF'])->name('admin.reporting.export-pdf')->withoutMiddleware('throttle');
     Route::get('/api/admin/reporting/export-excel/{id}', [ReportingAnalyticsController::class, 'exportReportExcel'])->name('admin.reporting.export-excel')->withoutMiddleware('throttle');
     
-    // Compliance Routes (HIGH PRIORITY)
-    Route::post('/api/admin/compliance/programs/{id}/request-approval', [ComplianceController::class, 'requestApproval'])->name('admin.compliance.request-approval');
-    Route::post('/api/admin/compliance/approvals/{id}/approve', [ComplianceController::class, 'approveProgram'])->name('admin.compliance.approve');
-    Route::post('/api/admin/compliance/approvals/{id}/reject', [ComplianceController::class, 'rejectProgram'])->name('admin.compliance.reject');
-    Route::get('/api/admin/compliance/programs/{id}/approval-history', [ComplianceController::class, 'getApprovalHistory'])->name('admin.compliance.approval-history');
-    Route::post('/api/admin/compliance/programs/{id}/upload-evidence', [ComplianceController::class, 'uploadEvidence'])->name('admin.compliance.upload-evidence');
-    Route::post('/api/admin/compliance/evidences/{id}/verify', [ComplianceController::class, 'verifyEvidence'])->name('admin.compliance.verify-evidence');
-    Route::get('/api/admin/compliance/programs/{id}/evidences', [ComplianceController::class, 'getEvidences'])->name('admin.compliance.get-evidences');
-    Route::get('/api/admin/compliance/programs/{id}/audit-log', [ComplianceController::class, 'getAuditLog'])->name('admin.compliance.audit-log');
-    Route::get('/api/admin/compliance/programs/{id}/compliance-report', [ComplianceController::class, 'generateComplianceReport'])->name('admin.compliance.compliance-report');
+    // Compliance Routes (HIGH PRIORITY) - Fixed parameter names to match controller methods
+    Route::post('/api/admin/compliance/programs/{moduleId}/request-approval', [ComplianceController::class, 'requestApproval'])->name('admin.compliance.request-approval');
+    Route::post('/api/admin/compliance/approvals/{approvalId}/approve', [ComplianceController::class, 'approveProgram'])->name('admin.compliance.approve');
+    Route::post('/api/admin/compliance/approvals/{approvalId}/reject', [ComplianceController::class, 'rejectProgram'])->name('admin.compliance.reject');
+    Route::get('/api/admin/compliance/programs/{moduleId}/approval-history', [ComplianceController::class, 'getApprovalHistory'])->name('admin.compliance.approval-history');
+    Route::post('/api/admin/compliance/programs/{moduleId}/upload-evidence', [ComplianceController::class, 'uploadEvidence'])->name('admin.compliance.upload-evidence');
+    Route::post('/api/admin/compliance/evidences/{evidenceId}/verify', [ComplianceController::class, 'verifyEvidence'])->name('admin.compliance.verify-evidence');
+    Route::get('/api/admin/compliance/programs/{moduleId}/evidences', [ComplianceController::class, 'getEvidences'])->name('admin.compliance.get-evidences');
+    Route::get('/api/admin/compliance/programs/{moduleId}/audit-log', [ComplianceController::class, 'getAuditLog'])->name('admin.compliance.audit-log');
+    Route::get('/api/admin/compliance/programs/{moduleId}/compliance-report', [ComplianceController::class, 'generateComplianceReport'])->name('admin.compliance.compliance-report');
     
     // Pre-Test & Post-Test Routes
     Route::get('/api/admin/pretest-posttest/questions/{moduleId}/{examType}', [PreTestPostTestController::class, 'getQuestions'])->name('admin.pretest-posttest.questions');
@@ -726,6 +820,9 @@ Route::middleware(['auth', 'admin'])->group(function () {
     
     // User Management - Roles & Permissions
     Route::get('/admin/roles-permissions', [UserController::class, 'getRoles'])->name('admin.roles.index');
+    Route::get('/api/admin/roles-api', [UserController::class, 'getApiRoles'])->name('admin.roles.api');
+    Route::get('/api/admin/permissions-api', [UserController::class, 'getApiPermissions'])->name('admin.permissions.api');
+    Route::get('/api/admin/roles-stats', [UserController::class, 'getRoleStats'])->name('admin.roles.stats');
     Route::post('/api/admin/roles', [UserController::class, 'storeRole'])->name('admin.roles.store');
     Route::put('/api/admin/roles/{id}', [UserController::class, 'updateRole'])->name('admin.roles.update');
     Route::delete('/api/admin/roles/{id}', [UserController::class, 'deleteRole'])->name('admin.roles.delete');
@@ -744,10 +841,9 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::put('/api/admin/departments/{id}', [UserController::class, 'updateDepartment'])->name('admin.departments.update');
     Route::delete('/api/admin/departments/{id}', [UserController::class, 'deleteDepartment'])->name('admin.departments.delete');
     
-    // User Enrollment History
-    Route::get('/admin/enrollment-history', [UserController::class, 'getEnrollmentHistory'])->name('admin.enrollment-history');
-    Route::get('/api/admin/enrollment-history', [UserController::class, 'getEnrollmentHistory'])->name('admin.enrollment-history.api');
-    Route::get('/api/admin/enrollment-history/export', [UserController::class, 'exportEnrollmentHistory'])->name('admin.enrollment-history.export')->withoutMiddleware('throttle');
+    // User Enrollment History (consolidated to AdminUserController)
+    // Removed duplicate routes - using AdminUserController::getEnrollmentHistory (line 329)
+    // Export route is part of AdminUserController suite
     
     // Reports & Compliance Routes (using AdminReportController - duplicate routes removed)
     // The main route is already defined at line ~337: Route::get('/admin/reports', [AdminReportController::class, 'index'])->name('admin.reports.index');
@@ -838,6 +934,7 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::put('/api/admin/announcements/{id}', [\App\Http\Controllers\Admin\AnnouncementController::class, 'update'])->name('admin.api.announcements.update');
     Route::delete('/api/admin/announcements/{id}', [\App\Http\Controllers\Admin\AnnouncementController::class, 'destroy'])->name('admin.api.announcements.destroy');
     Route::patch('/api/admin/announcements/{id}/toggle-status', [\App\Http\Controllers\Admin\AnnouncementController::class, 'toggleStatus'])->name('admin.api.announcements.toggle-status');
+    Route::post('/api/admin/announcements/notify', [\App\Http\Controllers\Admin\AnnouncementController::class, 'notify'])->name('admin.api.announcements.notify');
     // System test endpoint
     Route::get('/test-system/notifications-announcements', [\App\Http\Controllers\TestSystemController::class, 'testAnnouncementsNotifications']);
     
@@ -856,13 +953,19 @@ Route::middleware(['auth', 'admin'])->group(function () {
     Route::post('/api/admin/smart-content/retry/{id}', [\App\Http\Controllers\Admin\SmartContentController::class, 'retryProcessing'])->name('admin.smart-content.retry');
     Route::get('/api/admin/smart-content/preview/{id}', [\App\Http\Controllers\Admin\SmartContentController::class, 'previewContent'])->name('admin.smart-content.preview');
     
-    // Material Bookmark & Share Routes (User) - Moved to user route group
-    // Route::post('/api/training/{trainingId}/material/{materialId}/complete', [\App\Http\Controllers\MaterialController::class, 'markComplete'])->name('material.mark-complete');
+    // Material routes moved to user route group (see line 279-280)
     // Route::post('/api/training/{trainingId}/material/{materialId}/bookmark', [\App\Http\Controllers\MaterialController::class, 'addBookmark'])->name('material.add-bookmark');
     // Route::delete('/api/training/{trainingId}/material/{materialId}/bookmark', [\App\Http\Controllers\MaterialController::class, 'removeBookmark'])->name('material.remove-bookmark');
     // Route::post('/api/training/{trainingId}/material/{materialId}/share', [\App\Http\Controllers\MaterialController::class, 'shareMaterial'])->name('material.share');
     // Route::get('/api/training/{trainingId}/material/{materialId}/stats', [\App\Http\Controllers\MaterialController::class, 'getSharingStats'])->name('material.stats');
     // Route::get('/api/user/bookmarks', [\App\Http\Controllers\MaterialController::class, 'getBookmarks'])->name('user.bookmarks');
 });
+});  // Close admin middleware group
+
+// Include API Business Logic Routes
+require __DIR__.'/api-business-logic.php';
+
+// Include Training/Dashboard API Routes
+require __DIR__.'/api_training_endpoints.php';
 
 require __DIR__.'/auth.php';

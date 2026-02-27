@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Head, Link } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
+import { extractData } from '@/Utilities/apiResponseHandler';
+import ErrorBoundary from '@/Components/ErrorBoundary';
+import axiosInstance from '@/Services/axiosInstance';
+import { API_ENDPOINTS } from '@/Config/api';
 import { 
     BookOpen, Clock, Award, PlayCircle, CheckCircle2, 
     AlertTriangle, Search, Filter, Calendar, TrendingUp,
     ChevronRight, Target, BarChart3, Timer, Sparkles,
     MoreHorizontal, Download, ArrowRight, Zap
 } from 'lucide-react';
-import axios from 'axios';
 
 // --- Wondr Style System ---
 const WondrStyles = () => (
@@ -150,7 +153,7 @@ const FeaturedCourse = ({ course }) => {
 };
 
 const CourseCard = ({ training, index }) => {
-    const isCompleted = training.status === 'completed';
+    const isCompleted = training.status === 'completed' && training.progress >= 100;
     const isOverdue = training.status === 'overdue';
 
     return (
@@ -192,7 +195,7 @@ const CourseCard = ({ training, index }) => {
                         <div className="flex items-center gap-2 text-green-600 text-sm font-bold">
                             <CheckCircle2 className="w-5 h-5" /> Selesai
                         </div>
-                        {training.is_certified && (
+                        {(training.is_certified === 1 || training.is_certified === true) && (
                             <Link href={`/training/${training.id}/certificate`} className="text-xs font-bold text-[#005E54] hover:underline flex items-center gap-1">
                                 <Download className="w-3 h-3" /> Sertifikat
                             </Link>
@@ -248,12 +251,15 @@ export default function MyTrainings({ auth }) {
     const [searchLoading, setSearchLoading] = useState(false);
     const [searchError, setSearchError] = useState(null);
 
-    // Page-level error (e.g. server 500)
-    const [pageError, setPageError] = useState(null);
-
     // Load trainings on mount
     useEffect(() => {
-        loadTrainings();
+        let isMounted = true;
+        
+        loadTrainings(isMounted);
+
+        return () => {
+            isMounted = false;
+        };
     }, []);
 
     // Debounced server-side search when `searchQuery` changes
@@ -272,20 +278,24 @@ export default function MyTrainings({ auth }) {
         return () => clearTimeout(handler);
     }, [searchQuery]);
 
-    const loadTrainings = async () => {
+    const loadTrainings = async (isMounted) => {
         try {
-            setLoading(true);
-            const response = await axios.get('/api/user/trainings');
+            const response = await axiosInstance.get(API_ENDPOINTS.USER_TRAININGS);
             
-            // Transform backend data
-            const trainingsData = response.data.trainings?.data || response.data.trainings || [];
+            // Only update state if component is still mounted
+            if (!isMounted) return;
+            
+            // Extract data from inconsistent API response format
+            const trainingsData = extractData(response.data);
+            console.log('Raw trainings from backend:', trainingsData); // DEBUG
+            
             const transformedTrainings = trainingsData.map(t => {
                 // Normalize status: backend uses 'enrolled' for not started
                 let status = t.enrollment_status || t.status || 'enrolled';
                 // Map 'enrolled' to 'not_started' for frontend consistency
                 if (status === 'enrolled') status = 'not_started';
                 
-                return {
+                const transformed = {
                     id: t.id,
                     title: t.title,
                     description: t.description,
@@ -296,10 +306,13 @@ export default function MyTrainings({ auth }) {
                     is_mandatory: t.is_mandatory,
                     due_date: t.expiry_date || t.end_date,
                     materials_count: t.materials_count || t.modules_count || 0,
-                    is_certified: t.certificate_template ? true : false
+                    is_certified: t.is_certified === 1 || t.is_certified === true
                 };
+                console.log(`Training "${t.title}" - Status: ${transformed.status}, Progress: ${transformed.progress}, Is Certified: ${transformed.is_certified}`); // DEBUG
+                return transformed;
             });
             
+            console.log('Transformed trainings:', transformedTrainings); // DEBUG
             setTrainings(transformedTrainings);
             
             // Set stats from response or calculate
@@ -309,24 +322,28 @@ export default function MyTrainings({ auth }) {
                     in_progress: response.data.stats.in_progress || 0,
                     completed: response.data.stats.completed || 0,
                     not_started: response.data.stats.not_started || 0,
-                    certifications: response.data.stats.certifications || transformedTrainings.filter(t => t.is_certified && t.status === 'completed').length
+                    certifications: response.data.stats.certifications || transformedTrainings.filter(t => (t.is_certified === 1 || t.is_certified === true) && t.status === 'completed').length
                 });
             } else {
                 // Calculate stats from trainings
                 setStats({
                     total: transformedTrainings.length,
                     in_progress: transformedTrainings.filter(t => t.status === 'in_progress').length,
-                    completed: transformedTrainings.filter(t => t.status === 'completed').length,
+                    completed: transformedTrainings.filter(t => t.status === 'completed' && t.progress >= 100).length,
                     not_started: transformedTrainings.filter(t => t.status === 'not_started').length,
-                    certifications: transformedTrainings.filter(t => t.is_certified && t.status === 'completed').length
+                    certifications: transformedTrainings.filter(t => (t.is_certified === 1 || t.is_certified === true) && t.status === 'completed' && t.progress >= 100).length
                 });
             }
         } catch (error) {
             console.error('Failed to load trainings:', error);
-            // surface server message if available
+            // Only update state if component is still mounted
+            if (!isMounted) return;
+            // Log error but don't display - trainings will show empty state
             const msg = error?.response?.data?.message || error?.message || 'Gagal memuat data dari server';
-            setPageError(msg);
+            console.warn('Training fetch error:', msg);
         } finally {
+            // Only update state if component is still mounted
+            if (!isMounted) return;
             setLoading(false);
         }
     };
@@ -344,7 +361,7 @@ export default function MyTrainings({ auth }) {
         setSearchError(null);
 
         try {
-            const res = await axios.get('/api/user/trainings', { params: { search: searchQuery, page } });
+            const res = await axiosInstance.get(API_ENDPOINTS.USER_TRAININGS, { params: { search: searchQuery, page } });
             const data = res.data.trainings?.data || res.data.trainings || [];
 
             // try to read pagination meta (common Laravel structure)
@@ -387,8 +404,8 @@ export default function MyTrainings({ auth }) {
 
         return base.filter(t => {
             const matchesTab = activeTab === 'all' || 
-                               (activeTab === 'active' && (t.status === 'in_progress' || t.status === 'not_started' || t.status === 'enrolled')) ||
-                               (activeTab === 'completed' && t.status === 'completed');
+                               (activeTab === 'active' && (t.status === 'in_progress' || t.status === 'not_started')) ||
+                               (activeTab === 'completed' && t.status === 'completed' && t.progress >= 100);
             return matchesTab;
         });
     }, [trainings, activeTab, searchQuery, searchResults]);
@@ -452,15 +469,16 @@ export default function MyTrainings({ auth }) {
                                     placeholder="Cari judul training..." 
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
+                                    autoComplete="off"
                                     className="w-full pl-12 pr-20 py-4 bg-white/10 backdrop-blur-sm border border-white/10 rounded-2xl text-white placeholder-white/50 focus:bg-white/20 focus:outline-none focus:border-[#D6F84C]/50 transition-all font-medium"
                                 />
 
-                                {/* Clear button */}
-                                {searchQuery && (
+                                {/* Clear button or Loading */}
+                                {searchQuery && !searchLoading && (
                                     <button
                                         type="button"
                                         onClick={() => { setSearchQuery(''); setSearchResults(null); }}
-                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-xs px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white"
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-xs px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white transition"
                                     >
                                         Hapus
                                     </button>
@@ -468,11 +486,59 @@ export default function MyTrainings({ auth }) {
 
                                 {/* Search loading indicator */}
                                 {searchLoading && (
-                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs px-3 py-1 rounded-full bg-white/10 text-white">...</div>
+                                    <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white/50"></div>
+                                    </div>
                                 )}
 
-                                {/* Search error */}
-                                {searchError && (
+                                {/* Search Dropdown Preview */}
+                                {(searchQuery || searchLoading) && searchResults !== null && (
+                                    <div className="absolute top-full left-0 right-0 mt-3 bg-slate-900/95 backdrop-blur-md rounded-2xl shadow-2xl z-50 max-h-80 overflow-y-auto border border-white/10">
+                                        {searchLoading ? (
+                                            <div className="p-4 text-center">
+                                                <div className="inline-block animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                                                <p className="text-xs text-white/50 mt-2">Mencari...</p>
+                                            </div>
+                                        ) : searchError ? (
+                                            <div className="p-4 text-center text-yellow-400 text-xs">{searchError}</div>
+                                        ) : searchResults && searchResults.length > 0 ? (
+                                            <div className="divide-y divide-white/5">
+                                                <div className="p-3 bg-white/5 text-xs font-bold text-white/60">
+                                                    Ditemukan {searchResults.length} training
+                                                </div>
+                                                {searchResults.slice(0, 5).map(result => (
+                                                    <Link
+                                                        key={result.id}
+                                                        href={`/training/${result.id}`}
+                                                        className="block p-3 hover:bg-white/5 transition"
+                                                    >
+                                                        <p className="font-semibold text-sm text-white line-clamp-1">{result.title}</p>
+                                                        <p className="text-xs text-white/50 line-clamp-1">{result.description}</p>
+                                                        {result.progress > 0 && (
+                                                            <div className="mt-2 w-full h-1 bg-white/10 rounded-full overflow-hidden">
+                                                                <div className="h-full bg-gradient-to-r from-[#D6F84C] to-[#005E54]" style={{ width: `${result.progress}%` }}></div>
+                                                            </div>
+                                                        )}
+                                                    </Link>
+                                                ))}
+                                                {searchResults.length > 5 && (
+                                                    <div className="p-3 text-center border-t border-white/5">
+                                                        <span className="text-xs font-semibold text-[#D6F84C]">
+                                                            +{searchResults.length - 5} training lainnya
+                                                        </span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ) : searchQuery && !searchLoading ? (
+                                            <div className="p-4 text-center text-white/50 text-sm">
+                                                Tidak ada training ditemukan untuk "{searchQuery}"
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                )}
+
+                                {/* Search error (full width) */}
+                                {searchError && !searchLoading && (
                                     <div className="mt-2 text-xs text-red-400">{searchError}</div>
                                 )}
 
@@ -495,7 +561,9 @@ export default function MyTrainings({ auth }) {
                     {/* Featured Course */}
                     {activeTab !== 'completed' && typeof featuredCourse !== 'undefined' && featuredCourse && !searchQuery && (
                         <div className="mb-10">
-                            <FeaturedCourse course={featuredCourse} />
+                            <ErrorBoundary label="Kursus Unggulan">
+                                <FeaturedCourse course={featuredCourse} />
+                            </ErrorBoundary>
                         </div>
                     )}
 
@@ -517,15 +585,16 @@ export default function MyTrainings({ auth }) {
                                 <p className="text-slate-500 font-medium">Memuat data...</p>
                             </div>
                         ) : filteredTrainings.length > 0 ? (
-                            <>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                    {filteredTrainings.map((t, idx) => (
-                                        <CourseCard key={t.id} training={t} index={idx} />
-                                    ))}
-                                </div>
+                            <ErrorBoundary label="Grid Training">
+                                <>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                        {filteredTrainings.map((t, idx) => (
+                                            <CourseCard key={t.id} training={t} index={idx} />
+                                        ))}
+                                    </div>
 
-                                {/* Pagination for server-side search */}
-                                {searchQuery && searchResults && searchTotalPages > 1 && (
+                                    {/* Pagination for server-side search */}
+                                    {searchQuery && searchResults && searchTotalPages > 1 && (
                                     <div className="flex justify-center mt-6 gap-2">
                                         <button
                                             type="button"
@@ -546,7 +615,8 @@ export default function MyTrainings({ auth }) {
                                         </button>
                                     </div>
                                 )}
-                            </>
+                                </>
+                            </ErrorBoundary>
                         ) : (
                             <div className="glass-panel rounded-[32px] p-16 text-center">
                                 <div className="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6">

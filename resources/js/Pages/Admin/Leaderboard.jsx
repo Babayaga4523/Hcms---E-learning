@@ -20,6 +20,8 @@ const Leaderboard = () => {
     const [userHistory, setUserHistory] = useState(null);
     const [historyLoading, setHistoryLoading] = useState(false);
     const [departments, setDepartments] = useState([]);
+    const [currentPage, setCurrentPage] = useState(1);
+    const itemsPerPage = 20;
 
     // Fetch leaderboard data
     useEffect(() => {
@@ -28,7 +30,7 @@ const Leaderboard = () => {
                 setLoading(true);
                 const params = new URLSearchParams();
                 if (filterDept !== 'all') params.append('department', filterDept);
-                params.append('limit', 100);
+                params.append('limit', 10000); // Fetch all users
 
                 const res = await fetch(`/api/admin/leaderboard?${params}`, {
                     headers: { 'Accept': 'application/json' },
@@ -51,6 +53,11 @@ const Leaderboard = () => {
 
         fetchLeaderboard();
     }, [filterDept]);
+
+    // Reset current page when search query or filter changes
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchQuery, filterDept]);
 
     // Fetch user history when expanding
     const fetchUserHistory = async (userId) => {
@@ -80,15 +87,27 @@ const Leaderboard = () => {
         }
     };
 
-    // Filter and search
-    const filteredLeaderboard = useMemo(() => {
-        return leaderboard.filter(u => {
+    // Filter and search with pagination
+    const filteredAndPaginatedLeaderboard = useMemo(() => {
+        const filtered = leaderboard.filter(u => {
             const matchSearch = u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                 u.email.toLowerCase().includes(searchQuery.toLowerCase());
             const matchDept = filterDept === 'all' || u.department === filterDept;
             return matchSearch && matchDept;
         });
-    }, [leaderboard, searchQuery, filterDept]);
+        
+        // Calculate pagination
+        const startIndex = (currentPage - 1) * itemsPerPage;
+        const endIndex = startIndex + itemsPerPage;
+        const paginatedData = filtered.slice(startIndex, endIndex);
+        
+        return {
+            data: paginatedData,
+            filtered: filtered,
+            total: filtered.length,
+            totalPages: Math.ceil(filtered.length / itemsPerPage)
+        };
+    }, [leaderboard, searchQuery, filterDept, currentPage, itemsPerPage]);
 
     // Badge colors
     const getBadgeColor = (badge) => {
@@ -134,7 +153,7 @@ const Leaderboard = () => {
                     <div className="relative z-10 flex items-center gap-2 bg-white/10 backdrop-blur-md rounded-full px-6 py-3 border border-white/20">
                         <Trophy className="text-[#D6F84C]" size={24} />
                         <div className="text-right">
-                            <div className="text-2xl font-black text-[#D6F84C]">{filteredLeaderboard.length}</div>
+                            <div className="text-2xl font-black text-[#D6F84C]">{filteredAndPaginatedLeaderboard.total}</div>
                             <div className="text-xs text-white/70">Peserta</div>
                         </div>
                     </div>
@@ -174,19 +193,22 @@ const Leaderboard = () => {
                         <div className="flex items-center justify-center h-64">
                             <div className="animate-spin w-8 h-8 border-4 border-slate-200 border-t-[#005E54] rounded-full"></div>
                         </div>
-                    ) : filteredLeaderboard.length > 0 ? (
-                        <div className="divide-y divide-slate-100">
-                            {filteredLeaderboard.map((performer, idx) => (
-                                <motion.div key={performer.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: idx * 0.05 }}>
-                                    {/* Main Row */}
-                                    <button
-                                        onClick={() => handleUserClick(performer.id)}
-                                        className="w-full p-6 hover:bg-slate-50 transition text-left flex items-center gap-4"
-                                    >
-                                        {/* Rank */}
-                                        <div className={`w-12 h-12 rounded-full flex items-center justify-center font-black text-lg flex-shrink-0 ${getRankColor(idx + 1)}`}>
-                                            {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`}
-                                        </div>
+                    ) : filteredAndPaginatedLeaderboard.total > 0 ? (
+                        <>
+                            <div className="divide-y divide-slate-100">
+                                {filteredAndPaginatedLeaderboard.data.map((performer, idx) => {
+                                    const globalIndex = (currentPage - 1) * itemsPerPage + idx + 1;
+                                    return (
+                                        <motion.div key={performer.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: idx * 0.05 }}>
+                                            {/* Main Row */}
+                                            <button
+                                                onClick={() => handleUserClick(performer.id)}
+                                                className="w-full p-6 hover:bg-slate-50 transition text-left flex items-center gap-4"
+                                            >
+                                                {/* Rank */}
+                                                <div className={`w-12 h-12 rounded-full flex items-center justify-center font-black text-lg flex-shrink-0 ${getRankColor(globalIndex)}`}>
+                                                    {globalIndex === 1 ? '🥇' : globalIndex === 2 ? '🥈' : globalIndex === 3 ? '🥉' : `#${globalIndex}`}
+                                                </div>
 
                                         {/* User Info */}
                                         <div className="flex-1 min-w-0">
@@ -334,8 +356,68 @@ const Leaderboard = () => {
                                         )}
                                     </AnimatePresence>
                                 </motion.div>
-                            ))}
-                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            {/* Pagination Controls */}
+                            <div className="flex items-center justify-between p-6 border-t border-slate-100 bg-slate-50">
+                                <div className="text-sm text-slate-600 font-semibold">
+                                    Menampilkan {((currentPage - 1) * itemsPerPage) + 1} - {Math.min(currentPage * itemsPerPage, filteredAndPaginatedLeaderboard.total)} dari {filteredAndPaginatedLeaderboard.total} peserta
+                                </div>
+                                
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                                        disabled={currentPage === 1}
+                                        className="flex items-center gap-1 px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 font-bold hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                                    >
+                                        <ChevronUp size={16} className="rotate-90" />
+                                        Sebelumnya
+                                    </button>
+
+                                    <div className="flex items-center gap-1">
+                                        {Array.from({ length: Math.min(5, filteredAndPaginatedLeaderboard.totalPages) }, (_, i) => {
+                                            let pageNum;
+                                            if (filteredAndPaginatedLeaderboard.totalPages <= 5) {
+                                                pageNum = i + 1;
+                                            } else {
+                                                if (currentPage <= 3) {
+                                                    pageNum = i + 1;
+                                                } else if (currentPage >= filteredAndPaginatedLeaderboard.totalPages - 2) {
+                                                    pageNum = filteredAndPaginatedLeaderboard.totalPages - 4 + i;
+                                                } else {
+                                                    pageNum = currentPage - 2 + i;
+                                                }
+                                            }
+                                            
+                                            return (
+                                                <button
+                                                    key={pageNum}
+                                                    onClick={() => setCurrentPage(pageNum)}
+                                                    className={`w-10 h-10 rounded-lg font-bold transition ${
+                                                        currentPage === pageNum
+                                                            ? 'bg-[#005E54] text-white'
+                                                            : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                                                    }`}
+                                                >
+                                                    {pageNum}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+
+                                    <button
+                                        onClick={() => setCurrentPage(prev => Math.min(prev + 1, filteredAndPaginatedLeaderboard.totalPages))}
+                                        disabled={currentPage === filteredAndPaginatedLeaderboard.totalPages}
+                                        className="flex items-center gap-1 px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 font-bold hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                                    >
+                                        Berikutnya
+                                        <ChevronDown size={16} className="-rotate-90" />
+                                    </button>
+                                </div>
+                            </div>
+                        </>
                     ) : (
                         <div className="text-center py-20">
                             <Users size={48} className="mx-auto mb-4 text-slate-300" />

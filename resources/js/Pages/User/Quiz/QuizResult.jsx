@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Head, Link, router } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
+import { validateQuizResult } from '@/Utils/validators';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
     Trophy, CheckCircle2, XCircle, Clock, Target, 
@@ -186,6 +187,20 @@ const QuestionReviewItem = ({ question, index }) => {
                     >
                         <div className="px-5 pb-5 pt-0 pl-[4.5rem]">
                             <div className="space-y-2 text-sm border-t border-slate-100 pt-4">
+                                {question.image_url_full && (
+                                    <div className="mb-4">
+                                        <img 
+                                            src={question.image_url_full} 
+                                            alt="Question Image" 
+                                            className="max-w-full h-auto rounded-lg object-contain max-h-96 cursor-pointer hover:opacity-90 transition-opacity"
+                                            onClick={(e) => window.open(question.image_url_full, '_blank')}
+                                            onError={(e) => {
+                                                console.warn('Failed to load question image:', question.image_url_full);
+                                                e.target.style.display = 'none';
+                                            }}
+                                        />
+                                    </div>
+                                )}
                                 {(() => {
                                     // Normalize options
                                     let optsRaw = [];
@@ -253,9 +268,38 @@ export default function QuizResult({ auth, training = {}, quiz = {}, result = {}
     const user = auth?.user || {};
     const isPassed = result.score >= (quiz.passing_score || 70);
     
-    // Calculate stats
-    const correctCount = result.correct_count || questions.filter(q => q.is_correct).length;
-    const wrongCount = result.wrong_count || (questions.length - correctCount);
+    // Validate result data for safe access
+    let validatedResult = null;
+    try {
+        if (result && typeof result === 'object') {
+            validatedResult = validateQuizResult(result);
+        }
+    } catch (error) {
+        console.warn('Quiz result validation error:', error);
+        validatedResult = {
+            correct_count: null,
+            score: 0,
+            passed: false,
+        };
+    }
+    
+    // Calculate stats safely - if correct_count is explicitly provided, use it
+    // Otherwise, count from questions if available, otherwise null
+    let correctCount = validatedResult?.correct_count;
+    
+    if (correctCount === null || correctCount === undefined) {
+        // Only fall back to questions count if questions array exists and has items
+        if (Array.isArray(questions) && questions.length > 0) {
+            correctCount = questions.filter(q => q.is_correct).length;
+        } else {
+            // Mark as unknown - don't assume 0
+            correctCount = null;
+        }
+    }
+    
+    const wrongCount = validatedResult?.correct_count !== null 
+        ? (questions.length - (validatedResult?.correct_count || 0))
+        : null;
     
     // Format time spent nicely and resiliently (handle missing or negative values)
     const formatTimeSpent = (timeStr) => {
@@ -291,7 +335,18 @@ export default function QuizResult({ auth, training = {}, quiz = {}, result = {}
         return '0s';
     };
     
-    const timeSpent = formatTimeSpent(result.time_spent);
+    const timeSpent = result.time_spent ? formatTimeSpent(result.time_spent) : '0s';
+    
+    // Helper: Format duration to MM:SS or s/m format
+    const formatDuration = (timeStr) => {
+        if (!timeStr || timeStr === 'N/A') return 'N/A';
+        // If already in MM:SS format
+        if (String(timeStr).includes(':')) {
+            const [mins, secs] = String(timeStr).split(':').map(x => parseInt(x) || 0);
+            return `${mins}m ${secs}s`.replace(' 0s', '');
+        }
+        return String(timeStr);
+    };
     
     return (
         <AppLayout user={user}>

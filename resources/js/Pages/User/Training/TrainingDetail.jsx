@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Head, Link, router } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
+import { extractData } from '@/Utilities/apiResponseHandler';
+import ErrorBoundary from '@/Components/ErrorBoundary';
+import { validateTraining } from '@/Utils/validators';
+import axiosInstance from '@/Services/axiosInstance';
+import { API_ENDPOINTS } from '@/Config/api';
+import { getErrorMessage, isRetryableError, getRetryDelay, getMaxRetries, logError } from '@/Utils/errorHandler';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
     BookOpen, Clock, Award, PlayCircle, CheckCircle2, 
@@ -8,7 +14,6 @@ import {
     ArrowLeft, Target, Users, Calendar, Timer, Star,
     AlertCircle, Play, Pause, RotateCcw, Zap, Share2
 } from 'lucide-react';
-import axios from 'axios';
 import showToast from '@/Utils/toast';
 
 // --- Wondr Style System ---
@@ -102,6 +107,17 @@ const QuizSection = ({ type, quiz, training, onStart }) => {
     const attempts = quiz?.attempts || 0;
     const hasAttempted = attempts > 0 || score > 0;
     
+    // Format last attempted date
+    const lastAttemptedDate = quiz?.last_attempted_at 
+        ? new Date(quiz.last_attempted_at).toLocaleDateString('id-ID', { 
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          })
+        : null;
+    
     return (
         <div className="bg-gradient-to-br from-[#002824] to-[#00403a] rounded-[32px] p-8 text-white relative overflow-hidden">
             <div className="absolute top-0 right-0 p-8 opacity-10">
@@ -142,7 +158,8 @@ const QuizSection = ({ type, quiz, training, onStart }) => {
                     )}
                 </div>
                 
-                <div className="flex items-center gap-4 mb-6 text-sm text-blue-100">
+                {/* Quiz Info Row */}
+                <div className="flex items-center gap-4 mb-6 text-sm text-blue-100 flex-wrap">
                     <span className="flex items-center gap-1">
                         <Clock size={14} />
                         {quiz?.duration || 30} menit
@@ -154,10 +171,18 @@ const QuizSection = ({ type, quiz, training, onStart }) => {
                     {attempts > 0 && (
                         <span className="flex items-center gap-1">
                             <RotateCcw size={14} />
-                            {attempts} percobaan
+                            {attempts} {attempts === 1 ? 'percobaan' : 'percobaan'}
                         </span>
                     )}
                 </div>
+
+                {/* Last Attempted Info */}
+                {lastAttemptedDate && (
+                    <div className="mb-6 text-xs text-blue-200 flex items-center gap-2">
+                        <Clock size={12} />
+                        Percobaan terakhir: {lastAttemptedDate}
+                    </div>
+                )}
                 
                 <button
                     onClick={() => {
@@ -197,16 +222,28 @@ const QuizSection = ({ type, quiz, training, onStart }) => {
 };
 
 // Main Component
-export default function TrainingDetail({ auth, training: initialTraining, enrollment: initialEnrollment, progress: initialProgress, quizAttempts: initialQuizAttempts, completedMaterials: initialCompletedMaterials, certificateEligible = false, certificateRequirements = {} }) {
+export default function TrainingDetail({ auth, training: initialTraining, enrollment: initialEnrollment, progress: initialProgress, comprehensiveProgress: initialComprehensiveProgress, quizAttempts: initialQuizAttempts, completedMaterials: initialCompletedMaterials, certificateEligible = false, certificateRequirements = {} }) {
+    // Use comprehensive progress for display (materials 40% + pretest 30% + posttest 30%)
+    // This ensures consistent progress calculation across all pages
+    const displayProgress = initialComprehensiveProgress?.total_progress || 0;
     const user = auth?.user || {};
     const [training, setTraining] = useState(initialTraining || {});
+    const [comprehensiveProgress, setComprehensiveProgress] = useState(initialComprehensiveProgress || null);
     const [materials, setMaterials] = useState([]);
     const [pretest, setPretest] = useState(null);
     const [posttest, setPosttest] = useState(null);
     const [currentMaterial, setCurrentMaterial] = useState(null);
     const [activeTab, setActiveTab] = useState('curriculum');
     const [loading, setLoading] = useState(!initialTraining);
+    const [error, setError] = useState(null);
     const trainingId = training?.id || initialTraining?.id;
+    
+    // Store comprehensive progress in window for easy access
+    useEffect(() => {
+        if (comprehensiveProgress) {
+            window.comprehensiveProgress = comprehensiveProgress;
+        }
+    }, [comprehensiveProgress]);
     
     // Load training data on mount
     useEffect(() => {
@@ -223,36 +260,32 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
         try {
             setLoading(true);
             
-            // Transform training data from props
+            // Validate training data before transformation
+            if (!initialTraining || typeof initialTraining !== 'object') {
+                throw new Error('Training data is invalid or missing');
+            }
+            
+            // Transform training data from props with safety checks
+            const validatedTraining = validateTraining(initialTraining);
+            
             const transformedTraining = {
-                id: initialTraining.id,
-                title: initialTraining.title,
-                description: initialTraining.description,
-                full_description: initialTraining.full_description,
-                category: initialTraining.category,
-                is_mandatory: initialTraining.is_mandatory,
+                id: validatedTraining.id,
+                title: validatedTraining.title,
+                description: validatedTraining.description,
+                full_description: validatedTraining.full_description,
+                category: validatedTraining.category,
+                is_mandatory: initialTraining.is_mandatory || false,
                 status: initialEnrollment?.status || 'not_started',
                 progress: initialProgress?.progress_percentage || 0,
                 duration: initialTraining.duration_minutes || initialTraining.duration || 0,
                 due_date: initialTraining.expiry_date || initialTraining.end_date,
                 enrolled_count: initialTraining.enrollments_count || 0,
-                materials_count: initialTraining.materials_count || 1,
-                objectives: null, // Will be set below
-                requirements: initialTraining.requirements,
-                instructor: initialTraining.instructor || null,
+                materials_count: validatedTraining.materials_count,
+                objectives: validatedTraining.objectives,
+                requirements: validatedTraining.requirements,
+                instructor: validatedTraining.instructor,
                 certification_available: initialTraining.certificate_template ? true : false
             };
-            
-            // Handle objectives parsing safely
-            try {
-                if (typeof initialTraining.objectives === 'string') {
-                    transformedTraining.objectives = JSON.parse(initialTraining.objectives);
-                } else if (Array.isArray(initialTraining.objectives)) {
-                    transformedTraining.objectives = initialTraining.objectives;
-                }
-            } catch (e) {
-                transformedTraining.objectives = null;
-            }
             
             setTraining(transformedTraining);
             
@@ -264,9 +297,10 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
                     score: initialQuizAttempts.pretest.score || 0,
                     percentage: initialQuizAttempts.pretest.percentage || 0,
                     attempt_id: initialQuizAttempts.pretest.attempt_id || null,
-                    attempts: initialQuizAttempts.pretest.completed ? 1 : 0,
-                    duration: 30,
-                    questions_count: initialTraining.questions?.filter(q => q.question_type === 'pretest').length || 5
+                    attempts: initialQuizAttempts.pretest.attempts_count || 0,  // Use attempts_count from backend
+                    duration: initialQuizAttempts.pretest.duration || 30,  // Use duration from backend
+                    questions_count: initialQuizAttempts.pretest.questions_count || 5,  // Use questions_count from backend
+                    last_attempted_at: initialQuizAttempts.pretest.last_attempted_at || null
                 });
             }
             
@@ -277,27 +311,57 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
                     score: initialQuizAttempts.posttest.score || 0,
                     percentage: initialQuizAttempts.posttest.percentage || 0,
                     attempt_id: initialQuizAttempts.posttest.attempt_id || null,
-                    attempts: initialQuizAttempts.posttest.completed ? 1 : 0,
-                    duration: 30,
-                    questions_count: initialTraining.questions?.filter(q => q.question_type === 'posttest').length || 5
+                    attempts: initialQuizAttempts.posttest.attempts_count || 0,  // Use attempts_count from backend
+                    duration: initialQuizAttempts.posttest.duration || 30,  // Use duration from backend
+                    questions_count: initialQuizAttempts.posttest.questions_count || 5,  // Use questions_count from backend
+                    last_attempted_at: initialQuizAttempts.posttest.last_attempted_at || null
                 });
             }
             
-            // Load materials
-            const materialsRes = await axios.get(`/api/training/${initialTraining.id}/materials`);
-            const transformedMaterials = materialsRes.data.materials.map(m => ({
-                id: m.id,
-                title: m.title,
-                type: m.type,
-                duration: m.duration,
-                is_completed: initialCompletedMaterials.includes(m.id),
-                module_title: m.module_title
-            }));
-            
-            setMaterials(transformedMaterials);
+            // Load materials - validatedTraining.id is now guaranteed safe
+            try {
+                const materialsRes = await axiosInstance.get(API_ENDPOINTS.TRAINING_MATERIALS(validatedTraining.id));
+                const transformedMaterials = materialsRes.data.materials.map(m => ({
+                    id: m.id,
+                    title: m.title,
+                    type: m.type,
+                    duration: m.duration,
+                    is_completed: initialCompletedMaterials.includes(m.id),
+                    module_title: m.module_title
+                }));
+                
+                setMaterials(transformedMaterials);
+            } catch (materialError) {
+                // Handle missing API endpoint gracefully
+                if (materialError.response?.status === 404) {
+                    console.warn('Materials API endpoint not found, using fallback materials from training data');
+                    // Try to extract materials from initialTraining if available
+                    if (initialTraining?.materials && Array.isArray(initialTraining.materials)) {
+                        const transformedMaterials = initialTraining.materials.map(m => ({
+                            id: m.id,
+                            title: m.title,
+                            type: m.type || 'document',
+                            duration: m.duration || 0,
+                            is_completed: initialCompletedMaterials.includes(m.id),
+                            module_title: m.module_title
+                        }));
+                        setMaterials(transformedMaterials);
+                    } else {
+                        setMaterials([]);
+                    }
+                } else {
+                    // Re-throw non-404 errors
+                    throw materialError;
+                }
+            }
             setLoading(false);
         } catch (error) {
-            console.error('Error setting up initial data:', error);
+            // Use centralized error handler for consistent messaging
+            const errorMsg = getErrorMessage(error);
+            logError(error, 'initialDataSetup', 'error');
+            
+            setError(errorMsg);
+            showToast(errorMsg, 'error');
             setLoading(false);
         }
     };
@@ -317,7 +381,7 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
             }
 
             // Load training details
-            const trainingRes = await axios.get(`/api/user/trainings/${id}`);
+            const trainingRes = await axiosInstance.get(API_ENDPOINTS.USER_TRAINING_DETAIL(id));
             const trainingData = trainingRes.data.training;
             const enrollment = trainingRes.data.enrollment;
             const completedMaterialIds = trainingRes.data.completedMaterials || [];
@@ -356,7 +420,7 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
             setTraining(transformedTraining);
             
             // Load materials
-            const materialsRes = await axios.get(`/api/training/${trainingData.id}/materials`);
+            const materialsRes = await axiosInstance.get(API_ENDPOINTS.TRAINING_MATERIALS(trainingData.id));
             const transformedMaterials = materialsRes.data.materials.map(m => ({
                 id: m.id,
                 title: m.title,
@@ -370,7 +434,7 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
             
             // Load quizzes data
             try {
-                const pretestRes = await axios.get(`/api/training/${trainingData.id}/quiz/pretest`);
+                const pretestRes = await axiosInstance.get(API_ENDPOINTS.QUIZ_START(trainingData.id, 'pretest'));
                 if (pretestRes.data.quiz) {
                     setPretest({
                         is_passed: pretestRes.data.is_passed || false,
@@ -386,7 +450,7 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
             }
             
             try {
-                const posttestRes = await axios.get(`/api/training/${trainingData.id}/quiz/posttest`);
+                const posttestRes = await axiosInstance.get(API_ENDPOINTS.QUIZ_START(trainingData.id, 'posttest'));
                 if (posttestRes.data.quiz) {
                     setPosttest({
                         is_passed: posttestRes.data.is_passed || false,
@@ -402,7 +466,12 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
             }
             
         } catch (error) {
-            console.error('Failed to load training data:', error);
+            // Use centralized error handler for consistent messaging
+            const errorMsg = getErrorMessage(error);
+            logError(error, 'loadTrainingData', 'error');
+            
+            setError(errorMsg);
+            showToast(errorMsg, 'error');
         } finally {
             setLoading(false);
         }
@@ -420,21 +489,21 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
     const handleStartTraining = async () => {
         try {
             setLoading(true);
-            await axios.post(`/api/training/${trainingId}/start`);
+            await axiosInstance.post(API_ENDPOINTS.TRAINING_START(trainingId));
             // Reload training data to get updated status
             await loadTrainingData();
         } catch (error) {
-            console.error('Failed to start training:', error);
-            // If unauthenticated, redirect to login so user can authenticate and retry
+            // Use centralized error handler for consistent messaging
+            const errorMsg = getErrorMessage(error);
+            logError(error, 'handleStartTraining', 'error');
+            
+            // 401 handled by axiosInstance interceptor, but keep for explicit control
             if (error?.response?.status === 401) {
                 window.location.href = '/login';
                 return;
             }
-            // Prefer explicit server message when available (message or validation errors)
-            const serverMsg = error?.response?.data?.message
-                || (error?.response?.data?.errors && Object.values(error.response.data.errors)[0]?.[0])
-                || 'Gagal memulai training. Silakan coba lagi.';
-            showToast(serverMsg, 'error');
+            
+            showToast(errorMsg, 'error');
         } finally {
             setLoading(false);
         }
@@ -544,13 +613,13 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
                                 cx="50%" cy="50%" r="45%" 
                                 stroke="#D6F84C" strokeWidth="8" fill="none" strokeLinecap="round"
                                 strokeDasharray="283" 
-                                strokeDashoffset={283 - (283 * (training.progress || 0)) / 100}
+                                strokeDashoffset={283 - (283 * displayProgress) / 100}
                                 className="transition-all duration-1000 ease-out"
                             />
                         </svg>
                         <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
-                            <span className="text-3xl md:text-4xl font-black">{training.progress || 0}%</span>
-                            <span className="text-[10px] uppercase font-bold tracking-wider opacity-70">Completed</span>
+                            <span className="text-3xl md:text-4xl font-black">{Math.round(displayProgress)}%</span>
+                            <span className="text-[10px] uppercase font-bold tracking-wider opacity-70">Total Progress</span>
                         </div>
                     </div>
                 </div>
@@ -585,113 +654,119 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
 
                         <div className="min-h-[500px] animate-enter">
                             {activeTab === 'curriculum' && (
-                                <div className="space-y-6">
-                                    {/* Material List */}
-                                    <div className="bg-white rounded-[32px] p-6 md:p-8 shadow-sm border border-slate-100">
-                                        <div className="flex justify-between items-end mb-6">
-                                            <div>
-                                                <h3 className="text-xl font-bold text-slate-900">Materi Pembelajaran</h3>
-                                                <p className="text-sm text-slate-500">
-                                                    {materials.filter(m => m.is_completed).length} dari {materials.length} selesai
-                                                </p>
+                                <ErrorBoundary label="Kurikulum & Materi">
+                                    <div className="space-y-6">
+                                        {/* Material List */}
+                                        <div className="bg-white rounded-[32px] p-6 md:p-8 shadow-sm border border-slate-100">
+                                            <div className="flex justify-between items-end mb-6">
+                                                <div>
+                                                    <h3 className="text-xl font-bold text-slate-900">Materi Pembelajaran</h3>
+                                                    <p className="text-sm text-slate-500">
+                                                        {materials.filter(m => m.is_completed).length} dari {materials.length} selesai
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="space-y-3">
+                                                {materials.length > 0 ? materials.map((material, index) => {
+                                                    // Status 'enrolled' dari backend = belum dimulai di frontend
+                                                    // User selalu bisa akses materi pertama, materi selanjutnya tergantung sequential completion
+                                                    const isNotStarted = training.status === 'not_started' || training.status === 'enrolled';
+                                                    const isLocked = isNotStarted && index > 0 && !materials[0]?.is_completed;
+                                                    const isActive = !material.is_completed && (index === 0 || materials[index-1]?.is_completed);
+                                                    
+                                                    return (
+                                                        <MaterialRow 
+                                                            key={material.id} 
+                                                            material={material} 
+                                                            index={index}
+                                                            isLocked={isLocked}
+                                                            isActive={isActive}
+                                                            onStart={handleStartMaterial}
+                                                        />
+                                                    );
+                                                }) : (
+                                                    <div className="text-center py-8 text-slate-500">
+                                                        <BookOpen className="mx-auto mb-2 text-slate-300" size={40} />
+                                                        <p>Belum ada materi untuk training ini</p>
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
-                                        
-                                        <div className="space-y-3">
-                                            {materials.length > 0 ? materials.map((material, index) => {
-                                                // Status 'enrolled' dari backend = belum dimulai di frontend
-                                                // User selalu bisa akses materi pertama, materi selanjutnya tergantung sequential completion
-                                                const isNotStarted = training.status === 'not_started' || training.status === 'enrolled';
-                                                const isLocked = isNotStarted && index > 0 && !materials[0]?.is_completed;
-                                                const isActive = !material.is_completed && (index === 0 || materials[index-1]?.is_completed);
-                                                
-                                                return (
-                                                    <MaterialRow 
-                                                        key={material.id} 
-                                                        material={material} 
-                                                        index={index}
-                                                        isLocked={isLocked}
-                                                        isActive={isActive}
-                                                        onStart={handleStartMaterial}
-                                                    />
-                                                );
-                                            }) : (
-                                                <div className="text-center py-8 text-slate-500">
-                                                    <BookOpen className="mx-auto mb-2 text-slate-300" size={40} />
-                                                    <p>Belum ada materi untuk training ini</p>
-                                                </div>
-                                            )}
-                                        </div>
                                     </div>
-                                </div>
+                                </ErrorBoundary>
                             )}
 
                             {activeTab === 'about' && (
-                                <div className="bg-white rounded-[32px] p-8 shadow-sm border border-slate-100 space-y-6">
-                                    <div>
-                                        <h3 className="text-lg font-bold text-slate-900 mb-3">Deskripsi Lengkap</h3>
-                                        <p className="text-slate-600 leading-relaxed">
-                                            {training.full_description || training.description || 'Tidak ada deskripsi lengkap.'}
-                                        </p>
-                                    </div>
-                                    <div>
-                                        <h3 className="text-lg font-bold text-slate-900 mb-3">Apa yang akan Anda pelajari?</h3>
-                                        <ul className="grid grid-cols-1 gap-3">
-                                            {(training.objectives && Array.isArray(training.objectives) && training.objectives.length > 0 
-                                                ? training.objectives 
-                                                : [
-                                                    'Memahami dan menguasai materi pelatihan dengan baik',
-                                                    'Mampu menerapkan pengetahuan yang didapat dalam pekerjaan sehari-hari',
-                                                    'Meningkatkan kompetensi dan keterampilan di bidang terkait',
-                                                    'Mencapai standar kelulusan yang telah ditentukan'
-                                                ]
-                                            ).map((obj, i) => (
-                                                <li key={i} className="flex items-start gap-3 p-3 bg-slate-50 rounded-xl">
-                                                    <CheckCircle2 className="text-[#005E54] flex-shrink-0 mt-0.5" size={18} />
-                                                    <span className="text-slate-700 text-sm font-medium">{obj}</span>
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                    {training.requirements && (
-                                        <div className="bg-amber-50 rounded-2xl border border-amber-200 p-6">
-                                            <div className="flex items-start gap-3">
-                                                <AlertCircle className="text-amber-600 flex-shrink-0 mt-0.5" size={20} />
-                                                <div>
-                                                    <h3 className="font-bold text-amber-900 mb-2">Prasyarat</h3>
-                                                    <p className="text-sm text-amber-800">{training.requirements}</p>
+                                <ErrorBoundary label="Tentang Training">
+                                    <div className="bg-white rounded-[32px] p-8 shadow-sm border border-slate-100 space-y-6">
+                                        <div>
+                                            <h3 className="text-lg font-bold text-slate-900 mb-3">Deskripsi Lengkap</h3>
+                                            <p className="text-slate-600 leading-relaxed">
+                                                {training.full_description || training.description || 'Tidak ada deskripsi lengkap.'}
+                                            </p>
+                                        </div>
+                                        <div>
+                                            <h3 className="text-lg font-bold text-slate-900 mb-3">Apa yang akan Anda pelajari?</h3>
+                                            <ul className="grid grid-cols-1 gap-3">
+                                                {(training.objectives && Array.isArray(training.objectives) && training.objectives.length > 0 
+                                                    ? training.objectives 
+                                                    : [
+                                                        'Memahami dan menguasai materi pelatihan dengan baik',
+                                                        'Mampu menerapkan pengetahuan yang didapat dalam pekerjaan sehari-hari',
+                                                        'Meningkatkan kompetensi dan keterampilan di bidang terkait',
+                                                        'Mencapai standar kelulusan yang telah ditentukan'
+                                                    ]
+                                                ).map((obj, i) => (
+                                                    <li key={i} className="flex items-start gap-3 p-3 bg-slate-50 rounded-xl">
+                                                        <CheckCircle2 className="text-[#005E54] flex-shrink-0 mt-0.5" size={18} />
+                                                        <span className="text-slate-700 text-sm font-medium">{obj}</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                        {training.requirements && (
+                                            <div className="bg-amber-50 rounded-2xl border border-amber-200 p-6">
+                                                <div className="flex items-start gap-3">
+                                                    <AlertCircle className="text-amber-600 flex-shrink-0 mt-0.5" size={20} />
+                                                    <div>
+                                                        <h3 className="font-bold text-amber-900 mb-2">Prasyarat</h3>
+                                                        <p className="text-sm text-amber-800">{training.requirements}</p>
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </div>
-                                    )}
-                                </div>
+                                        )}
+                                    </div>
+                                </ErrorBoundary>
                             )}
 
                             {activeTab === 'quiz' && (
-                                <div className="space-y-6">
-                                    {pretest && (
-                                        <QuizSection
-                                            type="pretest"
-                                            quiz={pretest}
-                                            training={training}
-                                            onStart={handleStartQuiz}
-                                        />
-                                    )}
-                                    {posttest && (
-                                        <QuizSection
-                                            type="posttest"
-                                            quiz={posttest}
-                                            training={training}
-                                            onStart={handleStartQuiz}
-                                        />
-                                    )}
-                                    {!pretest && !posttest && (
-                                        <div className="bg-white rounded-[32px] p-8 shadow-sm border border-slate-100 text-center">
-                                            <Target className="mx-auto mb-4 text-slate-300" size={48} />
-                                            <p className="text-slate-500">Belum ada quiz untuk training ini</p>
-                                        </div>
-                                    )}
-                                </div>
+                                <ErrorBoundary label="Quiz & Tes">
+                                    <div className="space-y-6">
+                                        {pretest && (
+                                            <QuizSection
+                                                type="pretest"
+                                                quiz={pretest}
+                                                training={training}
+                                                onStart={handleStartQuiz}
+                                            />
+                                        )}
+                                        {posttest && (
+                                            <QuizSection
+                                                type="posttest"
+                                                quiz={posttest}
+                                                training={training}
+                                                onStart={handleStartQuiz}
+                                            />
+                                        )}
+                                        {!pretest && !posttest && (
+                                            <div className="bg-white rounded-[32px] p-8 shadow-sm border border-slate-100 text-center">
+                                                <Target className="mx-auto mb-4 text-slate-300" size={48} />
+                                                <p className="text-slate-500">Belum ada quiz untuk training ini</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </ErrorBoundary>
                             )}
                         </div>
                     </div>
@@ -719,74 +794,116 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
                                 )}
                                 <div className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
                                     <div className="flex items-center gap-3">
-                                        <Award className="text-slate-400" size={20} />
+                                        <Award className={`${certificateEligible ? 'text-amber-400' : 'text-slate-400'}`} size={20} />
                                         <div>
                                             <p className="text-xs text-slate-500 font-bold uppercase">Sertifikat</p>
-                                            <p className="font-bold text-slate-900">
-                                                {training.certification_available ? 'Tersedia' : 'Tidak Tersedia'}
+                                            <p className={`font-bold ${certificateEligible ? 'text-amber-600' : 'text-slate-500'}`}>
+                                                {certificateEligible ? '✓ Siap Diambil' : 'Terkunci'}
                                             </p>
                                         </div>
                                     </div>
                                 </div>
                                 
-                                {/* Progress Breakdown */}
-                                <div className="space-y-3 pt-4 border-t border-slate-200">
+                                {/* Progress Breakdown - Comprehensive */}
+                                <div className="space-y-4 pt-4 border-t border-slate-200">
+                                    {/* Total Progress */}
+                                    <div className="bg-gradient-to-r from-[#005E54]/10 to-[#D6F84C]/10 p-3 rounded-lg">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="text-sm font-bold text-slate-700">Total Progress</span>
+                                            <span className="text-lg font-black text-[#005E54]">
+                                                {window.comprehensiveProgress?.total_progress || training.progress || 0}%
+                                            </span>
+                                        </div>
+                                        <div className="h-3 bg-slate-200 rounded-full overflow-hidden">
+                                            <div 
+                                                className="h-full bg-gradient-to-r from-[#005E54] to-[#D6F84C] rounded-full transition-all duration-500"
+                                                style={{ width: `${window.comprehensiveProgress?.total_progress || training.progress || 0}%` }}
+                                            />
+                                        </div>
+                                        <p className="text-xs text-slate-500 mt-2">Materials (40%) + Pre-Test (30%) + Post-Test (30%)</p>
+                                    </div>
+
+                                    {/* Materials Completion */}
                                     <div>
                                         <div className="flex justify-between text-sm mb-2">
-                                            <span className="text-slate-600">Materi</span>
-                                            <span className="font-bold">
-                                                {materials.filter(m => m.is_completed).length}/{materials.length}
+                                            <div>
+                                                <span className="text-slate-600">📚 Materi</span>
+                                                <span className="text-xs text-slate-400 ml-2">40% weight</span>
+                                            </div>
+                                            <span className="font-bold text-[#005E54]">
+                                                {window.comprehensiveProgress?.breakdown?.materials?.progress || (materials.length > 0 ? (materials.filter(m => m.is_completed).length / materials.length) * 100 : 0).toFixed(0)}%
                                             </span>
                                         </div>
                                         <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                                             <div 
                                                 className="h-full bg-[#005E54] rounded-full transition-all"
                                                 style={{ 
-                                                    width: `${materials.length > 0 ? (materials.filter(m => m.is_completed).length / materials.length) * 100 : 0}%` 
+                                                    width: `${window.comprehensiveProgress?.breakdown?.materials?.progress || (materials.length > 0 ? (materials.filter(m => m.is_completed).length / materials.length) * 100 : 0)}%` 
                                                 }}
                                             />
                                         </div>
+                                        <p className="text-xs text-slate-500 mt-1">
+                                            {window.comprehensiveProgress?.breakdown?.materials?.completed || materials.filter(m => m.is_completed).length}/{window.comprehensiveProgress?.breakdown?.materials?.total || materials.length} diselesaikan
+                                        </p>
                                     </div>
                                     
-                                    {pretest && (
+                                    {/* Pre-Test Score */}
+                                    {(pretest || window.comprehensiveProgress?.breakdown?.pretest?.exists) && (
                                         <div>
                                             <div className="flex justify-between text-sm mb-2">
-                                                <span className="text-slate-600">Pre-Test</span>
+                                                <div>
+                                                    <span className="text-slate-600">📝 Pre-Test</span>
+                                                    <span className="text-xs text-slate-400 ml-2">30% weight</span>
+                                                </div>
                                                 <span className={`font-bold ${
-                                                    pretest?.is_passed ? 'text-emerald-600' : 'text-slate-500'
+                                                    (window.comprehensiveProgress?.breakdown?.pretest?.passed || pretest?.is_passed) ? 'text-emerald-600' : 'text-slate-500'
                                                 }`}>
-                                                    {pretest?.is_passed ? 'Lulus' : 'Belum'}
+                                                    {window.comprehensiveProgress?.breakdown?.pretest?.score || pretest?.score || 0}%
                                                 </span>
                                             </div>
                                             <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                                                 <div 
                                                     className={`h-full rounded-full transition-all ${
-                                                        pretest?.is_passed ? 'bg-emerald-500' : 'bg-slate-300'
+                                                        (window.comprehensiveProgress?.breakdown?.pretest?.passed || pretest?.is_passed) ? 'bg-emerald-500' : 'bg-orange-400'
                                                     }`}
-                                                    style={{ width: pretest?.is_passed ? '100%' : '0%' }}
+                                                    style={{ width: `${window.comprehensiveProgress?.breakdown?.pretest?.progress || pretest?.percentage || 0}%` }}
                                                 />
                                             </div>
+                                            <p className="text-xs text-slate-500 mt-1">
+                                                {window.comprehensiveProgress?.breakdown?.pretest?.status === 'completed' || pretest?.completed ? (
+                                                    window.comprehensiveProgress?.breakdown?.pretest?.passed || pretest?.is_passed ? '✓ Lulus' : '✗ Belum lulus'
+                                                ) : 'Belum dikerjakan'}
+                                            </p>
                                         </div>
                                     )}
                                     
-                                    {posttest && (
+                                    {/* Post-Test Score */}
+                                    {(posttest || window.comprehensiveProgress?.breakdown?.posttest?.exists) && (
                                         <div>
                                             <div className="flex justify-between text-sm mb-2">
-                                                <span className="text-slate-600">Post-Test</span>
+                                                <div>
+                                                    <span className="text-slate-600">📋 Post-Test</span>
+                                                    <span className="text-xs text-slate-400 ml-2">30% weight</span>
+                                                </div>
                                                 <span className={`font-bold ${
-                                                    posttest?.is_passed ? 'text-emerald-600' : 'text-slate-500'
+                                                    (window.comprehensiveProgress?.breakdown?.posttest?.passed || posttest?.is_passed) ? 'text-emerald-600' : 'text-slate-500'
                                                 }`}>
-                                                    {posttest?.is_passed ? 'Lulus' : 'Belum'}
+                                                    {window.comprehensiveProgress?.breakdown?.posttest?.score || posttest?.score || 0}%
                                                 </span>
                                             </div>
                                             <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                                                 <div 
                                                     className={`h-full rounded-full transition-all ${
-                                                        posttest?.is_passed ? 'bg-emerald-500' : 'bg-slate-300'
+                                                        (window.comprehensiveProgress?.breakdown?.posttest?.passed || posttest?.is_passed) ? 'bg-emerald-500' : 'bg-orange-400'
                                                     }`}
-                                                    style={{ width: posttest?.is_passed ? '100%' : '0%' }}
+                                                    style={{ width: `${window.comprehensiveProgress?.breakdown?.posttest?.progress || posttest?.percentage || 0}%` }}
                                                 />
                                             </div>
+                                            <p className="text-xs text-slate-500 mt-1">
+                                                {window.comprehensiveProgress?.breakdown?.posttest?.status === 'completed' || posttest?.completed ? (
+                                                    window.comprehensiveProgress?.breakdown?.posttest?.passed || posttest?.is_passed ? '✓ Lulus' : '✗ Belum lulus'
+                                                ) : 'Belum dikerjakan'}
+                                            </p>
                                         </div>
                                     )}
                                 </div>
@@ -812,6 +929,58 @@ export default function TrainingDetail({ auth, training: initialTraining, enroll
                                 </button>
                             ) : training.status === 'completed' ? (
                                 <div className="space-y-3">
+                                    {/* Certificate Requirements Checklist */}
+                                    {(certificateRequirements?.materials_total > 0 || certificateRequirements?.pretest_required || certificateRequirements?.posttest_required) && (
+                                        <div className="space-y-3 mb-4 p-4 bg-slate-50 rounded-2xl border border-slate-200">
+                                            <p className="text-sm font-bold text-slate-700 mb-3">Persyaratan Sertifikat:</p>
+                                            
+                                            {certificateRequirements?.materials_total > 0 && (
+                                                <div className="flex items-center gap-3">
+                                                    <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
+                                                        certificateRequirements?.materials_completed === certificateRequirements?.materials_total
+                                                        ? 'bg-emerald-500 text-white' 
+                                                        : 'bg-slate-200 text-slate-500'
+                                                    }`}>
+                                                        {certificateRequirements?.materials_completed === certificateRequirements?.materials_total ? '✓' : '·'}
+                                                    </div>
+                                                    <span className="text-xs text-slate-600">
+                                                        Materi: {certificateRequirements?.materials_completed}/{certificateRequirements?.materials_total} diselesaikan
+                                                    </span>
+                                                </div>
+                                            )}
+                                            
+                                            {certificateRequirements?.pretest_required && (
+                                                <div className="flex items-center gap-3">
+                                                    <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
+                                                        certificateRequirements?.pretest_passed
+                                                        ? 'bg-emerald-500 text-white' 
+                                                        : 'bg-slate-200 text-slate-500'
+                                                    }`}>
+                                                        {certificateRequirements?.pretest_passed ? '✓' : '·'}
+                                                    </div>
+                                                    <span className="text-xs text-slate-600">
+                                                        Pre-Test: {certificateRequirements?.pretest_passed ? 'Lulus' : 'Belum lulus'}
+                                                    </span>
+                                                </div>
+                                            )}
+                                            
+                                            {certificateRequirements?.posttest_required && (
+                                                <div className="flex items-center gap-3">
+                                                    <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
+                                                        certificateRequirements?.posttest_passed
+                                                        ? 'bg-emerald-500 text-white' 
+                                                        : 'bg-slate-200 text-slate-500'
+                                                    }`}>
+                                                        {certificateRequirements?.posttest_passed ? '✓' : '·'}
+                                                    </div>
+                                                    <span className="text-xs text-slate-600">
+                                                        Post-Test: {certificateRequirements?.posttest_passed ? 'Lulus' : 'Belum lulus'}
+                                                    </span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                    
                                     {certificateEligible ? (
                                         <Link
                                             href={`/training/${training.id}/certificate`}

@@ -94,32 +94,86 @@ const StatCard = ({ label, value, subtext, icon: Icon, color, delay }) => {
 
 const AttemptDetailsModal = ({ attempt, program, allAttempts, isOpen, onClose, onMark, isMarked }) => {
     const [activeTab, setActiveTab] = useState('preview');
-    const [comparisonAttempts, setComparisonAttempts] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [detailAttempt, setDetailAttempt] = useState(attempt);
     const [selectedCompare, setSelectedCompare] = useState(null);
 
-    // Mock answer details
-    const answerDetails = [
-        { id: 1, question: 'Apa definisi risiko kredit?', category: 'Credit & Risk Management', userAnswer: 'Risiko tidak terjadinya pembayaran', correctAnswer: 'Risiko gagal bayar debitur', isCorrect: false, timeSpent: '1m 23s' },
-        { id: 2, question: 'Sebutkan 3 pilar compliance', category: 'Compliance & Regulatory', userAnswer: 'Policies, Procedures, Training', correctAnswer: 'Policies, Procedures, Monitoring', isCorrect: true, timeSpent: '2m 15s' },
-        { id: 3, question: 'Hitung NPL ratio jika NPL = 500M, Total Kredit = 10M', category: 'Credit & Risk Management', userAnswer: '5%', correctAnswer: '5%', isCorrect: true, timeSpent: '3m 45s' },
-    ];
+    // Load detail with answers if not already loaded
+    useEffect(() => {
+        if (isOpen && attempt && !attempt.answers) {
+            setLoading(true);
+            axios.get(`/api/admin/exam-attempts/${attempt.id}`)
+                .then(res => {
+                    if (res.data.success && res.data.data) {
+                        setDetailAttempt(res.data.data);
+                        console.log('✓ Exam Attempt Details Loaded:', res.data.data);
+                    }
+                })
+                .catch(err => {
+                    console.error('Error loading attempt details:', err);
+                    // Tetap gunakan attempt yang ada
+                    setDetailAttempt(attempt);
+                })
+                .finally(() => setLoading(false));
+        } else {
+            setDetailAttempt(attempt);
+        }
+    }, [isOpen, attempt?.id]);
 
-    const scoreByCategory = [
-        { name: 'Credit & Risk', score: 85, max: 100 },
-        { name: 'Compliance', score: 90, max: 100 },
-        { name: 'Sales', score: 75, max: 100 },
-    ];
+    // Get real answer details from backend
+    // detailAttempt.answers contains the UserExamAnswer records with question relationships
+    const answerDetails = useMemo(() => {
+        if (!detailAttempt?.answers || detailAttempt.answers.length === 0) {
+            return [];
+        }
+        
+        return detailAttempt.answers.map((answer, idx) => ({
+            id: answer.id,
+            questionId: answer.question_id,
+            question: answer.question?.question_text || 'Pertanyaan tidak tersedia',
+            category: answer.question?.category || 'Tidak dikategorikan',
+            userAnswer: answer.user_answer || 'Tidak dijawab',
+            correctAnswer: answer.correct_answer || answer.question?.correct_answer || 'N/A',
+            isCorrect: answer.is_correct,
+            timeSpent: `${idx + 1} min` // Placeholder - perlu tracking waktu per soal
+        }));
+    }, [detailAttempt?.answers]);
 
-    const timelineData = [
-        { questionNum: 1, time: '1m 23s', score: 0 },
-        { questionNum: 2, time: '2m 15s', score: 100 },
-        { questionNum: 3, time: '3m 45s', score: 100 },
-    ];
+    // Calculate score by category from real answers
+    const scoreByCategory = useMemo(() => {
+        if (!answerDetails || answerDetails.length === 0) return [];
+        
+        const categoryScores = {};
+        answerDetails.forEach(answer => {
+            if (!categoryScores[answer.category]) {
+                categoryScores[answer.category] = { total: 0, correct: 0 };
+            }
+            categoryScores[answer.category].total += 1;
+            if (answer.isCorrect) {
+                categoryScores[answer.category].correct += 1;
+            }
+        });
+        
+        return Object.entries(categoryScores).map(([name, data]) => ({
+            name,
+            score: Math.round((data.correct / data.total) * 100),
+            max: 100
+        }));
+    }, [answerDetails]);
 
-    if (!isOpen || !attempt) return null;
+    // Timeline data from real answers
+    const timelineData = useMemo(() => {
+        return answerDetails.map((answer, idx) => ({
+            questionNum: idx + 1,
+            time: `${idx + 1} min`,
+            score: answer.isCorrect ? 100 : 0
+        }));
+    }, [answerDetails]);
 
-    const isPassed = attempt.score >= program.passing_grade;
-    const otherAttempts = allAttempts.filter(a => a.id !== attempt.id).slice(0, 5);
+    if (!isOpen || !attempt || !detailAttempt) return null;
+
+    const isPassed = detailAttempt?.score >= program?.passing_grade;
+    const otherAttempts = (allAttempts || []).filter(a => a.id !== detailAttempt?.id).slice(0, 5);
 
     const tabs = [
         { id: 'preview', label: 'Preview', icon: Eye },
@@ -145,10 +199,10 @@ const AttemptDetailsModal = ({ attempt, program, allAttempts, isOpen, onClose, o
                             <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-white text-lg
                                 ${isPassed ? 'bg-[#D6F84C] text-[#002824]' : 'bg-red-500'}
                             `}>
-                                {attempt.user?.name?.charAt(0)}
+                                {detailAttempt.user?.name?.charAt(0)}
                             </div>
                             <div>
-                                <h2 className="text-xl font-bold text-white">{attempt.user?.name}</h2>
+                                <h2 className="text-xl font-bold text-white">{detailAttempt.user?.name}</h2>
                                 <p className="text-sm text-[#D6F84C]">{program.title}</p>
                             </div>
                         </div>
@@ -189,7 +243,7 @@ const AttemptDetailsModal = ({ attempt, program, allAttempts, isOpen, onClose, o
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                     <div className="bg-slate-50 p-4 rounded-xl">
                                         <p className="text-xs text-slate-500 font-bold uppercase mb-1">Skor</p>
-                                        <p className={`text-3xl font-black ${isPassed ? 'text-[#005E54]' : 'text-red-600'}`}>{attempt.score}</p>
+                                        <p className={`text-3xl font-black ${isPassed ? 'text-[#005E54]' : 'text-red-600'}`}>{detailAttempt?.score || 0}</p>
                                     </div>
                                     <div className="bg-slate-50 p-4 rounded-xl">
                                         <p className="text-xs text-slate-500 font-bold uppercase mb-1">KKM</p>
@@ -203,15 +257,15 @@ const AttemptDetailsModal = ({ attempt, program, allAttempts, isOpen, onClose, o
                                     </div>
                                     <div className="bg-slate-50 p-4 rounded-xl">
                                         <p className="text-xs text-slate-500 font-bold uppercase mb-1">Durasi</p>
-                                        <p className="text-3xl font-black text-slate-700">{attempt.duration || 0}m</p>
+                                        <p className="text-2xl font-black text-slate-700">{formatDuration(detailAttempt?.duration_minutes)}</p>
                                     </div>
                                 </div>
                                 <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl flex gap-3">
                                     <AlertCircle className="text-blue-600 flex-shrink-0" size={20} />
                                     <div>
-                                        <p className="font-bold text-blue-900">Info Ujian</p>
+                                        <p className="font-bold text-blue-900">Info Ujian (Data Real dari Backend)</p>
                                         <p className="text-sm text-blue-700 mt-1">
-                                            Ujian dilakukan pada {new Date(attempt.created_at).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                            Ujian dilakukan pada {detailAttempt?.created_at ? new Date(detailAttempt.created_at).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'N/A'}
                                         </p>
                                     </div>
                                 </div>
@@ -307,7 +361,7 @@ const AttemptDetailsModal = ({ attempt, program, allAttempts, isOpen, onClose, o
                                 ))}
                                 <div className="bg-blue-50 border border-blue-200 p-4 rounded-lg mt-6">
                                     <p className="font-bold text-blue-900 flex items-center gap-2">
-                                        <TrendingUp size={18} /> Total Waktu: {attempt.duration || 0} menit
+                                        <TrendingUp size={18} /> Total Waktu: {formatDuration(attempt.duration_minutes || attempt.duration)}
                                     </p>
                                 </div>
                             </div>
@@ -337,7 +391,7 @@ const AttemptDetailsModal = ({ attempt, program, allAttempts, isOpen, onClose, o
                                         <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
                                             <p className="text-xs font-bold text-blue-600 uppercase mb-2">Attempt Saat Ini</p>
                                             <p className="text-3xl font-black text-[#005E54]">{attempt.score}</p>
-                                            <p className="text-sm text-slate-600 mt-2">Durasi: {attempt.duration}m</p>
+                                            <p className="text-sm text-slate-600 mt-2">Durasi: {formatDuration(attempt.duration_minutes || attempt.duration)}</p>
                                             <p className="text-xs text-slate-500 mt-1">
                                                 {new Date(attempt.created_at).toLocaleDateString('id-ID')}
                                             </p>
@@ -345,7 +399,7 @@ const AttemptDetailsModal = ({ attempt, program, allAttempts, isOpen, onClose, o
                                         <div className="bg-amber-50 p-4 rounded-lg border border-amber-200">
                                             <p className="text-xs font-bold text-amber-600 uppercase mb-2">Attempt Dibandingkan</p>
                                             <p className="text-3xl font-black text-amber-600">{selectedCompare.score}</p>
-                                            <p className="text-sm text-slate-600 mt-2">Durasi: {selectedCompare.duration}m</p>
+                                            <p className="text-sm text-slate-600 mt-2">Durasi: {formatDuration(selectedCompare.duration_minutes || selectedCompare.duration)}</p>
                                             <p className="text-xs text-slate-500 mt-1">
                                                 {new Date(selectedCompare.created_at).toLocaleDateString('id-ID')}
                                             </p>
@@ -429,6 +483,14 @@ const AttemptDetailsModal = ({ attempt, program, allAttempts, isOpen, onClose, o
     );
 };
 
+// Helper: Format duration from minutes to MM:SS format
+const formatDuration = (durationMinutes) => {
+    if (!durationMinutes && durationMinutes !== 0) return 'N/A';
+    const mins = Math.floor(Number(durationMinutes) || 0);
+    const secs = Math.round(((Number(durationMinutes) || 0) - mins) * 60);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+};
+
 const AttemptRow = ({ attempt, program, onDelete, onView, index, isMarked }) => {
     const isPassed = attempt.score >= program.passing_grade;
     const scorePercent = Math.min(100, Math.max(0, attempt.score));
@@ -480,11 +542,11 @@ const AttemptRow = ({ attempt, program, onDelete, onView, index, isMarked }) => 
                     </div>
                 </div>
 
-                <div className="text-center md:text-left w-24">
+                <div className="text-center md:text-left w-28">
                     <p className="text-xs text-slate-400 font-bold uppercase mb-1">Durasi</p>
                     <div className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
                         <Clock size={14} className="text-slate-400" />
-                        {attempt.duration || 'N/A'}m
+                        {formatDuration(attempt.duration_minutes || attempt.duration)}
                     </div>
                 </div>
             </div>
@@ -528,28 +590,37 @@ const AttemptRow = ({ attempt, program, onDelete, onView, index, isMarked }) => 
 // --- Main Component ---
 
 export default function ExamAttempts({ program: initialProgram, attempts: initialAttempts, auth }) {
-    // Mock Data Fallback
-    const program = initialProgram || { 
-        title: 'Wondr Financial Suite Masterclass',
-        passing_grade: 80,
-        total_questions: 50
+    // Use ONLY real data from backend - no mock data
+    const program = initialProgram;
+    const realAttempts = initialAttempts && Array.isArray(initialAttempts) ? initialAttempts : [];
+
+    // Extract array from pagination object or use mockAttempts
+    // Backend can return: array directly, { data: [] }, or { data: [], current_page, last_page, ... }
+    const getAttemptsArray = (data) => {
+        if (!data) return mockAttempts;
+        if (Array.isArray(data)) return data;
+        if (data.data && Array.isArray(data.data)) return data.data;
+        return mockAttempts;
     };
 
-    const mockAttempts = Array.from({ length: 10 }, (_, i) => ({
-        id: i + 1,
-        user: { name: ['Sarah Wijaya', 'Budi Santoso', 'Andi Pratama', 'Dewi Lestari', 'Eko Patrio'][i % 5], email: `user${i}@bni.co.id` },
-        score: Math.floor(Math.random() * 40) + 60,
-        duration: Math.floor(Math.random() * 30) + 15,
-        created_at: new Date(Date.now() - i * 86400000).toISOString()
-    }));
-
-    const [attempts, setAttempts] = useState(initialAttempts?.data || mockAttempts);
+    const [attempts, setAttempts] = useState(() => getAttemptsArray(initialAttempts));
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
     const [loading, setLoading] = useState(false);
     const [notification, setNotification] = useState(null);
     const [selectedAttempt, setSelectedAttempt] = useState(null);
     const [markedAttempts, setMarkedAttempts] = useState(new Set());
+
+    // Debug: Log when component mounts to verify real data is received
+    useEffect(() => {
+        if (initialAttempts && initialAttempts.length > 0) {
+            console.log('✓ Exam Attempts - Data dari Backend:', {
+                count: initialAttempts.length,
+                first: initialAttempts[0],
+                isReal: true
+            });
+        }
+    }, [initialAttempts]);
 
     const showNotification = (msg, type = 'success') => {
         setNotification({ msg, type });
@@ -558,7 +629,7 @@ export default function ExamAttempts({ program: initialProgram, attempts: initia
 
     // Filter Logic
     const filteredAttempts = useMemo(() => {
-        return attempts.filter(a => {
+        return (attempts || []).filter(a => {
             const matchesSearch = a.user?.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
                                   a.user?.email?.toLowerCase().includes(searchQuery.toLowerCase());
             const isPassed = a.score >= program.passing_grade;
@@ -609,7 +680,7 @@ export default function ExamAttempts({ program: initialProgram, attempts: initia
     };
 
     const handleViewDetails = (attemptId) => {
-        const attempt = attempts.find(a => a.id === attemptId);
+        const attempt = (attempts || []).find(a => a.id === attemptId);
         setSelectedAttempt(attempt);
     };
 
@@ -633,10 +704,10 @@ export default function ExamAttempts({ program: initialProgram, attempts: initia
             const url = window.URL.createObjectURL(new Blob([response.data]));
             const link = document.createElement('a');
             link.href = url;
-            link.setAttribute('download', `exam-attempts-${program.id}.csv`);
+            link.setAttribute('download', `Hasil-Ujian-${program.code}-${new Date().toISOString().split('T')[0]}.xlsx`);
             document.body.appendChild(link);
             link.click();
-            showNotification('Export berhasil', 'success');
+            showNotification('Export Excel berhasil', 'success');
         } catch (error) {
             showNotification('Error mengexport data', 'error');
         }
@@ -701,7 +772,7 @@ export default function ExamAttempts({ program: initialProgram, attempts: initia
                                     onClick={handleExportCSV}
                                     className="flex items-center gap-2 px-4 py-2 bg-[#D6F84C] text-[#002824] rounded-xl font-bold text-sm hover:bg-[#c2e43c] transition shadow-lg"
                                 >
-                                    <Download size={16} /> Export CSV
+                                    <Download size={16} /> Export Excel
                                 </button>
                             </div>
                         </div>

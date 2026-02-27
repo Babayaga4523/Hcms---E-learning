@@ -35,8 +35,10 @@ const NotificationDropdown = ({ user }) => {
             
             if (response.ok) {
                 const data = await response.json();
-                setNotifications(data);
-                setUnreadCount(data.filter(n => !n.is_read).length);
+                // Extract array from paginated response: { data: [...], pagination: {...} }
+                const notificationsList = Array.isArray(data) ? data : (data.data || []);
+                setNotifications(notificationsList);
+                setUnreadCount(notificationsList.filter(n => !n.is_read).length);
             } else if (response.status === 401) {
                 console.log('User not authenticated for notifications');
             }

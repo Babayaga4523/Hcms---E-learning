@@ -19,7 +19,7 @@ class AdminMetricsController extends Controller
         try {
             $totalUsers = User::where('role', 'user')->count();
             $totalModules = Module::count();
-            $totalCertifications = UserTraining::where('is_certified', true)->count();
+            $totalCertifications = UserTraining::where('is_certified', 1)->count();
             
             // Calculate completion rate
             $completedTrainings = UserTraining::where('status', 'completed')->count();

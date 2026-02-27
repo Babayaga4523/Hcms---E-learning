@@ -17,7 +17,7 @@ use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Style\Color;
 
-class ComplianceReportExport implements FromCollection, WithHeadings, WithMapping, WithStyles, ShouldAutoSize, WithEvents, WithColumnFormatting
+class ComplianceReportExport implements FromCollection, WithMapping, WithStyles, ShouldAutoSize, WithEvents, WithColumnFormatting
 {
     protected $data;
     protected $title;

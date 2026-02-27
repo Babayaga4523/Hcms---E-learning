@@ -8,6 +8,7 @@ use App\Models\ExamAttempt;
 use App\Models\AuditLog;
 use App\Models\ModuleProgress;
 use App\Models\Notification;
+use App\Services\QuizService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -30,6 +31,9 @@ class DashboardController extends Controller
             ->pluck('progress_percentage', 'module_id')
             ->toArray();
         
+        // Initialize QuizService for comprehensive progress calculation
+        $quizService = new QuizService();
+        
         $trainings = UserTraining::where('user_id', $userId)
             ->with(['module'])
             ->get()
@@ -37,16 +41,23 @@ class DashboardController extends Controller
                 // Only include trainings that have a valid module
                 return $training->module !== null;
             })
-            ->map(function ($training) use ($userId, $progressRecords) {
+            ->map(function ($training) use ($userId, $progressRecords, $quizService) {
                 $status = $training->status;
                 // Ensure status is not empty, default to 'enrolled' if empty
                 if (empty($status)) {
                     $status = 'enrolled';
                 }
                 
-                // Use pre-fetched progress data
-                $moduleProgress = $progressRecords[$training->module_id] ?? null;
-                $progressPercentage = $moduleProgress ? (int)$moduleProgress : ($training->final_score ?? 0);
+                // PERBAIKAN: Use comprehensive progress (materials 40% + pretest 30% + posttest 30%)
+                // instead of simple materials-only progress
+                try {
+                    $comprehensiveProgress = $quizService->calculateComprehensiveProgress($userId, $training->module_id);
+                    $progressPercentage = (int)($comprehensiveProgress['total_progress'] ?? 0);
+                } catch (\Exception $e) {
+                    // Fallback to 0 if calculation fails
+                    \Illuminate\Support\Facades\Log::warning("Progress calculation failed for user {$userId}, module {$training->module_id}: " . $e->getMessage());
+                    $progressPercentage = 0;
+                }
                 
                 return [
                     'id' => $training->id,
@@ -62,8 +73,29 @@ class DashboardController extends Controller
                 ];
             });
 
-        // Get completed trainings
-        $completedTrainings = $trainings->filter(fn($t) => $t['status'] === 'completed');
+        // Categorize trainings by status and progress
+        // PERBAIKAN: Ensure "Selesai" only shows 100% completed trainings
+        // Active = in_progress OR (enrolled with progress > 0)
+        $activeTrainings = $trainings->filter(fn($t) => 
+            $t['status'] === 'in_progress' || 
+            ($t['status'] === 'enrolled' && $t['progress'] > 0)
+        )->values();
+        
+        // Assigned = enrolled with progress = 0
+        $assignedTrainings = $trainings->filter(fn($t) => 
+            $t['status'] === 'enrolled' && $t['progress'] === 0
+        )->values();
+        
+        // Completed = status completed AND progress 100%
+        $completedTrainings = $trainings->filter(fn($t) => 
+            $t['status'] === 'completed' && $t['progress'] >= 100
+        )->values();
+        
+        // SAFETY: If no active trainings, show all trainings (fallback for debug)
+        // This ensures something always displays
+        if ($activeTrainings->isEmpty()) {
+            $activeTrainings = $trainings->values();
+        }
 
         // Get upcoming trainings (assigned but not yet enrolled)
         // Only show modules that user has access to via ModuleAssignment
@@ -102,8 +134,9 @@ class DashboardController extends Controller
                     'role' => $user->role,
                 ],
             ],
-            'trainings' => $trainings,
-            'completedTrainings' => $completedTrainings,
+            'trainings' => $activeTrainings,  // Pass active trainings for "Aktif" tab
+            'assignedTrainings' => $assignedTrainings,  // Pass assigned for "Ditugaskan" tab
+            'completedTrainings' => $completedTrainings,  // Pass fully completed for "Selesai" tab (100% only)
             'upcomingTrainings' => $upcomingTrainings,
             'recentActivity' => $recentActivity,
         ]);
@@ -227,7 +260,7 @@ class DashboardController extends Controller
             ->where('status', 'in_progress')
             ->count();
         $certifications = UserTraining::where('user_id', $user->id)
-            ->where('is_certified', true)
+            ->where('is_certified', 1)
             ->count();
 
         $completionPercentage = $totalTrainings > 0 
@@ -435,5 +468,24 @@ class DashboardController extends Controller
             'error' => 'red',
             default => 'blue',
         };
+    }
+
+    /**
+     * Display user activity page
+     */
+    public function activity()
+    {
+        $user = Auth::user();
+
+        return Inertia::render('User/Activity', [
+            'auth' => [
+                'user' => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'nip' => $user->nip ?? null,
+                ],
+            ],
+        ]);
     }
 }

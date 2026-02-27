@@ -110,22 +110,33 @@ const BadgeCard = ({ badge }) => (
 // --- Main Layout ---
 
 export default function UserDetail({ user: initialUser, statistics, trainings }) {
-    // Mock Data
-    const user = initialUser || {
-        name: 'Sarah Wijaya',
-        email: 'sarah.wijaya@bni.co.id',
-        role: 'Senior Analyst',
-        department: 'Risk Management',
-        nip: 'BNI-2023-8892',
-        phone: '+62 812 3456 7890',
-        join_date: '12 Jan 2020',
-        avatar_url: null,
-        level: 12,
-        xp: 2450,
-        next_level_xp: 3000
-    };
+    // Use ONLY real data from backend - no mock data
+    const user = initialUser;
+    const userTrainings = trainings && Array.isArray(trainings) && trainings.length > 0 ? trainings : [];
+    
+    // Show warning if no real data
+    const showWarning = !user;
 
-    const mockTrainings = trainings || [
+    // If no user data, show error state
+    if (!user) {
+        return (
+            <>
+                <Head title="User Detail" />
+                <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center">
+                    <div className="text-center">
+                        <AlertCircle className="w-16 h-16 text-orange-500 mx-auto mb-4" />
+                        <h2 className="text-2xl font-bold text-slate-900 mb-2">Data User Tidak Ditemukan</h2>
+                        <p className="text-slate-600 mb-6">User data tidak tersedia. Silakan kembali ke halaman user management.</p>
+                        <button onClick={() => router.visit('/admin/users')} className="px-6 py-2 bg-[#005E54] text-white rounded-lg hover:bg-[#004940] transition">
+                            Kembali ke User Management
+                        </button>
+                    </div>
+                </div>
+            </>
+        );
+    }
+
+    const mockTrainings = [
         { id: 1, title: 'Advanced Risk Assessment', status: 'completed', date: '10 Oct 2024', duration: '4 Jam', score: 92, certificate: true },
         { id: 2, title: 'Wondr App Security Protocols', status: 'in_progress', date: '12 Oct 2024', duration: '2 Jam', score: 0, certificate: false },
         { id: 3, title: 'Leadership 101', status: 'pending', date: '-', duration: '6 Jam', score: 0, certificate: false },

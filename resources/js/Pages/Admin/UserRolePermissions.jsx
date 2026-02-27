@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { motion } from 'framer-motion';
 import AdminLayout from '@/Layouts/AdminLayout';
 import {
     Shield, Plus, Edit3, Trash2, X, Check, Search,
@@ -110,45 +111,62 @@ const PermissionToggle = ({ label, checked, onChange, description }) => (
 // --- Main Layout ---
 
 export default function UserRolePermissions({ roles: initialRoles, permissions: initialPermissions, stats: initialStats }) {
-    // --- Mock Data Generators (Safety) ---
-    const mockPermissions = initialPermissions || [
-        { id: 1, name: 'View Users', slug: 'users.view', category: 'User Management', description: 'Can view list of users' },
-        { id: 2, name: 'Create Users', slug: 'users.create', category: 'User Management', description: 'Can create new users' },
-        { id: 3, name: 'Edit Users', slug: 'users.edit', category: 'User Management', description: 'Can edit existing users' },
-        { id: 4, name: 'Delete Users', slug: 'users.delete', category: 'User Management', description: 'Can remove users' },
-        { id: 5, name: 'View Roles', slug: 'roles.view', category: 'Security', description: 'Can view roles' },
-        { id: 6, name: 'Manage Roles', slug: 'roles.manage', category: 'Security', description: 'Can manage system roles' },
-        { id: 7, name: 'View Reports', slug: 'reports.view', category: 'Reporting', description: 'Access to analytics' },
-        { id: 8, name: 'Export Data', slug: 'reports.export', category: 'Reporting', description: 'Can export CSV data' },
-    ];
-
-    const mockRoles = initialRoles || [
-        { id: 1, name: 'Super Admin', description: 'Full access to everything', is_active: true, permissions: mockPermissions, users_count: 3 },
-        { id: 2, name: 'HR Manager', description: 'Can manage users and view reports', is_active: true, permissions: mockPermissions.filter(p => p.category !== 'Security'), users_count: 5 },
-        { id: 3, name: 'Staff', description: 'Limited access', is_active: true, permissions: [mockPermissions[0]], users_count: 42 },
-    ];
-
-    const mockStats = initialStats || {
-        total_roles: mockRoles.length,
-        active_roles: mockRoles.filter(r => r.is_active).length,
-        total_permissions: mockPermissions.length
-    };
-
-    // --- State ---
-    const [roles, setRoles] = useState(mockRoles);
-    const [selectedRole, setSelectedRole] = useState(null); // The role currently being edited in the sidebar
+    // --- State with Real API Data ---
+    const [roles, setRoles] = useState(initialRoles || []);
+    const [permissions, setPermissions] = useState(initialPermissions || []);
+    const [stats, setStats] = useState(initialStats || {
+        total_roles: 0,
+        total_permissions: 0,
+        active_roles: 0,
+        active_permissions: 0
+    });
+    
+    const [selectedRole, setSelectedRole] = useState(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [loading, setLoading] = useState(false);
     const [notification, setNotification] = useState(null);
 
+    // Fetch real data from API on component mount
+    useEffect(() => {
+        const fetchData = async () => {
+            try {
+                const [rolesRes, permsRes, statsRes] = await Promise.all([
+                    fetch('/api/admin/roles-api'),
+                    fetch('/api/admin/permissions-api'),
+                    fetch('/api/admin/roles-stats')
+                ]);
+
+                if (rolesRes.ok) {
+                    const rolesData = await rolesRes.json();
+                    setRoles(rolesData);
+                }
+
+                if (permsRes.ok) {
+                    const permsData = await permsRes.json();
+                    setPermissions(permsData);
+                }
+
+                if (statsRes.ok) {
+                    const statsData = await statsRes.json();
+                    setStats(statsData);
+                }
+            } catch (error) {
+                console.error('Error fetching roles/permissions data:', error);
+            }
+        };
+
+        fetchData();
+    }, []);
+
     // Group Permissions by Category
     const groupedPermissions = useMemo(() => {
-        return mockPermissions.reduce((acc, perm) => {
-            if (!acc[perm.category]) acc[perm.category] = [];
-            acc[perm.category].push(perm);
+        return permissions.reduce((acc, perm) => {
+            const category = perm.category || 'Other';
+            if (!acc[category]) acc[category] = [];
+            acc[category].push(perm);
             return acc;
         }, {});
-    }, [mockPermissions]);
+    }, [permissions]);
 
     // Filter Roles
     const filteredRoles = useMemo(() => {
@@ -204,6 +222,15 @@ export default function UserRolePermissions({ roles: initialRoles, permissions: 
             if (hasPermission) {
                 newPermissions = r.permissions.filter(p => p.id !== permission.id);
             } else {
+                // Check for conflicts before adding
+                const conflicts = detectPermissionConflicts([...r.permissions, permission]);
+                if (conflicts.length > 0) {
+                    setNotification({
+                        type: 'warning',
+                        message: `Warning: This permission conflicts with: ${conflicts.join(', ')}`
+                    });
+                    setTimeout(() => setNotification(null), 5000);
+                }
                 newPermissions = [...r.permissions, permission];
             }
 
@@ -214,6 +241,31 @@ export default function UserRolePermissions({ roles: initialRoles, permissions: 
 
             return { ...r, permissions: newPermissions };
         }));
+    };
+
+    // Detect permission conflicts
+    const detectPermissionConflicts = (permsList) => {
+        const conflicts = [];
+        const conflictMap = {
+            'view_all': ['edit_own_only'],
+            'edit_all': ['edit_own_only', 'delete_own_only'],
+            'delete_all': ['delete_own_only'],
+            'manage_users': ['view_users_only'],
+            'admin': [] // Admin can coexist with anything
+        };
+
+        const permNames = permsList.map(p => p.name || p.id);
+        
+        for (const [perm, conflicts_with] of Object.entries(conflictMap)) {
+            if (permNames.includes(perm)) {
+                const found = permNames.filter(p => conflicts_with.includes(p));
+                if (found.length > 0) {
+                    conflicts.push(...found);
+                }
+            }
+        }
+
+        return [...new Set(conflicts)];
     };
 
     const handleSaveRole = (e) => {
@@ -270,13 +322,13 @@ export default function UserRolePermissions({ roles: initialRoles, permissions: 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
                         <StatCard 
                             label="Total Roles" 
-                            value={mockStats.total_roles} 
+                            value={stats.total_roles} 
                             icon={Users} 
                             colorClass="bg-blue-100 text-blue-600" 
                         />
                         <StatCard 
                             label="Permission Points" 
-                            value={mockStats.total_permissions} 
+                            value={stats.total_permissions} 
                             icon={Key} 
                             colorClass="bg-purple-100 text-purple-600" 
                         />
@@ -420,6 +472,21 @@ export default function UserRolePermissions({ roles: initialRoles, permissions: 
                                         <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
                                             <Key className="w-5 h-5 text-[#005E54]" /> Akses & Izin
                                         </h3>
+
+                                        {notification && (
+                                            <motion.div
+                                                initial={{ opacity: 0, y: -10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: -10 }}
+                                                className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3"
+                                            >
+                                                <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                                                <div>
+                                                    <p className="text-sm font-bold text-red-900">Permission Conflict</p>
+                                                    <p className="text-xs text-red-700 mt-1">{notification}</p>
+                                                </div>
+                                            </motion.div>
+                                        )}
 
                                         <div className="space-y-8">
                                             {Object.entries(groupedPermissions).map(([category, permissions]) => (

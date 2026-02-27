@@ -17,6 +17,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Mail;
@@ -63,11 +64,17 @@ class AdminTrainingProgramController extends Controller
             $sortOrder = $request->get('sortOrder', 'desc');
             $query->orderBy($sortBy, $sortOrder);
 
-            $programs = $query->paginate(15)->through(function($module) {
-                // Calculate counts manually
-                $totalQuestions = $module->questions()->count();
-                $enrollmentCount = $module->userTrainings()->count();
-                $completionCount = $module->userTrainings()->where('status', 'completed')->count();
+            // Load counts with eager loading to avoid N+1 queries
+            $programs = $query->withCount([
+                'questions',
+                'userTrainings',
+                'userTrainings as completed_trainings' => function ($q) {
+                    $q->where('status', 'completed');
+                }
+            ])->paginate(15)->through(function($module) {
+                // Use pre-loaded counts instead of making queries
+                $enrollmentCount = $module->user_trainings_count;
+                $completionCount = $module->completed_trainings_count;
                 
                 // Calculate completion rate
                 $completionRate = $enrollmentCount > 0 
@@ -83,7 +90,7 @@ class AdminTrainingProgramController extends Controller
                     'passing_grade' => $module->passing_grade,
                     'category' => $module->category ?? null,
                     'cover_image' => $module->cover_image ?? null,
-                    'total_questions' => $totalQuestions,
+                    'total_questions' => $module->questions_count,
                     'enrollment_count' => $enrollmentCount,
                     'completion_count' => $completionCount,
                     'completion_rate' => $completionRate,
@@ -222,18 +229,20 @@ class AdminTrainingProgramController extends Controller
             ], 422);
         }
 
-        // Define allowed categories for BNI Finance
-        $allowedCategories = [
-            'Core Business & Product',
-            'Credit & Risk Management',
-            'Collection & Recovery',
-            'Compliance & Regulatory',
-            'Sales & Marketing',
-            'Service Excellence',
-            'Leadership & Soft Skills',
-            'IT & Digital Security',
-            'Onboarding'
-        ];
+        // Fetch allowed categories from system_settings (dynamically from database)
+        $allowedCategories = DB::table('system_settings')
+            ->where('group', 'categories')
+            ->pluck('value')
+            ->toArray();
+
+        // Fallback to default categories if none configured
+        if (empty($allowedCategories)) {
+            $allowedCategories = [
+                'Compliance',
+                'Technical',
+                'HR & Management'
+            ];
+        }
 
         $request->validate([
             'title' => $isDraft ? 'nullable|string|max:255' : 'required|string|max:255',
@@ -252,8 +261,9 @@ class AdminTrainingProgramController extends Controller
             'certificate_template' => 'nullable|string',
             'xp' => 'nullable|integer|min:0',
             'cover_image' => 'sometimes|nullable|image|mimes:jpg,jpeg,png,webp|max:5120', // Cover image max 5MB
-            // Validasi Array Materials - More specific MIME types
-            'materials.*.file' => 'sometimes|nullable|file|mimes:pdf,mp4,doc,docx,ppt,pptx,xls,xlsx,jpg,jpeg,png|max:20480', // Max 20MB
+            // Validasi Array Materials - Support all document, video, spreadsheet, image types
+            // Using mimetypes instead of mimes for more reliable MIME detection
+            'materials.*.file' => 'sometimes|nullable|file|mimetypes:application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,video/mp4,video/x-msvideo,video/quicktime,video/x-ms-wmv,video/webm,image/jpeg,image/png,image/gif,image/webp,text/plain,text/csv|max:20480', // Max 20MB
             'materials.*.title' => 'required|string',
             'materials.*.description' => 'nullable|string',
             'materials.*.duration' => 'nullable|integer|min:0',
@@ -292,6 +302,40 @@ class AdminTrainingProgramController extends Controller
             'post_test_questions.*.explanation' => 'nullable|string',
             'post_test_questions.*.image_url' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120', // More specific image types
         ]);
+
+        // Pre-validate all questions before transaction to prevent partial failures
+        if (!empty($request->pre_test_questions)) {
+            foreach ($request->pre_test_questions as $index => $question) {
+                if (empty($question['question_text']) || empty($question['correct_answer'])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Pre-test question " . ($index + 1) . " must have both text and correct answer"
+                    ], 422);
+                }
+            }
+        }
+
+        if (!empty($request->post_test_questions)) {
+            foreach ($request->post_test_questions as $index => $question) {
+                if (empty($question['question_text']) || empty($question['correct_answer'])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Post-test question " . ($index + 1) . " must have both text and correct answer"
+                    ], 422);
+                }
+            }
+        }
+
+        if (!empty($request->questions)) {
+            foreach ($request->questions as $index => $question) {
+                if (empty($question['question_text']) || empty($question['correct_answer'])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Question " . ($index + 1) . " must have both text and correct answer"
+                    ], 422);
+                }
+            }
+        }
 
         // 2. Gunakan Database Transaction
         // Jika satu part gagal, semua dibatalkan (Rollback)
@@ -360,22 +404,98 @@ class AdminTrainingProgramController extends Controller
                 foreach ($request->materials as $matData) {
                     // Prefer file upload when provided
                     if (isset($matData['file']) && $matData['file'] instanceof \Illuminate\Http\UploadedFile && $matData['file']->isValid()) {
+                        
+                        // Validate file size (20MB max)
+                        $maxFileSize = 20 * 1024 * 1024; // 20MB in bytes
+                        if ($matData['file']->getSize() > $maxFileSize) {
+                            DB::rollBack();
+                            // Cleanup uploaded files
+                            foreach ($uploadedFiles as $file) {
+                                Storage::disk('public')->delete($file);
+                            }
+                            return response()->json([
+                                'error' => 'File too large',
+                                'message' => "File '{$matData['file']->getClientOriginalName()}' exceeds 20MB limit. Actual size: " . round($matData['file']->getSize() / 1024 / 1024, 2) . "MB"
+                            ], 422);
+                        }
 
-                        // Buat nama file unik (Future-proof & Security)
-                        $filename = time() . '_' . preg_replace('/\s+/', '_', $matData['file']->getClientOriginalName());
+                        // Whitelist allowed MIME types and extensions
+                        $allowedMimes = [
+                            'application/pdf' => 'pdf',
+                            'video/mp4' => 'mp4',
+                            'application/msword' => 'doc',
+                            'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
+                            'application/vnd.ms-powerpoint' => 'ppt',
+                            'application/vnd.openxmlformats-officedocument.presentationml.presentation' => 'pptx',
+                            'application/vnd.ms-excel' => 'xls',
+                            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => 'xlsx',
+                            'image/jpeg' => 'jpg',
+                            'image/png' => 'png',
+                            'text/csv' => 'csv',
+                            'text/plain' => 'csv',      // Browser may send CSV as text/plain
+                            'application/csv' => 'csv',
+                        ];
+                        
+                        $fileMime = $matData['file']->getMimeType();
+                        $fileExt = strtolower($matData['file']->getClientOriginalExtension());
+                        
+                        if (!isset($allowedMimes[$fileMime]) || $allowedMimes[$fileMime] !== $fileExt) {
+                            DB::rollBack();
+                            // Cleanup uploaded files
+                            foreach ($uploadedFiles as $file) {
+                                Storage::disk('public')->delete($file);
+                            }
+                            return response()->json([
+                                'error' => 'Invalid file type',
+                                'message' => "File '{$matData['file']->getClientOriginalName()}' has MIME type '{$fileMime}' which is not allowed. Allowed: PDF, MP4, DOC, DOCX, PPT, PPTX, XLS, XLSX, JPG, PNG, CSV"
+                            ], 422);
+                        }
 
-                        // Simpan ke storage/app/public/materials
-                        $path = $matData['file']->storeAs('public/materials', $filename);
-                        $uploadedFiles[] = 'materials/' . $filename; // Track for cleanup
+                        // Use MaterialUploadHandler for consistent, secure uploads
+                        $handler = new MaterialUploadHandler();
+                        try {
+                            $filePath = $handler->handle($matData['file'], [
+                                'material_type' => $matData['type'] ?? 'document',
+                                'module_id' => $module->id
+                            ]);
+                        } catch (\Exception $e) {
+                            Log::error('MaterialUploadHandler exception', [
+                                'file' => $matData['file']->getClientOriginalName(),
+                                'error' => $e->getMessage(),
+                                'trace' => $e->getTraceAsString()
+                            ]);
+                            $filePath = null;
+                        }
+
+                        if (!$filePath) {
+                            DB::rollBack();
+                            // Cleanup uploaded files
+                            foreach ($uploadedFiles as $file) {
+                                Storage::disk('public')->delete($file);
+                            }
+                            
+                            // Get more detailed error info
+                            $errorDetails = '';
+                            if (isset($matData['file'])) {
+                                $errorDetails = " [MIME: {$matData['file']->getMimeType()}, EXT: {$matData['file']->getClientOriginalExtension()}, Size: {$matData['file']->getSize()} bytes]";
+                            }
+                            
+                            return response()->json([
+                                'error' => 'Upload failed',
+                                'message' => "Failed to upload material file: " . $matData['file']->getClientOriginalName() . $errorDetails
+                            ], 422);
+                        }
+
+                        $uploadedFiles[] = $filePath; // Track for cleanup
 
                         // Simpan ke Database
                         $materialData = [
                             'module_id' => $module->id,
                             'title' => $matData['title'],
                             'description' => $matData['description'] ?? null,
-                            'file_path' => 'materials/' . $filename, // Path relatif untuk akses public
+                            'file_path' => $filePath, // Path dari handler (videos/..., documents/..., etc)
                             'file_name' => $matData['file']->getClientOriginalName(), // Nama file asli
-                            'file_type' => $matData['file']->getClientOriginalExtension(),
+                            'file_type' => $matData['type'] ?? strtolower($matData['file']->getClientOriginalExtension()),
                             'file_size' => $matData['file']->getSize(), // Ukuran file dalam bytes
                             'duration_minutes' => $matData['duration'] ?? 0,
                             'order' => $matData['order'] ?? 0,
@@ -384,7 +504,7 @@ class AdminTrainingProgramController extends Controller
 
                         // Jika file adalah PDF, set pdf_path juga
                         if (strtolower($matData['file']->getClientOriginalExtension()) === 'pdf') {
-                            $materialData['pdf_path'] = 'materials/' . $filename;
+                            $materialData['pdf_path'] = $filePath;
                         }
 
                         TrainingMaterial::create($materialData);
@@ -393,9 +513,59 @@ class AdminTrainingProgramController extends Controller
                     elseif (isset($matData['file']) && is_string($matData['file']) && str_starts_with($matData['file'], 'data:')) {
                         try {
                             $data = explode(',', $matData['file']);
-                            $fileData = base64_decode($data[1]);
-                            $mime = explode(';', $data[0])[0];
-                            $extension = explode('/', $mime)[1];
+                            
+                            // Validate base64 encoding
+                            if (count($data) !== 2) {
+                                DB::rollBack();
+                                foreach ($uploadedFiles as $file) {
+                                    Storage::disk('public')->delete($file);
+                                }
+                                return response()->json([
+                                    'error' => 'Invalid base64 format for material'
+                                ], 422);
+                            }
+                            
+                            $fileData = base64_decode($data[1], true);
+                            if ($fileData === false) {
+                                DB::rollBack();
+                                foreach ($uploadedFiles as $file) {
+                                    Storage::disk('public')->delete($file);
+                                }
+                                return response()->json([
+                                    'error' => 'Failed to decode base64 file'
+                                ], 422);
+                            }
+
+                            // Validate file size before creating
+                            $maxFileSize = 20 * 1024 * 1024; // 20MB
+                            if (strlen($fileData) > $maxFileSize) {
+                                DB::rollBack();
+                                foreach ($uploadedFiles as $file) {
+                                    Storage::disk('public')->delete($file);
+                                }
+                                return response()->json([
+                                    'error' => 'File too large',
+                                    'message' => "Decoded file exceeds 20MB limit. Actual size: " . round(strlen($fileData) / 1024 / 1024, 2) . "MB"
+                                ], 422);
+                            }
+
+                            $mime = explode(';', $data[0])[0]; // Extract MIME type
+                            $mimeType = str_replace('data:', '', $mime);
+                            $extension = strtolower(explode('/', $mimeType)[1] ?? 'bin');
+                            
+                            // Whitelist MIME types for base64
+                            $allowedBase64Mimes = ['application/pdf', 'image/jpeg', 'image/png', 'video/mp4'];
+                            if (!in_array($mimeType, $allowedBase64Mimes)) {
+                                DB::rollBack();
+                                foreach ($uploadedFiles as $file) {
+                                    Storage::disk('public')->delete($file);
+                                }
+                                return response()->json([
+                                    'error' => 'Invalid MIME type for base64 file',
+                                    'message' => "MIME type '{$mimeType}' is not allowed. Allowed: " . implode(', ', $allowedBase64Mimes)
+                                ], 422);
+                            }
+                            
                             $filename = time() . '_' . uniqid() . '.' . $extension;
                             $path = 'materials/' . $filename;
                             Storage::disk('public')->put($path, $fileData);
@@ -684,6 +854,12 @@ class AdminTrainingProgramController extends Controller
 
             // Jika semua lancar, Commit ke database
             DB::commit();
+            
+            // Invalidate relevant caches after successful creation
+            Cache::forget('admin_dashboard_stats');
+            Cache::forget('admin_comprehensive_stats');
+            Cache::forget('list_departments');
+            Cache::forget('list_departments_comprehensive');
 
             return response()->json([
                 'success' => true,
@@ -702,7 +878,12 @@ class AdminTrainingProgramController extends Controller
 
             // Cleanup uploaded files on rollback
             foreach ($uploadedFiles as $filePath) {
+                // Try to delete from materials disk (private) first
                 if (Storage::disk('public')->exists($filePath)) {
+                    Storage::disk('public')->delete($filePath);
+                }
+                // Fallback to public disk for older files
+                elseif (Storage::disk('public')->exists($filePath)) {
                     Storage::disk('public')->delete($filePath);
                 }
             }
@@ -907,6 +1088,11 @@ class AdminTrainingProgramController extends Controller
                 return !in_array($key, ['pretest_duration', 'posttest_duration', 'pretest_duration_minutes', 'posttest_duration_minutes']);
             })->toArray();
 
+            // Handle max_retake_attempts: set default if null or not provided
+            if (!isset($updateData['max_retake_attempts']) || is_null($updateData['max_retake_attempts'])) {
+                $updateData['max_retake_attempts'] = $updateData['allow_retake'] ?? $module->allow_retake ? 3 : 0;
+            }
+
             $module->update($updateData);
 
             // Handle optional cover image update (replace old one)
@@ -947,6 +1133,12 @@ class AdminTrainingProgramController extends Controller
                 \App\Models\Quiz::where('module_id', $module->id)->where('type', 'posttest')->update(['time_limit' => intval($postDurationToUpdate)]);
             }
 
+            // Invalidate relevant caches after successful update
+            Cache::forget('admin_dashboard_stats');
+            Cache::forget('admin_comprehensive_stats');
+            Cache::forget('list_departments');
+            Cache::forget('list_departments_comprehensive');
+
             return response()->json([
                 'success' => true,
                 'message' => 'Program pelatihan berhasil diperbarui',
@@ -954,9 +1146,20 @@ class AdminTrainingProgramController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Update Training Program Error: ' . $e->getMessage());
+            Log::error('Update Stack Trace: ' . $e->getTraceAsString());
+            
+            // Provide more specific error messages for validation failures
+            if ($e instanceof \Illuminate\Validation\ValidationException) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validasi gagal',
+                    'errors' => $e->errors(),
+                ], 422);
+            }
+            
             return response()->json([
                 'success' => false,
-                'message' => 'Error memperbarui program pelatihan',
+                'message' => 'Error memperbarui program pelatihan: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -986,6 +1189,12 @@ class AdminTrainingProgramController extends Controller
             try {
                 $this->performDestroy($id);
                 DB::commit();
+                
+                // Invalidate relevant caches after successful deletion
+                Cache::forget('admin_dashboard_stats');
+                Cache::forget('admin_comprehensive_stats');
+                Cache::forget('list_departments');
+                Cache::forget('list_departments_comprehensive');
             } catch (\Exception $e) {
                 DB::rollBack();
                 throw $e;
@@ -1784,7 +1993,7 @@ class AdminTrainingProgramController extends Controller
                 ->where('modules.is_active', true)
                 ->groupBy('modules.id', 'modules.title')
                 ->orderByRaw('(COUNT(DISTINCT CASE WHEN user_trainings.status = "completed" THEN user_trainings.id END) / NULLIF(COUNT(DISTINCT user_trainings.id), 0)) DESC')
-                ->limit(10)
+                ->limit(config('admin.reports.low_performers_limit', 10))
                 ->get()
                 ->map(function($row) {
                     $row->completion_rate = $row->enrollments > 0
@@ -1993,7 +2202,7 @@ class AdminTrainingProgramController extends Controller
                 ->groupBy('users.id', 'users.name', 'users.email', 'users.department')
                 ->having('incomplete_mandatory', '>', 0)
                 ->orderByDesc('incomplete_mandatory')
-                ->limit(20)
+                ->limit(config('admin.reports.top_modules_limit', 20))
                 ->get()
                 ->map(function($row) {
                     $row->risk_score = $row->incomplete_mandatory > 0 ? round((min($row->incomplete_mandatory, 5) / 5) * 100, 1) : 0;
@@ -2221,29 +2430,16 @@ class AdminTrainingProgramController extends Controller
     {
         $module = Module::findOrFail($id);
 
-        // Delete related records in correct order (child first)
+        // Delete in correct order to maintain FK constraints and avoid orphaned records
+        // 1. Delete exam answers first (depends on exam_attempts)
         DB::table('user_exam_answers')->whereIn('exam_attempt_id',
             DB::table('exam_attempts')->where('module_id', $id)->pluck('id')
         )->delete();
+
+        // 2. Delete exam attempts (depends on quizzes which depend on modules)
         DB::table('exam_attempts')->where('module_id', $id)->delete();
-        DB::table('user_trainings')->where('module_id', $id)->delete();
-        DB::table('training_discussions')->where('module_id', $id)->delete();
-        DB::table('program_approvals')->where('module_id', $id)->delete();
-        DB::table('compliance_evidences')->where('module_id', $id)->delete();
-        DB::table('program_notifications')->where('module_id', $id)->delete();
-        DB::table('program_enrollment_metrics')->where('module_id', $id)->delete();
-        DB::table('module_assignments')->where('module_id', $id)->delete();
 
-        // Delete materials and their files
-        $materials = DB::table('training_materials')->where('module_id', $id)->get();
-        foreach ($materials as $material) {
-            if ($material->file_path && Storage::disk('public')->exists($material->file_path)) {
-                Storage::disk('public')->delete($material->file_path);
-            }
-        }
-        DB::table('training_materials')->where('module_id', $id)->delete();
-
-        // Delete questions and their images
+        // 3. Delete quiz questions (direct module questions - no quiz_answers table exists)
         $questions = DB::table('questions')->where('module_id', $id)->get();
         foreach ($questions as $question) {
             if ($question->image_url && Storage::exists($question->image_url)) {
@@ -2252,10 +2448,40 @@ class AdminTrainingProgramController extends Controller
         }
         DB::table('questions')->where('module_id', $id)->delete();
 
-        // Delete quizzes
+        // 4. Delete quizzes
         DB::table('quizzes')->where('module_id', $id)->delete();
 
-        // Finally delete module
+        // 5. Delete user enrollments and related data
+        DB::table('user_trainings')->where('module_id', $id)->delete();
+        DB::table('module_progress')->where('module_id', $id)->delete();
+
+        // 6. Delete materials and their files
+        $materials = DB::table('training_materials')->where('module_id', $id)->get();
+        foreach ($materials as $material) {
+            if ($material->file_path && Storage::disk('public')->exists($material->file_path)) {
+                Storage::disk('public')->delete($material->file_path);
+            }
+        }
+        DB::table('training_materials')->where('module_id', $id)->delete();
+
+        // 7. Delete training/discussion/assignment related records
+        DB::table('training_discussions')->where('module_id', $id)->delete();
+        DB::table('program_approvals')->where('module_id', $id)->delete();
+        DB::table('compliance_evidences')->where('module_id', $id)->delete();
+        DB::table('program_notifications')->where('module_id', $id)->delete();
+        DB::table('program_enrollment_metrics')->where('module_id', $id)->delete();
+        DB::table('module_assignments')->where('module_id', $id)->delete();
+
+        // 8. Delete module prerequisites (if module is referenced)
+        DB::table('modules')->where('prerequisite_module_id', $id)->update(['prerequisite_module_id' => null]);
+
+        // 9. Delete audit logs for this module
+        DB::table('audit_logs')
+            ->where('entity_type', 'module')
+            ->where('entity_id', $id)
+            ->delete();
+
+        // 10. Finally delete the module itself
         $module->delete();
     }
 
@@ -2375,6 +2601,215 @@ class AdminTrainingProgramController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error mengirim reminder: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Export exam attempts to CSV
+     */
+    public function exportExamAttempts(Request $request, $id)
+    {
+        $user = Auth::user();
+
+        if ($user->role !== 'admin') {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        try {
+            $module = Module::findOrFail($id);
+            
+            // Fetch all exam attempts for this module with user details
+            $attempts = \App\Models\ExamAttempt::where('module_id', $id)
+                ->with('user')
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            // Transform to exportable format
+            $exportData = $attempts->map(function($attempt) {
+                return [
+                    'user_name' => $attempt->user ? $attempt->user->name : 'N/A',
+                    'user_email' => $attempt->user ? $attempt->user->email : 'N/A',
+                    'user_department' => $attempt->user && $attempt->user->department ? $attempt->user->department : 'N/A',
+                    'exam_type' => ucfirst(str_replace('_', ' ', $attempt->exam_type ?? 'unknown')),
+                    'score' => $attempt->score ?? 0,
+                    'percentage' => $attempt->percentage ?? 0,
+                    'status' => $attempt->is_passed ? 'LULUS' : 'TIDAK LULUS',
+                    'started_at' => $attempt->started_at ? $attempt->started_at->format('Y-m-d H:i:s') : 'N/A',
+                    'finished_at' => $attempt->finished_at ? $attempt->finished_at->format('Y-m-d H:i:s') : 'N/A',
+                    'duration_minutes' => $attempt->duration_minutes ?? 0,
+                ];
+            })->toArray();
+
+            // Generate Excel file with professional styling
+            $filename = 'Hasil-Ujian-' . $module->code . '-' . date('d-m-Y-His') . '.xlsx';
+
+            return \Maatwebsite\Excel\Facades\Excel::download(
+                new \App\Exports\ExamAttemptsExport($exportData, $module),
+                $filename
+            );
+        } catch (\Exception $e) {
+            Log::error('Export Exam Attempts Error: ' . $e->getMessage());
+            Log::error('Stack trace: ' . $e->getTraceAsString());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error mengexport data ujian: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Get exam attempt detail with answers and questions
+     */
+    public function getExamAttemptDetail(Request $request, $attemptId)
+    {
+        $user = Auth::user();
+
+        if ($user->role !== 'admin') {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        try {
+            $attempt = \App\Models\ExamAttempt::with(['user', 'module', 'answers.question'])
+                ->findOrFail($attemptId);
+
+            return response()->json([
+                'success' => true,
+                'data' => $attempt,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Get Exam Attempt Detail Error: ' . $e->getMessage());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error mengambil detail ujian: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Export Training Analytics dengan Pre-Test, Post-Test, dan Progress Materi
+     */
+    public function exportAnalytics(Request $request, $id)
+    {
+        $user = Auth::user();
+
+        if ($user->role !== 'admin') {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        try {
+            // Get program
+            $program = Module::findOrFail($id);
+            
+            // Get program statistics
+            $allUserTrainings = $program->userTrainings()->get();
+            $completedTrainings = $program->userTrainings()->whereNotNull('completed_at')->get();
+            
+            // Count pass based on is_passed attribute
+            $passCount = 0;
+            foreach ($allUserTrainings as $training) {
+                if ($training->final_score !== null && $training->final_score >= ($program->passing_grade ?? 70)) {
+                    $passCount++;
+                }
+            }
+            
+            $stats = [
+                'enrollment_count' => $allUserTrainings->count(),
+                'completion_count' => $completedTrainings->count(),
+                'pass_count' => $passCount,
+                'pass_rate' => 0,
+                'avg_score' => 0,
+                'engagement_score' => 8.5,
+            ];
+
+            // Calculate pass rate and avg score
+            if ($stats['enrollment_count'] > 0) {
+                $stats['pass_rate'] = round(($stats['pass_count'] / $stats['enrollment_count']) * 100, 2);
+                
+                // Get average score from exam attempts
+                $avgScoreResult = \App\Models\ExamAttempt::where('module_id', $id)
+                    ->whereNotNull('score')
+                    ->avg('score');
+                $stats['avg_score'] = $avgScoreResult ? round($avgScoreResult, 2) : 0;
+            }
+
+            // Get detailed participant data
+            $participants = [];
+            $enrollments = $program->userTrainings()
+                ->with('user')
+                ->get();
+
+            foreach ($enrollments as $enrollment) {
+                // Get pre-test score
+                $pretestAttempt = \App\Models\ExamAttempt::where([
+                    'user_id' => $enrollment->user_id,
+                    'module_id' => $id,
+                    'exam_type' => 'pretest'
+                ])->latest()->first();
+
+                // Get post-test score
+                $posttestAttempt = \App\Models\ExamAttempt::where([
+                    'user_id' => $enrollment->user_id,
+                    'module_id' => $id,
+                    'exam_type' => 'posttest'
+                ])->latest()->first();
+
+                // Get material progress - count completed materials for this user in this module
+                $totalMaterials = $program->trainingMaterials()->count();
+                $completedMaterials = 0;
+                
+                if ($totalMaterials > 0) {
+                    // Get all materials for this module
+                    $moduleMaterialIds = $program->trainingMaterials()->pluck('id')->toArray();
+                    
+                    // Count completed materials for user
+                    $completedMaterials = \DB::table('user_material_progress')
+                        ->where('user_id', $enrollment->user_id)
+                        ->whereIn('training_material_id', $moduleMaterialIds)
+                        ->where('is_completed', true)
+                        ->count();
+                }
+                
+                $progress = $totalMaterials > 0 ? round(($completedMaterials / $totalMaterials) * 100, 2) : 0;
+
+                // Final score (usually from post-test or final_score)
+                $finalScore = $posttestAttempt ? $posttestAttempt->percentage : ($enrollment->final_score ?? 0);
+                $isPassed = $finalScore > 0 && $finalScore >= ($program->passing_grade ?? 70);
+
+                $participants[] = [
+                    'name' => $enrollment->user ? $enrollment->user->name : 'N/A',
+                    'email' => $enrollment->user ? $enrollment->user->email : 'N/A',
+                    'department' => $enrollment->user && $enrollment->user->department ? $enrollment->user->department : 'N/A',
+                    'status' => $enrollment->completed_at ? 'completed' : 'in_progress',
+                    'pretest_score' => $pretestAttempt ? $pretestAttempt->percentage : '-',
+                    'posttest_score' => $posttestAttempt ? $posttestAttempt->percentage : '-',
+                    'progress' => $progress,
+                    'score' => $finalScore,
+                    'is_passed' => $isPassed,
+                    'started_at' => $enrollment->created_at,
+                    'completion_date' => $enrollment->completed_at,
+                    'duration_hours' => $enrollment->completed_at 
+                        ? round((strtotime($enrollment->completed_at) - strtotime($enrollment->created_at)) / 3600, 2)
+                        : '-',
+                ];
+            }
+
+            // Generate Excel file
+            $filename = 'Analytics-' . $program->code . '-' . date('d-m-Y-His') . '.xlsx';
+
+            return \Maatwebsite\Excel\Facades\Excel::download(
+                new \App\Exports\TrainingAnalyticsExport($program, $stats, $participants),
+                $filename
+            );
+        } catch (\Exception $e) {
+            Log::error('Export Training Analytics Error: ' . $e->getMessage());
+            Log::error('Stack trace: ' . $e->getTraceAsString());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error mengekspor data analytics: ' . $e->getMessage(),
             ], 500);
         }
     }

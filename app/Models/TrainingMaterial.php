@@ -24,6 +24,9 @@ class TrainingMaterial extends Model
         // Support external links
         'external_url',
     ];
+    
+    // Ensure 'url' attribute is included in JSON responses
+    protected $appends = ['url'];
 
     public function module()
     {

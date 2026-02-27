@@ -28,6 +28,7 @@ class User extends Authenticatable
         'department',
         'location',
         'phone',
+        'total_points',
     ];
 
     /**
@@ -106,9 +107,19 @@ class User extends Authenticatable
     /**
      * Relasi ke Roles (Many-to-Many)
      */
-    public function roles()
+    public function roles(): BelongsToMany
     {
-        return $this->belongsToMany(Role::class, 'user_roles');
+        return $this->belongsToMany(Role::class, 'user_roles')
+            ->withPivot('assigned_at', 'assigned_by', 'active')
+            ->withTimestamps();
+    }
+
+    /**
+     * Get active roles only
+     */
+    public function activeRoles(): BelongsToMany
+    {
+        return $this->roles()->wherePivot('active', true);
     }
 
     /**
@@ -117,6 +128,37 @@ class User extends Authenticatable
     public function department()
     {
         return $this->belongsTo(Department::class);
+    }
+
+    /**
+     * Get direct manager via department hierarchy
+     */
+    public function manager()
+    {
+        if (!$this->department_id) {
+            return null;
+        }
+
+        $department = $this->department;
+        if ($department->head_id && $department->head_id !== $this->id) {
+            return User::find($department->head_id);
+        }
+
+        // If user is department head, get parent department head
+        if ($department->parent_id) {
+            $parentDept = $department->parent;
+            return $parentDept?->head;
+        }
+
+        return null;
+    }
+
+    /**
+     * Relasi ke Permissions (Many-to-Many)
+     */
+    public function permissions(): BelongsToMany
+    {
+        return $this->belongsToMany(Permission::class, 'user_permissions');
     }
 
     /**
@@ -156,7 +198,7 @@ class User extends Authenticatable
      */
     public function getCertifiedTrainings()
     {
-        return $this->trainings()->wherePivot('is_certified', true);
+        return $this->trainings()->wherePivot('is_certified', 1);
     }
 
     /**

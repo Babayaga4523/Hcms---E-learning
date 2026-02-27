@@ -22,13 +22,23 @@ class NotificationController extends Controller
 
     /**
      * Get user notifications
-     * GET /api/user/notifications
+     * GET /api/user/notifications?limit=50&offset=0&page=1
      */
     public function index(Request $request)
     {
         try {
             $userId = $request->user()->id;
+            
+            // Support both limit/offset and page-based pagination
             $limit = $request->input('limit', 50);
+            $offset = $request->input('offset', 0);
+            $page = $request->input('page', null);
+            
+            // If page is provided, calculate offset from page
+            if ($page) {
+                $offset = ($page - 1) * $limit;
+            }
+            
             $search = $request->input('search', '');
             $type = $request->input('type', '');
 
@@ -53,7 +63,22 @@ class NotificationController extends Controller
                 $notifications = $this->notificationService->getUserNotifications($userId, $limit);
             }
 
-            return response()->json($notifications);
+            // Include pagination metadata
+            $totalCount = Notification::where('user_id', $userId)
+                ->when($type, fn($q) => $q->where('type', $type))
+                ->when($search, fn($q) => $q->where('message', 'like', "%{$search}%"))
+                ->count();
+            
+            return response()->json([
+                'data' => $notifications,
+                'pagination' => [
+                    'total' => $totalCount,
+                    'limit' => $limit,
+                    'offset' => $offset,
+                    'page' => $page ?? (intval($offset / $limit) + 1),
+                    'total_pages' => ceil($totalCount / $limit),
+                ]
+            ]);
         } catch (\Exception $e) {
             Log::error('Failed to get notifications: ' . $e->getMessage());
             return response()->json([

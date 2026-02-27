@@ -24,6 +24,7 @@ class PreTestPostTestController extends Controller
      */
     public function getQuestions($moduleId, $examType)
     {
+        $this->authorize('view-questions');
         // Validate exam type
         if (!in_array($examType, ['pre_test', 'post_test'])) {
             return response()->json(['error' => 'Invalid exam type'], 400);
@@ -400,35 +401,56 @@ class PreTestPostTestController extends Controller
     }
 
     /**
-     * Get all attempts for a module
+     * Get all attempts for a module with caching
+     * Cache key includes module ID to invalidate when module changes
      */
     public function getModuleAttempts($moduleId)
     {
         $user = Auth::user();
+        $cacheKey = "module_attempts_{$moduleId}_user_{$user->id}";
 
-        $attempts = ExamAttempt::where('user_id', $user->id)
-            ->where('module_id', $moduleId)
-            ->with('module')
-            ->orderBy('created_at', 'desc')
-            ->get()
-            ->map(function ($attempt) {
-                return [
-                    'id' => $attempt->id,
-                    'exam_type' => $attempt->exam_type,
-                    'score' => $attempt->score,
-                    'percentage' => $attempt->percentage,
-                    'is_passed' => $attempt->is_passed,
-                    'started_at' => $attempt->started_at,
-                    'finished_at' => $attempt->finished_at,
-                    'duration_minutes' => $attempt->duration_minutes,
-                    'status' => $attempt->finished_at ? 'finished' : 'in_progress'
-                ];
-            });
+        // Use cache with 5-minute TTL for performance
+        $attempts = \Illuminate\Support\Facades\Cache::remember($cacheKey, 300, function () use ($user, $moduleId) {
+            return ExamAttempt::where('user_id', $user->id)
+                ->where('module_id', $moduleId)
+                ->with('module')
+                ->orderBy('created_at', 'desc')
+                ->get()
+                ->map(function ($attempt) {
+                    return [
+                        'id' => $attempt->id,
+                        'exam_type' => $attempt->exam_type,
+                        'score' => $attempt->score,
+                        'percentage' => $attempt->percentage,
+                        'is_passed' => $attempt->is_passed,
+                        'started_at' => $attempt->started_at,
+                        'finished_at' => $attempt->finished_at,
+                        'duration_minutes' => $attempt->duration_minutes,
+                        'status' => $attempt->finished_at ? 'finished' : 'in_progress'
+                    ];
+                });
+        });
 
         return response()->json([
             'success' => true,
             'data' => $attempts
         ]);
+    }
+
+    /**
+     * Invalidate module attempts cache when module is updated
+     * Call this after module updates to clear stale data
+     */
+    public function invalidateModuleCache($moduleId)
+    {
+        // Get all users and invalidate their caches for this module
+        $users = \App\Models\User::pluck('id');
+        foreach ($users as $userId) {
+            $cacheKey = "module_attempts_{$moduleId}_user_{$userId}";
+            \Illuminate\Support\Facades\Cache::forget($cacheKey);
+        }
+        
+        Log::info("Cache invalidated for module {$moduleId}");
     }
 
     // --- Helper methods ---

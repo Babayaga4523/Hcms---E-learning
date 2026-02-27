@@ -23,6 +23,7 @@ class CommandController extends Controller
      */
     public function sendBulkReminder(Request $request)
     {
+        $this->authorize('send-reminders');
         $request->validate([
             'type' => 'required|in:all,department,overdue',
             'department' => 'required_if:type,department|string',

@@ -2,19 +2,24 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Http\Controllers\Controller;
 use App\Models\Module;
 use App\Models\User;
 use App\Models\ProgramEnrollmentMetric;
+use App\Services\PointsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
-class DashboardMetricsController
+class DashboardMetricsController extends Controller
 {
     /**
      * Get comprehensive dashboard data - single endpoint for all dashboard needs
      */
     public function getComprehensiveDashboard()
     {
+        $this->authorize('view-dashboard');
         return response()->json([
             'success' => true,
             'data' => [
@@ -33,40 +38,46 @@ class DashboardMetricsController
     }
 
     /**
-     * Get all dashboard statistics
+     * Get all dashboard statistics (OPTIMIZED - Combined queries + CACHED)
      */
     public function getStatistics()
-    {
-        $totalPrograms = Module::count();
-        $activePrograms = Module::where('is_active', true)->count();
+    {$this->authorize('view-dashboard');
         
-        // Enrolled Learners
-        $totalEnrolledLearners = User::where('role', 'user')
-            ->whereHas('trainings')
-            ->count();
-        
-        // Calculate completion rate from actual user-module relationships
-        $completionStats = DB::table('user_trainings')
-            ->selectRaw('COUNT(*) as total, SUM(CASE WHEN status = "completed" THEN 1 ELSE 0 END) as completed')
-            ->first();
-        
-        $completionRate = $completionStats && $completionStats->total > 0 
-            ? round(($completionStats->completed / $completionStats->total) * 100, 2)
-            : 0;
-
-        // Average exam score
-        $averageScore = DB::table('user_trainings')
-            ->where('final_score', '!=', null)
-            ->avg('final_score') ?? 0;
-
-        // Compliance metrics
-        $complianceData = DB::table('user_trainings')
-            ->selectRaw('COUNT(*) as total, SUM(CASE WHEN is_certified = true THEN 1 ELSE 0 END) as certified')
-            ->first();
-        
-        $complianceRate = $complianceData && $complianceData->total > 0
-            ? round(($complianceData->certified / $complianceData->total) * 100, 2)
-            : 0;
+        // Cache for 5 minutes to avoid repeated heavy queries
+        return Cache::remember('dashboard_statistics', 300, function() {
+            // OPTIMIZE: Combine Module counts into single query
+            $moduleStats = DB::table('modules')
+                ->selectRaw('COUNT(*) as total, SUM(CASE WHEN is_active = true THEN 1 ELSE 0 END) as active')
+                ->first();
+            
+            $totalPrograms = $moduleStats->total ?? 0;
+            $activePrograms = $moduleStats->active ?? 0;
+            
+            // OPTIMIZE: Use single query for all training stats (5 queries → 1 query)
+            $trainingStats = DB::table('user_trainings')
+                ->selectRaw('
+                    COUNT(*) as total_trainings,
+                    SUM(CASE WHEN status = "completed" THEN 1 ELSE 0 END) as completed,
+                    SUM(CASE WHEN is_certified = true THEN 1 ELSE 0 END) as certified,
+                    AVG(CASE WHEN final_score IS NOT NULL THEN final_score ELSE NULL END) as avg_score
+                ')
+                ->first();
+            
+            $completionRate = ($trainingStats->total_trainings ?? 0) > 0 
+                ? round(($trainingStats->completed / $trainingStats->total_trainings) * 100, 2)
+                : 0;
+            
+            $complianceRate = ($trainingStats->total_trainings ?? 0) > 0
+                ? round(($trainingStats->certified / $trainingStats->total_trainings) * 100, 2)
+                : 0;
+            
+            $averageScore = round($trainingStats->avg_score ?? 0, 2);
+            
+            // Count enrolled users
+            $totalEnrolledLearners = DB::table('users')
+                ->whereIn('id', DB::table('user_trainings')->distinct()->pluck('user_id'))
+                ->where('role', 'user')
+                ->count();
 
         // Weekly engagement
         $weeklyEngagement = DB::table('user_trainings')
@@ -112,16 +123,10 @@ class DashboardMetricsController
             })
             ->toArray();
 
-        // Fallback to sample data if no real data exists
+        // No fallback - use real data only or empty array
         if (empty($skillsGap)) {
-            $skillsGap = [
-                ['subject' => 'Technical Skills', 'current' => 72, 'target' => 85],
-                ['subject' => 'Communication', 'current' => 65, 'target' => 80],
-                ['subject' => 'Leadership', 'current' => 58, 'target' => 75],
-                ['subject' => 'Problem Solving', 'current' => 80, 'target' => 90],
-                ['subject' => 'Time Management', 'current' => 55, 'target' => 70],
-                ['subject' => 'Teamwork', 'current' => 75, 'target' => 85],
-            ];
+            // Log warning if no data
+            Log::warning('[DashboardMetrics] Skill gap data is empty - no modules with final_score found');
         }
 
         // Department compliance stats
@@ -148,73 +153,83 @@ class DashboardMetricsController
             })
             ->toArray();
 
-        return [
-            'total_users' => $totalEnrolledLearners,
-            'completion_rate' => $completionRate,
-            'average_score' => round($averageScore, 2),
-            'overall_compliance_rate' => $complianceRate,
-            'total_programs' => $totalPrograms,
-            'active_programs' => $activePrograms,
-            'weekly_engagement' => array_values($weeklyEngagement),
-            'skills_gap' => $skillsGap,
-            'department_compliance' => $departmentCompliance,
-            'department_reports' => $this->getDepartmentReports(),
-        ];
+            return [
+                'total_users' => $totalEnrolledLearners,
+                'completion_rate' => $completionRate,
+                'average_score' => round($averageScore, 2),
+                'overall_compliance_rate' => $complianceRate,
+                'total_programs' => $totalPrograms,
+                'active_programs' => $activePrograms,
+                'weekly_engagement' => array_values($weeklyEngagement),
+                'skills_gap' => $skillsGap,
+                'department_compliance' => $departmentCompliance,
+                'department_reports' => $this->getDepartmentReports(),
+            ];
+        });
     }
 
     /**
-     * Get compliance trend data (last 12 months)
+     * Get compliance trend data (last 12 months) - CACHED
      */
     public function getComplianceTrend()
     {
-        $trend = DB::table('user_trainings')
-            ->selectRaw('
-                DATE_FORMAT(created_at, "%Y-%m") as month,
-                MONTHNAME(created_at) as month_name,
-                COUNT(*) as total,
-                SUM(CASE WHEN is_certified = true THEN 1 ELSE 0 END) as certified
-            ')
-            ->where('created_at', '>=', now()->subMonths(12))
-            ->groupByRaw('DATE_FORMAT(created_at, "%Y-%m"), MONTHNAME(created_at)')
-            ->orderBy('month')
-            ->get()
-            ->map(function($item) {
-                return [
-                    'month' => substr($item->month_name, 0, 3),
-                    'completed' => $item->certified ?? 0,
-                    'total' => $item->total ?? 0,
-                ];
-            })
-            ->toArray();
+        // Cache for 1 hour
+        return Cache::remember('dashboard_compliance_trend', 3600, function() {
+            $trend = DB::table('user_trainings')
+                ->selectRaw('
+                    DATE_FORMAT(created_at, "%Y-%m") as month,
+                    MONTHNAME(created_at) as month_name,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN is_certified = true THEN 1 ELSE 0 END) as certified
+                ')
+                ->where('created_at', '>=', now()->subMonths(12))
+                ->groupByRaw('DATE_FORMAT(created_at, "%Y-%m"), MONTHNAME(created_at)')
+                ->orderBy('month')
+                ->get()
+                ->map(function($item) {
+                    return [
+                        'month' => substr($item->month_name, 0, 3),
+                        'completed' => $item->certified ?? 0,
+                        'total' => $item->total ?? 0,
+                    ];
+                })
+                ->toArray();
 
-        return $trend;
+            return $trend;
+        });
     }
 
     /**
-     * Get enrollment trend data (last 30 days)
+     * Get enrollment trend data (last 12 months) - CACHED
      */
     public function getEnrollmentTrend()
     {
-        $trends = DB::table('user_trainings')
-            ->selectRaw('
-                DATE(created_at) as date,
-                DAYNAME(created_at) as day_name,
-                COUNT(*) as enrollments
-            ')
-            ->where('created_at', '>=', now()->subDays(30))
-            ->groupByRaw('DATE(created_at), DAYNAME(created_at)')
-            ->orderBy('date')
-            ->get()
-            ->map(function($metric) {
-                return [
-                    'date' => $metric->date,
-                    'month' => substr($metric->day_name, 0, 3),
-                    'enrollments' => $metric->enrollments ?? 0,
-                ];
-            })
-            ->toArray();
+        // Cache for 1 hour
+        return Cache::remember('dashboard_enrollment_trend', 3600, function() {
+            $trends = DB::table('user_trainings')
+                ->selectRaw('
+                    DATE_FORMAT(created_at, "%Y-%m") as month,
+                    MONTHNAME(created_at) as month_name,
+                    COUNT(*) as enrollments
+                ')
+                ->where('created_at', '>=', now()->subMonths(12))
+                ->groupByRaw('DATE_FORMAT(created_at, "%Y-%m"), MONTHNAME(created_at)')
+                ->orderBy('month')
+                ->get()
+                ->map(function($metric) {
+                    return [
+                        'month' => substr($metric->month_name, 0, 3),
+                        'enrollments' => $metric->enrollments ?? 0,
+                    ];
+                })
+                ->toArray();
 
-        return $trends;
+            if (empty($trends)) {
+                Log::warning('⚠️ No enrollment trend data found for past 12 months');
+            }
+
+            return $trends;
+        });
     }
 
     /**
@@ -248,39 +263,8 @@ class DashboardMetricsController
      */
     public function getTopPerformers()
     {
-        return User::where('role', 'user')
-            ->leftJoin('user_trainings', 'users.id', '=', 'user_trainings.user_id')
-            ->leftJoin('modules', 'user_trainings.module_id', '=', 'modules.id')
-            ->selectRaw('
-                users.id,
-                users.name,
-                users.nip,
-                users.department as dept,
-                COUNT(DISTINCT user_trainings.module_id) as completed_trainings,
-                SUM(CASE WHEN user_trainings.is_certified = true THEN 1 ELSE 0 END) as certifications,
-                ROUND(AVG(user_trainings.final_score), 2) as avg_exam_score,
-                ROUND(
-                    SUM(CASE WHEN user_trainings.status = "completed" OR user_trainings.is_certified = true 
-                             THEN COALESCE(modules.xp, 0) ELSE 0 END)
-                ) as points
-            ')
-            ->groupBy('users.id', 'users.name', 'users.nip', 'users.department')
-            ->orderByDesc('points')
-            ->limit(10)
-            ->get()
-            ->map(function($user) {
-                return [
-                    'id' => $user->id,
-                    'name' => $user->name,
-                    'nip' => $user->nip,
-                    'dept' => $user->dept ?? 'Unassigned',
-                    'modules' => $user->completed_trainings,
-                    'certifications' => $user->certifications ?? 0,
-                    'avg_exam_score' => $user->avg_exam_score ?? 0,
-                    'total_points' => $user->points ?? 0,
-                ];
-            })
-            ->toArray();
+        $pointsService = app(PointsService::class);
+        return $pointsService->getTopPerformers(10);
     }
 
     /**
@@ -342,15 +326,19 @@ class DashboardMetricsController
      */
     public function getRecentActivityLogs()
     {
-        // Kumpulkan semua aktivitas dari berbagai sumber
+        // Kumpulkan semua aktivitas dari berbagai sumber dengan nama karyawan yang jelas
         $loginActivities = DB::table('audit_logs')
             ->join('users', 'audit_logs.user_id', '=', 'users.id')
             ->where('audit_logs.action', 'like', '%login%')
             ->select(
+                'users.id as user_id',
                 'users.name as user',
+                'users.name as user_name',
                 'audit_logs.action',
+                DB::raw('NULL as module_name'),
                 DB::raw('"login" as type'),
                 'audit_logs.logged_at as time',
+                'audit_logs.logged_at as created_at',
                 DB::raw('UNIX_TIMESTAMP(audit_logs.logged_at) as timestamp')
             )
             ->orderByDesc('audit_logs.logged_at');
@@ -360,10 +348,14 @@ class DashboardMetricsController
             ->join('users', 'user_trainings.user_id', '=', 'users.id')
             ->join('modules', 'user_trainings.module_id', '=', 'modules.id')
             ->select(
+                'users.id as user_id',
                 'users.name as user',
+                'users.name as user_name',
                 DB::raw('CONCAT("enrolled in ", modules.title) as action'),
+                'modules.title as module_name',
                 DB::raw('"enrollment" as type'),
                 'user_trainings.enrolled_at as time',
+                'user_trainings.enrolled_at as created_at',
                 DB::raw('UNIX_TIMESTAMP(user_trainings.enrolled_at) as timestamp')
             )
             ->whereNotNull('user_trainings.enrolled_at')
@@ -374,10 +366,14 @@ class DashboardMetricsController
             ->join('users', 'user_trainings.user_id', '=', 'users.id')
             ->join('modules', 'user_trainings.module_id', '=', 'modules.id')
             ->select(
+                'users.id as user_id',
                 'users.name as user',
+                'users.name as user_name',
                 DB::raw('CONCAT("completed ", modules.title) as action'),
+                'modules.title as module_name',
                 DB::raw('"completion" as type'),
                 'user_trainings.completed_at as time',
+                'user_trainings.completed_at as created_at',
                 DB::raw('UNIX_TIMESTAMP(user_trainings.completed_at) as timestamp')
             )
             ->where('user_trainings.status', 'completed')
@@ -388,10 +384,14 @@ class DashboardMetricsController
         $examActivities = DB::table('exam_attempts')
             ->join('users', 'exam_attempts.user_id', '=', 'users.id')
             ->select(
+                'users.id as user_id',
                 'users.name as user',
+                'users.name as user_name',
                 DB::raw('CONCAT("attempted exam with score: ", ROUND(exam_attempts.score, 2)) as action'),
+                DB::raw('NULL as module_name'),
                 DB::raw('"exam" as type'),
                 'exam_attempts.created_at as time',
+                'exam_attempts.created_at as created_at',
                 DB::raw('UNIX_TIMESTAMP(exam_attempts.created_at) as timestamp')
             )
             ->orderByDesc('exam_attempts.created_at');
@@ -406,10 +406,14 @@ class DashboardMetricsController
             ->get()
             ->map(function($item) {
                 return [
+                    'user_id' => $item->user_id ?? null,
                     'user' => $item->user ?? 'System',
+                    'user_name' => $item->user_name ?? 'Karyawan',
                     'action' => $item->action ?? 'melakukan aktivitas',
+                    'module_name' => $item->module_name ?? null,
                     'type' => $item->type ?? 'other',
                     'time' => $item->time ? \Carbon\Carbon::parse($item->time)->diffForHumans() : 'Recently',
+                    'created_at' => $item->created_at ?? null,
                     'timestamp' => $item->timestamp ?? 0,
                 ];
             })
@@ -750,5 +754,87 @@ class DashboardMetricsController
         
         return response()->streamDownload(function() {}, 'Ringkasan_Laporan_Pembelajaran_' . date('Y-m-d_H-i-s') . '.csv', $headers);
     }
-}
 
+    /**
+     * Get trend analysis data for specified number of days
+     * GET /api/admin/trend-analysis?days=7|30|90|365
+     */
+    public function trendAnalysis(Request $request)
+    {
+        $this->authorize('view-dashboard');
+
+        try {
+            $days = (int) $request->query('days', 30);
+            
+            // Validate days parameter
+            if (!in_array($days, [7, 30, 90, 365])) {
+                $days = 30; // Default to 30 days
+            }
+
+            $startDate = now()->subDays($days);
+
+            // Generate date range
+            $dateRange = [];
+            for ($i = 0; $i < $days; $i++) {
+                $dateRange[] = $startDate->copy()->addDays($i)->format('Y-m-d');
+            }
+
+            // Fetch enrollment and completion data
+            $enrollmentData = DB::table('user_trainings')
+                ->selectRaw('DATE(created_at) as date, COUNT(*) as enrollments')
+                ->where('created_at', '>=', $startDate)
+                ->groupBy('date')
+                ->get()
+                ->keyBy('date');
+
+            $completionData = DB::table('user_trainings')
+                ->selectRaw('DATE(updated_at) as date, COUNT(*) as completions')
+                ->where('status', 'completed')
+                ->where('updated_at', '>=', $startDate)
+                ->groupBy('date')
+                ->get()
+                ->keyBy('date');
+
+            $engagementData = DB::table('exam_attempts')
+                ->selectRaw('DATE(attempt_date) as date, COUNT(*) as attempts')
+                ->where('attempt_date', '>=', $startDate)
+                ->groupBy('date')
+                ->get()
+                ->keyBy('date');
+
+            // Build response data
+            $trendData = [];
+            foreach ($dateRange as $date) {
+                $trendData[] = [
+                    'date' => $date,
+                    'enrollments' => $enrollmentData[$date]->enrollments ?? 0,
+                    'completions' => $completionData[$date]->completions ?? 0,
+                    'engagement' => $engagementData[$date]->attempts ?? 0,
+                ];
+            }
+
+            if (empty($trendData)) {
+                Log::warning('⚠️ No trend analysis data found for days: ' . $days);
+                return response()->json([], 200);
+            }
+
+            Log::info('✅ Trend analysis data retrieved', [
+                'days' => $days,
+                'data_points' => count($trendData)
+            ]);
+
+            return response()->json($trendData, 200);
+
+        } catch (\Exception $e) {
+            Log::error('❌ Error fetching trend analysis data: ' . $e->getMessage(), [
+                'exception' => $e,
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to fetch trend analysis',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+}

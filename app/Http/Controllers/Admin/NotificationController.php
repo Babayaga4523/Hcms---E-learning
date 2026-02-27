@@ -15,6 +15,7 @@ class NotificationController extends Controller
      */
     public function index(Request $request)
     {
+        $this->authorize('view-notifications');
         try {
             $notifications = ProgramNotification::orderBy('created_at', 'desc')->get();
 
@@ -32,6 +33,7 @@ class NotificationController extends Controller
      */
     public function send(Request $request)
     {
+        $this->authorize('send-notifications');
         try {
             $recipients = $request->input('recipients');
             $recipientIds = $request->input('recipient_ids', []);
@@ -82,6 +84,7 @@ class NotificationController extends Controller
             $notification->recipient_ids = $recipientIds;
             $notification->is_scheduled = $request->input('is_scheduled', false);
             $notification->scheduled_at = $request->input('scheduled_at');
+            $notification->sent_at = $request->input('is_scheduled') ? null : now();
             $notification->recipients_count = 0;
             $notification->stats = json_encode(['sent' => 0, 'read' => 0, 'clicked' => 0, 'failure' => 0]);
 

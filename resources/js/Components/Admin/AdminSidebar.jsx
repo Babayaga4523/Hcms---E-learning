@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { Link, router, usePage } from '@inertiajs/react';
 import { 
     LayoutDashboard, BookOpen, Users, FileText, LogOut, 
@@ -11,23 +11,23 @@ const MenuItem = ({ item, isActive }) => {
     return (
         <a
             href={item.href}
-            className={`flex items-center gap-3 px-4 py-3 mx-2 rounded-lg transition-all duration-200 ${
+            className={`flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-3 mx-1 sm:mx-2 rounded-lg transition-all duration-200 text-sm sm:text-base ${
                 isActive 
                 ? 'bg-[#D6FF59] text-slate-900 font-semibold' 
                 : 'text-slate-300 hover:text-white hover:bg-slate-800/50' 
             }`}
         >
-            <span className="flex-shrink-0">{item.icon}</span>
-            <span className="flex-1 text-sm font-medium">{item.label}</span>
-            {isActive && <span className="w-2 h-2 bg-slate-900 rounded-full"></span>}
+            <span className="flex-shrink-0 w-5 h-5 sm:w-6 sm:h-6">{item.icon}</span>
+            <span className="flex-1 text-xs sm:text-sm font-medium">{item.label}</span>
+            {isActive && <span className="w-2 h-2 bg-slate-900 rounded-full flex-shrink-0"></span>}
         </a>
     );
 };
 
 // Komponen Group Header
 const MenuSection = ({ title, children }) => (
-    <div className="px-2 py-4">
-        <h3 className="px-4 mb-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+    <div className="px-1 sm:px-2 py-3 sm:py-4">
+        <h3 className="px-3 sm:px-4 mb-2 sm:mb-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
             {title}
         </h3>
         <div className="space-y-1">
@@ -39,6 +39,60 @@ const MenuSection = ({ title, children }) => (
 export default function AdminSidebar({ user }) {
     const { url } = usePage();
     const [isMobileOpen, setIsMobileOpen] = useState(false);
+    const navRef = useRef(null);
+    const scrollPositionRef = useRef(0);
+    const prevUrlRef = useRef(url);
+    const isRestoringRef = useRef(false);
+
+    // Handle scroll event - capture scroll position saat user scroll
+    useEffect(() => {
+        const navElement = navRef.current;
+        if (!navElement) return;
+
+        const handleScroll = () => {
+            // Hanya simpan jika sedang tidak melakukan restore
+            if (!isRestoringRef.current) {
+                scrollPositionRef.current = navElement.scrollTop;
+            }
+        };
+
+        // Gunakan passive listener untuk better performance
+        navElement.addEventListener('scroll', handleScroll, { passive: true });
+        
+        return () => {
+            navElement.removeEventListener('scroll', handleScroll);
+        };
+    }, []);
+
+    // Restore scroll position HANYA saat URL berubah atau mount
+    useEffect(() => {
+        if (navRef.current) {
+            // Jika URL berubah, reset scroll ke atas
+            if (url !== prevUrlRef.current) {
+                isRestoringRef.current = true;
+                navRef.current.scrollTop = 0;
+                prevUrlRef.current = url;
+                // Delay reset flag untuk ensure scroll selesai
+                requestAnimationFrame(() => {
+                    isRestoringRef.current = false;
+                });
+            }
+        }
+    }, [url]);
+
+    // Restore scroll position saat mount (untuk halaman yang di-visit sebelumnya)
+    useEffect(() => {
+        if (navRef.current && scrollPositionRef.current > 0) {
+            isRestoringRef.current = true;
+            // Delay restoration untuk ensure DOM sudah settled
+            requestAnimationFrame(() => {
+                if (navRef.current && scrollPositionRef.current > 0) {
+                    navRef.current.scrollTop = scrollPositionRef.current;
+                }
+                isRestoringRef.current = false;
+            });
+        }
+    }, []);
 
     const menuGroups = [
         {
@@ -60,8 +114,7 @@ export default function AdminSidebar({ user }) {
             title: "Pengguna & Kepatuhan",
             items: [
                 { label: 'Manajemen Pengguna', icon: <Users size={20} />, href: '/admin/users', id: 'users' },
-                { label: 'Laporan Terpadu', icon: <TrendingUp size={20} />, href: '/admin/reports/unified', id: 'reports-unified' },
-                { label: 'Laporan Lama', icon: <FileText size={20} />, href: '/admin/reports', id: 'reports' },
+                { label: 'Laporan', icon: <TrendingUp size={20} />, href: '/admin/reports', id: 'reports' },
                 { label: 'Kepatuhan', icon: <CheckSquare size={20} />, href: '/admin/compliance', id: 'compliance' },
             ]
         },
@@ -108,10 +161,10 @@ export default function AdminSidebar({ user }) {
     const SidebarMobile = () => (
         <>
             {/* Hamburger Button */}
-            <div className="md:hidden fixed top-4 left-4 z-50">
+            <div className="md:hidden fixed top-3 left-3 z-50 bg-white rounded-lg">
                 <button
                     onClick={() => setIsMobileOpen(!isMobileOpen)}
-                    className="p-2 rounded-lg bg-slate-900 border border-slate-700 text-white hover:bg-slate-800 transition-colors"
+                    className="p-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition-colors"
                     aria-label="Menu"
                 >
                     {isMobileOpen ? <X size={24} /> : <Menu size={24} />}
@@ -127,7 +180,7 @@ export default function AdminSidebar({ user }) {
             )}
 
             {/* Sidebar */}
-            <aside className={`md:hidden fixed top-0 left-0 w-[280px] h-screen bg-gradient-to-b from-slate-900 via-slate-950 to-slate-950 border-r border-slate-700/50 z-40 transform transition-transform duration-300 flex flex-col ${
+            <aside className={`md:hidden fixed top-0 left-0 w-72 h-screen bg-gradient-to-b from-slate-900 via-slate-950 to-slate-950 border-r border-slate-700/50 z-40 transform transition-transform duration-300 flex flex-col overflow-hidden ${
                 isMobileOpen ? 'translate-x-0' : '-translate-x-full'
             }`}>
                 <SidebarContent onClose={closeMobileMenu} />
@@ -139,22 +192,25 @@ export default function AdminSidebar({ user }) {
     const SidebarContent = ({ onClose }) => (
         <>
             {/* Logo */}
-            <div className="h-20 flex items-center px-6 border-b border-slate-700/50 bg-gradient-to-b from-slate-900 to-slate-950 flex-shrink-0">
-                <div className="flex items-center gap-3 w-full">
+            <div className="h-16 sm:h-20 flex items-center px-4 sm:px-6 border-b border-slate-700/50 bg-gradient-to-b from-slate-900 to-slate-950 flex-shrink-0">
+                <div className="flex items-center gap-2 sm:gap-3 w-full">
                     <img 
                         src="/bni-finance.png" 
                         alt="BNI Finance" 
-                        className="h-10 w-auto object-contain"
+                        className="h-8 sm:h-10 w-auto object-contain"
                     />
                     <div className="flex-1 min-w-0">
-                        <h1 className="text-white font-bold text-base leading-none">HCMS</h1>
-                        <p className="text-slate-400 text-[9px] font-medium mt-0.5">BNI Finance</p>
+                        <h1 className="text-white font-bold text-sm sm:text-base leading-none">HCMS</h1>
+                        <p className="text-slate-400 text-[8px] sm:text-[9px] font-medium mt-0.5">BNI Finance</p>
                     </div>
                 </div>
             </div>
 
             {/* Menu */}
-            <nav className="flex-1 overflow-y-auto overflow-x-hidden py-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900 scroll-smooth">
+            <nav 
+                ref={navRef}
+                className="flex-1 overflow-y-auto overflow-x-hidden py-3 sm:py-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900 scroll-smooth"
+            >
                 {menuGroups.map((group, idx) => (
                     <MenuSection key={idx} title={group.title}>
                         {group.items.map((item) => (
@@ -170,9 +226,9 @@ export default function AdminSidebar({ user }) {
             </nav>
 
             {/* User Profile Card */}
-            <div className="p-4 border-t border-slate-700/50 bg-slate-950 flex-shrink-0">
-                <div className="p-3 bg-slate-800/40 border border-slate-700/50 rounded-lg flex items-center gap-3 backdrop-blur-sm">
-                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-lime-400 to-teal-400 flex items-center justify-center flex-shrink-0 font-bold text-slate-900 text-sm">
+            <div className="p-2 sm:p-4 border-t border-slate-700/50 bg-slate-950 flex-shrink-0">
+                <div className="p-2 sm:p-3 bg-slate-800/40 border border-slate-700/50 rounded-lg flex items-center gap-2 sm:gap-3 backdrop-blur-sm">
+                    <div className="w-8 sm:w-10 h-8 sm:h-10 rounded-full bg-gradient-to-br from-lime-400 to-teal-400 flex items-center justify-center flex-shrink-0 font-bold text-slate-900 text-xs sm:text-sm">
                         {user?.name?.charAt(0).toUpperCase() || 'A'}
                     </div>
                     <div className="flex-1 min-w-0 hidden sm:block">
@@ -181,10 +237,10 @@ export default function AdminSidebar({ user }) {
                     </div>
                     <button
                         onClick={handleLogout}
-                        className="p-2 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-400/10 transition-colors flex-shrink-0"
+                        className="p-1.5 sm:p-2 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-400/10 transition-colors flex-shrink-0"
                         title="Keluar"
                     >
-                        <LogOut size={18} />
+                        <LogOut size={16} className="sm:w-5 sm:h-5" />
                     </button>
                 </div>
             </div>

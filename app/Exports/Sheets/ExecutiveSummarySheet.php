@@ -4,6 +4,8 @@ namespace App\Exports\Sheets;
 
 use Maatwebsite\Excel\Concerns\WithColumnFormatting;
 use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
+use PhpOffice\PhpSpreadsheet\Events\AfterSheet;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
 class ExecutiveSummarySheet extends BaseReportSheet
 {
@@ -42,5 +44,14 @@ class ExecutiveSummarySheet extends BaseReportSheet
         return [
             'B' => NumberFormat::FORMAT_NUMBER_COMMA_SEPARATED2,
         ];
+    }
+
+    public function registerEvents(): array
+    {
+        $baseEvents = parent::registerEvents();
+        
+        // Chart disabled - export data only
+        
+        return $baseEvents;
     }
 }

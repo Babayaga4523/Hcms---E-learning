@@ -147,12 +147,23 @@ class Certificate extends Model
         ];
 
         // Create certificate (use final computed score)
+        // Ensure training_title has a fallback
+        $trainingTitle = trim($module->title ?? '') ?: 'Program Pelatihan';
+        
+        \Log::info('Creating certificate', [
+            'user_id' => $userId,
+            'module_id' => $moduleId,
+            'module_title' => $module->title,
+            'training_title' => $trainingTitle,
+            'final_score' => $finalScore,
+        ]);
+        
         $certificate = self::create([
             'user_id' => $userId,
             'module_id' => $moduleId,
             'certificate_number' => self::generateCertificateNumber($userId, $moduleId),
             'user_name' => $user->name,
-            'training_title' => $module->title,
+            'training_title' => $trainingTitle,
             'score' => $finalScore,
             'materials_completed' => $materialsCompleted,
             'hours' => $hours,

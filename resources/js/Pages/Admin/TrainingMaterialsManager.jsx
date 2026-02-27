@@ -452,8 +452,9 @@ export default function TrainingMaterialsManager({ program, auth }) {
                                     {(() => {
                                         const fileName = previewFile.file_name || '';
                                         const fileExtension = fileName.split('.').pop()?.toLowerCase();
-                                        const filePath = `/storage/${previewFile.file_path}`;
-                                        const pdfPath = previewFile.pdf_path ? `/storage/${previewFile.pdf_path}` : null;
+                                        // Use secure admin preview route instead of direct URL
+                                        const filePath = `/admin/material-preview/${previewFile.id}`;
+                                        const pdfPath = previewFile.pdf_path ? `/admin/material-preview/${previewFile.id}` : null;
                                         
                                         const isVideo = ['mp4', 'webm', 'avi', 'mov', 'mkv'].includes(fileExtension) || previewFile.material_type === 'video';
                                         const isPDF = fileExtension === 'pdf';

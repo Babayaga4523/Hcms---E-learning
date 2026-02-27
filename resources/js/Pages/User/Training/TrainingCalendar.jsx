@@ -94,6 +94,18 @@ const FilterCheckbox = ({ label, count, color, checked, onChange }) => (
 
 const CalendarDay = ({ day, events = [], isCurrentMonth, isToday, onClick, onEventClick }) => {
     const hasEvents = events && events.length > 0;
+    
+    // Generate accessible label for calendar day
+    const getDayLabel = () => {
+        if (!day) return 'Empty day';
+        const dayName = day.toLocaleDateString('id-ID', { weekday: 'long' });
+        const dateStr = day.toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' });
+        let label = `${dayName}, ${dateStr}`;
+        if (hasEvents) {
+            label += `, ${events.length} peristiwa`;
+        }
+        return label;
+    };
 
     return (
         <motion.div
@@ -102,8 +114,10 @@ const CalendarDay = ({ day, events = [], isCurrentMonth, isToday, onClick, onEve
             onClick={() => onClick?.(day)}
             role="button"
             tabIndex={0}
+            aria-label={getDayLabel()}
             onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
                     onClick?.(day);
                 }
             }}
@@ -316,10 +330,28 @@ export default function TrainingCalendar({ auth, flash }) {
     const [selectedDate, setSelectedDate] = useState(null);
     const [filters, setFilters] = useState({ online: true, onsite: true });
     const [searchQuery, setSearchQuery] = useState('');
+    const [searchPreview, setSearchPreview] = useState([]);
 
     useEffect(() => {
         fetchSchedules();
     }, []);
+
+    // Debounce search preview
+    useEffect(() => {
+        const handler = setTimeout(() => {
+            if (searchQuery.trim()) {
+                const filtered = trainings.filter(t => 
+                    t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    (t.description && t.description.toLowerCase().includes(searchQuery.toLowerCase()))
+                );
+                setSearchPreview(filtered);
+            } else {
+                setSearchPreview([]);
+            }
+        }, 300);
+
+        return () => clearTimeout(handler);
+    }, [searchQuery, trainings]);
 
     const fetchSchedules = async () => {
         try {
@@ -573,8 +605,41 @@ export default function TrainingCalendar({ auth, flash }) {
                                             placeholder="Cari pelatihan..."
                                             value={searchQuery}
                                             onChange={(e) => setSearchQuery(e.target.value)}
-                                            className="w-full pl-10 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                            autoComplete="off"
+                                            className="w-full pl-10 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
                                         />
+
+                                        {/* Search Dropdown Preview */}
+                                        {searchQuery && (
+                                            <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-lg shadow-xl z-50 max-h-64 overflow-y-auto border border-slate-200">
+                                                {searchPreview.length > 0 ? (
+                                                    <div className="divide-y divide-slate-200">
+                                                        <div className="px-3 py-2 bg-slate-50 text-xs font-bold text-slate-600">
+                                                            Ditemukan {searchPreview.length} pelatihan
+                                                        </div>
+                                                        {searchPreview.slice(0, 5).map((result, idx) => (
+                                                            <div
+                                                                key={idx}
+                                                                onClick={() => setSelectedEvent(result)}
+                                                                className="px-3 py-2 hover:bg-slate-50 transition cursor-pointer"
+                                                            >
+                                                                <p className="font-semibold text-sm text-slate-900 line-clamp-1">{result.title}</p>
+                                                                <p className="text-xs text-slate-500 line-clamp-1">{result.location || 'Lokasi tidak tersedia'}</p>
+                                                            </div>
+                                                        ))}
+                                                        {searchPreview.length > 5 && (
+                                                            <div className="px-3 py-2 text-center text-xs text-slate-600 border-t border-slate-200">
+                                                                +{searchPreview.length - 5} pelatihan lainnya
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ) : (
+                                                    <div className="px-3 py-3 text-center text-xs text-slate-500">
+                                                        Tidak ada pelatihan ditemukan untuk "{searchQuery}"
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             </motion.div>

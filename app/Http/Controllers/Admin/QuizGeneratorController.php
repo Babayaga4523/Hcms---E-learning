@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Http\Controllers\Controller;
 use App\Models\Module;
 use App\Models\Quiz;
 use App\Models\Question;
@@ -10,13 +11,14 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
-class QuizGeneratorController
+class QuizGeneratorController extends Controller
 {
     /**
      * Generate quiz from module content
      */
     public function generate(Request $request)
     {
+        $this->authorize('create-quizzes');
         try {
             $validated = $request->validate([
                 'module_id' => 'required|exists:modules,id',

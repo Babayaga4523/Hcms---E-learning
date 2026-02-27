@@ -4,7 +4,7 @@ import {
     ArrowLeft, Users, CheckCircle, BarChart3, 
     TrendingUp, Award, Clock, Zap, Download,
     Share2, Calendar, Target, AlertCircle,
-    ChevronDown, MoreHorizontal, FileText, Check
+    ChevronDown, MoreHorizontal, FileText, Check, RefreshCw
 } from 'lucide-react';
 import { 
     AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, 
@@ -21,6 +21,9 @@ export default function TrainingAnalytics({ program, stats, auth, participants =
     });
     const [participantsFilter, setParticipantsFilter] = useState('all'); // all, passed, not-passed
     const [participantsSearch, setParticipantsSearch] = useState('');
+    const [isExporting, setIsExporting] = useState(false);
+    const [exportError, setExportError] = useState(null);
+    const [exportSuccess, setExportSuccess] = useState(false);
     
     // Filter participants based on status and search
     const filteredParticipants = participants.filter(p => {
@@ -119,11 +122,71 @@ export default function TrainingAnalytics({ program, stats, auth, participants =
         );
     };
 
+    // Export data handler
+    const handleExportData = async () => {
+        try {
+            setIsExporting(true);
+            setExportError(null);
+            setExportSuccess(false);
+
+            // Build query parameters
+            const params = new URLSearchParams();
+            params.append('program_id', program.id);
+            params.append('include', 'participants,stats,prepost');
+
+            // Determine export endpoint
+            const exportUrl = `/admin/training-programs/${program.id}/export-analytics?${params.toString()}`;
+
+            // Show success message
+            setExportSuccess(true);
+
+            // Trigger download directly
+            window.location.href = exportUrl;
+
+            // Reset states after delay
+            setTimeout(() => {
+                setIsExporting(false);
+                setTimeout(() => setExportSuccess(false), 3000);
+            }, 1500);
+        } catch (error) {
+            console.error('Export error:', error);
+            setExportError(error.message || 'Gagal mengekspor data. Silakan coba lagi.');
+            setIsExporting(false);
+        }
+    };
+
     return (
         <AdminLayout user={auth?.user}>
             <Head title={`Analytics - ${program.title}`} />
 
             <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 pb-20">
+                
+                {/* Error Notification */}
+                {exportError && (
+                    <div className="fixed top-6 right-6 z-50 bg-red-500 text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-3 animate-pulse">
+                        <AlertCircle size={20} />
+                        <span className="font-bold">{exportError}</span>
+                        <button 
+                            onClick={() => setExportError(null)}
+                            className="ml-auto hover:opacity-80"
+                        >
+                            ✕
+                        </button>
+                    </div>
+                )}
+
+                {/* Success Notification */}
+                {exportSuccess && (
+                    <motion.div 
+                        initial={{ opacity: 0, y: -20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -20 }}
+                        className="fixed top-6 right-6 z-50 bg-emerald-500 text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-3"
+                    >
+                        <Check size={20} />
+                        <span className="font-bold">File analytics berhasil diunduh!</span>
+                    </motion.div>
+                )}
                 
                 {/* --- Hero Header --- */}
                 <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 pt-8 pb-32 px-6 lg:px-12 relative overflow-hidden shadow-2xl">
@@ -141,8 +204,22 @@ export default function TrainingAnalytics({ program, stats, auth, participants =
                                 <button className="p-2 bg-slate-700 text-white rounded-xl hover:bg-slate-600 transition">
                                     <Share2 size={20} />
                                 </button>
-                                <button className="flex items-center gap-2 px-4 py-2 bg-lime-400 text-slate-900 rounded-xl font-bold text-sm hover:bg-lime-500 transition shadow-lg">
-                                    <Download size={18} /> Export Data
+                                <button 
+                                    onClick={handleExportData}
+                                    disabled={isExporting}
+                                    className="flex items-center gap-2 px-4 py-2 bg-lime-400 hover:bg-lime-500 disabled:bg-lime-300 text-slate-900 rounded-xl font-bold text-sm transition shadow-lg disabled:opacity-75 disabled:cursor-not-allowed"
+                                >
+                                    {isExporting ? (
+                                        <>
+                                            <RefreshCw size={18} className="animate-spin" /> 
+                                            Mengekspor...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Download size={18} /> 
+                                            Export Data
+                                        </>
+                                    )}
                                 </button>
                             </div>
                         </div>
@@ -241,7 +318,7 @@ export default function TrainingAnalytics({ program, stats, auth, participants =
                             </div>
                             <div className="h-[300px] w-full">
                                 {chartData.enrollmentTrend.length > 0 && (
-                                    <ResponsiveContainer width="100%" height="100%">
+                                    <ResponsiveContainer width="100%" height="100%" minHeight={300}>
                                         <AreaChart data={chartData.enrollmentTrend} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                                             <defs>
                                                 <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
@@ -272,7 +349,7 @@ export default function TrainingAnalytics({ program, stats, auth, participants =
                             
                             <div className="flex-1 min-h-[250px] relative">
                                 {chartData.completionStatus.length > 0 && (
-                                    <ResponsiveContainer width="100%" height="100%">
+                                    <ResponsiveContainer width="100%" height="100%" minHeight={250}>
                                         <PieChart>
                                             <Pie
                                                 data={chartData.completionStatus}
@@ -313,7 +390,7 @@ export default function TrainingAnalytics({ program, stats, auth, participants =
                             <h3 className="text-lg font-bold text-slate-900 mb-6">Distribusi Nilai</h3>
                             <div className="h-[300px] w-full">
                                 {chartData.scoreDistribution.length > 0 && (
-                                    <ResponsiveContainer width="100%" height="100%">
+                                    <ResponsiveContainer width="100%" height="100%" minHeight={300}>
                                         <BarChart data={chartData.scoreDistribution} layout="vertical" margin={{ left: 0, right: 20 }}>
                                             <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#E2E8F0" />
                                             <XAxis type="number" hide />

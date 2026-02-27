@@ -22,6 +22,7 @@ class AnalyticsController extends Controller
 
     public function overview(Request $request)
     {
+        $this->authorize('view-analytics');
         $range = $this->parseRange($request->query('range', 30));
         $department = $request->query('department', 'all');
 
@@ -113,6 +114,7 @@ class AnalyticsController extends Controller
 
     public function trends(Request $request)
     {
+        $this->authorize('view-analytics');
         $range = $this->parseRange($request->query('range', 30));
         $department = $request->query('department', 'all');
 
@@ -203,11 +205,93 @@ class AnalyticsController extends Controller
 
     public function cohortAnalysis(Request $request)
     {
-        // Placeholder - returns sample cohorts
-        return response()->json([
-            ['cohort' => '2025-01', 'enrolled' => 120, 'completed' => 90],
-            ['cohort' => '2025-02', 'enrolled' => 140, 'completed' => 110],
-        ]);
+        $range = $this->parseRange($request->query('range', 30));
+        $department = $request->query('department', 'all');
+
+        $cacheKey = "analytics_cohort_{$range}_{$department}";
+
+        try {
+            $data = Cache::remember($cacheKey, 60 * 60, function () use ($range, $department) {
+                $startDate = now()->subDays($range)->startOfDay();
+
+                // Group by enrollment month to create cohorts
+                $cohorts = DB::table('user_trainings as ut')
+                    ->join('users as u', 'ut.user_id', '=', 'u.id')
+                    ->select(
+                        DB::raw("DATE_FORMAT(ut.created_at, '%Y-%m') as cohort"),
+                        DB::raw('COUNT(DISTINCT ut.id) as enrolled'),
+                        DB::raw("SUM(CASE WHEN ut.status = 'completed' THEN 1 ELSE 0 END) as completed"),
+                        DB::raw("SUM(CASE WHEN ut.status = 'in_progress' THEN 1 ELSE 0 END) as in_progress"),
+                        DB::raw("SUM(CASE WHEN ut.status = 'abandoned' THEN 1 ELSE 0 END) as abandoned"),
+                        DB::raw('AVG(COALESCE(ut.final_score, 0)) as avg_score'),
+                        DB::raw('COUNT(DISTINCT u.id) as unique_users')
+                    )
+                    ->where('ut.created_at', '>=', $startDate)
+                    ->when($department !== 'all', function ($query) use ($department) {
+                        return $query->where('u.department', $department);
+                    })
+                    ->groupBy(DB::raw("DATE_FORMAT(ut.created_at, '%Y-%m')"))
+                    ->orderBy('cohort', 'desc')
+                    ->get();
+
+                if ($cohorts->isEmpty()) {
+                    return [];
+                }
+
+                // Calculate retention and completion rates per cohort
+                $result = $cohorts->map(function ($cohort) {
+                    $enrolledCount = (int) $cohort->enrolled;
+                    $completedCount = (int) $cohort->completed;
+                    $inProgressCount = (int) $cohort->in_progress;
+                    
+                    $completionRate = $enrolledCount > 0 ? round(($completedCount / $enrolledCount) * 100, 1) : 0;
+                    $retentionRate = $enrolledCount > 0 ? round((($completedCount + $inProgressCount) / $enrolledCount) * 100, 1) : 0;
+                    $avgScore = round($cohort->avg_score, 1);
+
+                    return [
+                        'cohort' => $cohort->cohort,
+                        'enrolled' => $enrolledCount,
+                        'completed' => $completedCount,
+                        'in_progress' => $inProgressCount,
+                        'abandoned' => (int) $cohort->abandoned,
+                        'unique_users' => (int) $cohort->unique_users,
+                        'completion_rate' => $completionRate,
+                        'retention_rate' => $retentionRate,
+                        'avg_score' => $avgScore,
+                        'status_trend' => [
+                            'completed' => $completedCount,
+                            'in_progress' => $inProgressCount,
+                            'abandoned' => (int) $cohort->abandoned
+                        ]
+                    ];
+                })->toArray();
+
+                return $result;
+            });
+
+            if (empty($data)) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Tidak ada data kohort',
+                    'cohorts' => []
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Analisis kohort berhasil diambil',
+                'cohorts' => $data,
+                'cohort_count' => count($data)
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('AnalyticsController::cohortAnalysis error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengambil analisis kohort',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function predictiveAtRisk(Request $request)
@@ -412,6 +496,176 @@ class AnalyticsController extends Controller
                 'top' => $top,
                 'at_risk' => $atRisk,
             ]);
+    }
+
+    /**
+     * Get learning effectiveness metrics
+     */
+    public function learningEffectiveness(Request $request)
+    {
+        $range = $this->parseRange($request->query('range', 30));
+        $department = $request->query('department', 'all');
+        $moduleId = $request->query('module_id', null);
+
+        $cacheKey = "analytics_effectiveness_{$range}_{$department}_{$moduleId}";
+
+        try {
+            $data = Cache::remember($cacheKey, 60 * 60, function () use ($range, $department, $moduleId) {
+                $startDate = now()->subDays($range)->startOfDay();
+                $endDate = now()->endOfDay();
+
+                // Build base query
+                $baseQuery = DB::table('user_trainings as ut')
+                    ->join('users as u', 'ut.user_id', '=', 'u.id')
+                    ->join('modules as m', 'ut.module_id', '=', 'm.id')
+                    ->where('ut.updated_at', '>=', $startDate)
+                    ->where('ut.status', 'completed');
+
+                if ($department !== 'all') {
+                    $baseQuery->where('u.department', $department);
+                }
+
+                if ($moduleId) {
+                    $baseQuery->where('m.id', $moduleId);
+                }
+
+                // Calculate effectiveness metrics
+                $effectiveness = (clone $baseQuery)
+                    ->select(
+                        DB::raw('COUNT(DISTINCT ut.id) as total_completions'),
+                        DB::raw('COUNT(DISTINCT ut.user_id) as unique_learners'),
+                        DB::raw('AVG(COALESCE(ut.final_score, 0)) as avg_final_score'),
+                        DB::raw('MIN(COALESCE(ut.final_score, 0)) as min_score'),
+                        DB::raw('MAX(COALESCE(ut.final_score, 0)) as max_score'),
+                        DB::raw('STDDEV(COALESCE(ut.final_score, 0)) as score_stddev'),
+                        DB::raw("SUM(CASE WHEN ut.final_score >= 75 THEN 1 ELSE 0 END) as passed_count"),
+                        DB::raw("SUM(CASE WHEN ut.final_score < 75 THEN 1 ELSE 0 END) as failed_count")
+                    )
+                    ->first();
+
+                $totalCompletions = (int) ($effectiveness->total_completions ?? 0);
+                if ($totalCompletions === 0) {
+                    return [];
+                }
+
+                $passedCount = (int) ($effectiveness->passed_count ?? 0);
+                $failedCount = (int) ($effectiveness->failed_count ?? 0);
+                $passRate = $totalCompletions > 0 ? round(($passedCount / $totalCompletions) * 100, 1) : 0;
+                
+                // Performance categories
+                $avgScore = round($effectiveness->avg_final_score ?? 0, 1);
+                if ($avgScore >= 85) {
+                    $performanceLevel = 'Excellent';
+                } elseif ($avgScore >= 75) {
+                    $performanceLevel = 'Good';
+                } elseif ($avgScore >= 65) {
+                    $performanceLevel = 'Satisfactory';
+                } else {
+                    $performanceLevel = 'Needs Improvement';
+                }
+
+                // Module-level metrics
+                $moduleMetrics = (clone $baseQuery)
+                    ->select(
+                        'm.id',
+                        'm.title',
+                        DB::raw('COUNT(DISTINCT ut.id) as completions'),
+                        DB::raw('AVG(COALESCE(ut.final_score, 0)) as avg_score'),
+                        DB::raw("SUM(CASE WHEN ut.final_score >= 75 THEN 1 ELSE 0 END) as pass_count")
+                    )
+                    ->groupBy('m.id', 'm.title')
+                    ->orderByDesc('avg_score')
+                    ->limit(10)
+                    ->get();
+
+                $topModules = $moduleMetrics->map(function ($mod) {
+                    $completions = (int) $mod->completions;
+                    $passCount = (int) $mod->pass_count;
+                    $passRate = $completions > 0 ? round(($passCount / $completions) * 100, 1) : 0;
+
+                    return [
+                        'module_id' => (int) $mod->id,
+                        'module_title' => $mod->title,
+                        'completions' => $completions,
+                        'avg_score' => round($mod->avg_score, 1),
+                        'pass_rate' => $passRate,
+                        'effectiveness_score' => round((round($mod->avg_score, 1) * 0.6) + ($passRate * 0.4), 1)
+                    ];
+                })->toArray();
+
+                // Department-level comparison if applicable
+                $deptMetrics = [];
+                if (!$moduleId) {
+                    $deptData = DB::table('user_trainings as ut')
+                        ->join('users as u', 'ut.user_id', '=', 'u.id')
+                        ->where('ut.updated_at', '>=', $startDate)
+                        ->where('ut.status', 'completed')
+                        ->select(
+                            'u.department',
+                            DB::raw('COUNT(DISTINCT ut.id) as completions'),
+                            DB::raw('AVG(COALESCE(ut.final_score, 0)) as avg_score'),
+                            DB::raw("SUM(CASE WHEN ut.final_score >= 75 THEN 1 ELSE 0 END) as pass_count")
+                        )
+                        ->groupBy('u.department')
+                        ->orderByDesc('avg_score')
+                        ->get();
+
+                    $deptMetrics = $deptData->map(function ($dept) {
+                        $completions = (int) $dept->completions;
+                        $passCount = (int) $dept->pass_count;
+                        $passRate = $completions > 0 ? round(($passCount / $completions) * 100, 1) : 0;
+
+                        return [
+                            'department' => $dept->department,
+                            'completions' => $completions,
+                            'avg_score' => round($dept->avg_score, 1),
+                            'pass_rate' => $passRate
+                        ];
+                    })->toArray();
+                }
+
+                return [
+                    'summary' => [
+                        'total_completions' => $totalCompletions,
+                        'unique_learners' => (int) ($effectiveness->unique_learners ?? 0),
+                        'avg_final_score' => $avgScore,
+                        'score_range' => [
+                            'min' => round($effectiveness->min_score ?? 0, 1),
+                            'max' => round($effectiveness->max_score ?? 0, 1),
+                            'stddev' => round($effectiveness->score_stddev ?? 0, 1)
+                        ],
+                        'pass_rate' => $passRate,
+                        'passed_count' => $passedCount,
+                        'failed_count' => $failedCount,
+                        'performance_level' => $performanceLevel
+                    ],
+                    'top_modules' => $topModules,
+                    'department_comparison' => $deptMetrics
+                ];
+            });
+
+            if (empty($data)) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Tidak ada data efektivitas pembelajaran',
+                    'data' => []
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Metrik efektivitas pembelajaran berhasil diambil',
+                'data' => $data
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('AnalyticsController::learningEffectiveness error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengambil metrik efektivitas pembelajaran',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     /**

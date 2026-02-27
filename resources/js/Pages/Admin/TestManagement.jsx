@@ -146,15 +146,15 @@ export default function TestManagement({ program, questions, testType, auth }) {
                                             <div className="text-slate-900 font-bold text-lg mb-3" dangerouslySetInnerHTML={{ __html: question.question_text }}></div>
                                             
                                             {/* Display question image if exists */}
-                                            {question.image_url && (
+                                            {question.image_url_full && (
                                                 <div className="mb-4">
                                                     <img 
-                                                        src={question.image_url}
+                                                        src={question.image_url_full}
                                                         alt="Question visual"
                                                         className="max-w-full h-auto rounded-lg border border-slate-200 shadow-sm"
                                                         style={{ maxHeight: '400px' }}
                                                         onError={(e) => {
-                                                            console.error('Image load error:', question.image_url);
+                                                            console.error('Image load error:', question.image_url_full);
                                                             e.target.style.display = 'none';
                                                         }}
                                                     />

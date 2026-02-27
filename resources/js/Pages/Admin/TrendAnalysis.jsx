@@ -54,23 +54,7 @@ const WondrStyles = () => (
     `}</style>
 );
 
-// --- Mock Data Generators ---
-const generateData = (days) => {
-    const data = [];
-    const now = new Date();
-    for (let i = days; i >= 0; i--) {
-        const date = new Date(now);
-        date.setDate(date.getDate() - i);
-        data.push({
-            date: date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }),
-            enrollments: Math.floor(Math.random() * 50) + 20 + (i * 0.5),
-            completions: Math.floor(Math.random() * 40) + 10 + (i * 0.3),
-            active_learners: Math.floor(Math.random() * 100) + 150,
-            engagement: Math.floor(Math.random() * 30) + 60,
-        });
-    }
-    return data;
-};
+// --- Data is fetched from backend only (no mock generators) ---
 
 // --- Components ---
 
@@ -121,15 +105,32 @@ export default function TrendAnalysis() {
     const [chartType, setChartType] = useState('area'); // area | bar
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState([]);
+    const [error, setError] = useState(null);
 
-    // Simulate Data Fetching
+    // Fetch REAL Data from Backend API
     useEffect(() => {
         setLoading(true);
-        // Simulate API delay
-        setTimeout(() => {
-            setData(generateData(range));
-            setLoading(false);
-        }, 600);
+        setError(null);
+        
+        fetch(`/api/admin/trend-analysis?days=${range}`)
+            .then(res => res.ok ? res.json() : Promise.reject('API failed'))
+            .then(result => {
+                // Check if data is empty
+                if (!result || !Array.isArray(result.data) || result.data.length === 0) {
+                    console.warn('[TrendAnalysis] Backend returned empty data');
+                    setData([]); // Show empty chart
+                    setError('Tidak ada data trend dari database. Pastikan ada activity data.');
+                } else {
+                    setData(result.data);
+                    setError(null);
+                }
+            })
+            .catch(err => {
+                console.error('[TrendAnalysis API Error]', err);
+                setData([]); // No fallback mock data
+                setError('Gagal memuat data trend. Periksa API endpoint.');
+            })
+            .finally(() => setLoading(false));
     }, [range]);
 
     // Derived Stats

@@ -103,7 +103,13 @@ class Module extends Model
     {
         return $this->hasMany(TrainingMaterial::class);
     }
-
+    /**
+     * Relasi ke Learning Sessions (waktu belajar aktual)
+     */
+    public function userSessions(): HasMany
+    {
+        return $this->hasMany(LearningSession::class);
+    }
     /**
      * Relasi ke Quizzes
      */

@@ -10,33 +10,21 @@ import {
     LayoutGrid, BarChart2, FileText, Zap, Target, Users,
     TrendingUp, Shield, MoreHorizontal,
     BookOpen, Clock, CheckCircle, Award,
-    Search, RefreshCw, Bell, UserPlus,
+    Search, Bell, UserPlus,
     FileCheck, LogOut, Menu, X as XIcon, Settings, ChevronRight,
     Download, ArrowUpRight, ArrowDownRight, ArrowRight, Activity,
-    Sun, Cloud, CloudRain, CloudSnow
+    Sun, Cloud, CloudRain, CloudSnow, GitBranch, AlertTriangle
 } from 'lucide-react';
 import AdminSidebar from '@/Components/Admin/AdminSidebar';
+import ComplianceDashboard from '@/Pages/Admin/ComplianceDashboard';
+import DepartmentHierarchyTree from '@/Components/Admin/DepartmentHierarchyTree';
+import RoleAssignmentForm from '@/Components/Admin/RoleAssignmentForm';
 
-// Inertia Link (use real SPA navigation)
-import { Link } from '@inertiajs/react';
+// Inertia Link & usePage (untuk mendapatkan user dari Inertia props)
+import { Link, usePage } from '@inertiajs/react';
 
-// --- Wondr Style System (Memoized - no Google Fonts import) ---
-const WondrStyles = React.memo(() => (
-    <style>{`
-        .glass-panel { background: rgba(255,255,255,0.95); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.6); box-shadow: 0 10px 40px -10px rgba(0, 40, 36, 0.05); }
-        .activity-card { transition: all 0.2s ease; border-left: 3px solid transparent; }
-        .activity-card:hover { transform: translateX(4px); background-color: #F0FDF4; border-left-color: #005E54; }
-        .timeline-line { position: absolute; left: 24px; top: 40px; bottom: -20px; width: 2px; background-color: #E2E8F0; z-index: 0; }
-        .last-item .timeline-line { display: none; }
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
-        .animate-enter { animation: enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; opacity: 0; }
-        @keyframes enter { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-    `}</style>
-));
-
-// --- Weather helper (Open-Meteo mapping)
+// --- HELPER: Weather Icon Mapping ---
+// NOTE: Weather feature currently not in use. Remove if not needed or connect to real weather API
 const mapWeatherCode = (code) => {
     if (code === 0) return { desc: 'Cerah', icon: Sun };
     if (code >= 1 && code <= 3) return { desc: 'Cerah berawan', icon: Cloud };
@@ -44,291 +32,174 @@ const mapWeatherCode = (code) => {
     if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return { desc: 'Hujan', icon: CloudRain };
     if (code >= 71 && code <= 77) return { desc: 'Bersalju', icon: CloudSnow };
     if (code >= 95) return { desc: 'Badai petir', icon: Zap };
-    return { desc: 'Tidak diketahui', icon: Cloud };
+    return { desc: 'Cerah', icon: Sun }; // Default fallback
+};
+
+// --- HELPER: Sanitize Numeric Values ---
+const sanitizeNumber = (val, defaultVal = 0) => {
+    const num = Number(val);
+    if (!isFinite(num) || isNaN(num)) {
+        console.warn('Invalid numeric value:', val);
+        return defaultVal;
+    }
+    return num;
 };
 
 // --- KOMPONEN UI DASAR ---
 
 const GlassCard = React.memo(({ children, className = "", delay = 0 }) => (
-    <motion.div
+    <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, delay: delay * 0.05 }}
-        className={`glass-panel rounded-[20px] overflow-hidden ${className}`}
+        transition={{ duration: 0.4, delay: delay * 0.1 }}
+        className={`bg-white border border-slate-200 shadow-sm hover:shadow-md transition-shadow rounded-2xl overflow-hidden ${className}`}
     >
         {children}
     </motion.div>
 ));
 
-const CustomTooltip = React.memo(({ active, payload, label }) => {
-    if (active && payload && payload.length) {
+const ChartHeader = ({ title, subtitle, action, actionLink }) => {
+    if (actionLink) {
         return (
-            <div className="bg-white/95 backdrop-blur-md p-4 border border-slate-200 shadow-xl rounded-xl z-50">
-                <p className="text-xs font-bold text-slate-500 mb-2">{label}</p>
-                {payload.map((entry, index) => (
-                    <div key={index} className="flex items-center gap-2 text-sm font-bold text-slate-800 my-1">
-                        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
-                        <span className="capitalize">
-                            {entry.name}: {typeof entry.value === 'object' ? JSON.stringify(entry.value) : entry.value}
-                        </span>
-                    </div>
-                ))}
+            <div className="flex justify-between items-center mb-6 px-2">
+                <div>
+                    <h3 className="text-lg font-bold text-slate-900">{title}</h3>
+                    <p className="text-xs text-slate-500 font-medium">{subtitle}</p>
+                </div>
+                {action && (
+                    <Link href={actionLink} className="p-2 hover:bg-slate-50 rounded-xl text-slate-400 hover:text-slate-600 transition">
+                        <MoreHorizontal size={20} />
+                    </Link>
+                )}
             </div>
         );
     }
-    return null;
-});
-
-const ChartHeader = React.memo(({ title, subtitle, action, onViewAll }) => {
+    
     return (
         <div className="flex justify-between items-center mb-6 px-2">
             <div>
                 <h3 className="text-lg font-bold text-slate-900">{title}</h3>
                 <p className="text-xs text-slate-500 font-medium">{subtitle}</p>
             </div>
-            <div className="flex items-center gap-2">
-                {onViewAll && (
-                    <button onClick={onViewAll} className="text-xs font-bold text-[#005E54] hover:text-[#002824] transition flex items-center gap-1">
-                        Lihat Detail <ArrowRight size={14} />
-                    </button>
-                )}
-                {action && (
-                    <button className="p-2 hover:bg-slate-50 rounded-xl text-slate-400 hover:text-slate-600 transition">
-                        <MoreHorizontal size={20} />
-                    </button>
-                )}
-            </div>
+            {action && (
+                <button className="p-2 hover:bg-slate-50 rounded-xl text-slate-400 hover:text-slate-600 transition">
+                    <MoreHorizontal size={20} />
+                </button>
+            )}
         </div>
     );
-});
+};
+
+const CustomTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+        return (
+            <div className="bg-white/95 backdrop-blur-md p-4 border border-slate-200 shadow-xl rounded-xl z-50">
+                <p className="text-xs font-bold text-slate-500 mb-2">{label}</p>
+                {payload.map((entry, index) => {
+                    // Format numeric values with proper locale and decimal precision
+                    let displayValue = entry.value;
+                    if (typeof entry.value === 'number') {
+                        displayValue = entry.value.toLocaleString('id-ID', { maximumFractionDigits: 2 });
+                    } else if (typeof entry.value === 'object') {
+                        displayValue = JSON.stringify(entry.value);
+                    }
+                    
+                    return (
+                        <div key={index} className="flex items-center gap-2 text-sm font-bold text-slate-800 my-1">
+                            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
+                            <span className="capitalize">
+                                {entry.name}: {displayValue}
+                            </span>
+                        </div>
+                    );
+                })}
+            </div>
+        );
+    }
+    return null;
+};
+
+// --- KOMPONEN SIDEBAR (INTERNAL) ---
+// REMOVED - Now using imported AdminSidebar component
 
 // --- ISI KONTEN TAB ---
 
-// === OPTIMIZED DASHBOARD HEADER (Memoized) ===
-const DashboardHeader = React.memo(({ user, mapWeatherCode }) => {
-    const [now, setNow] = useState(new Date());
-    const [weather, setWeather] = useState({ temp: null, desc: null, icon: null });
-
-    // Update waktu setiap detik (hanya di komponen ini)
-    useEffect(() => {
-        const t = setInterval(() => setNow(new Date()), 1000);
-        return () => clearInterval(t);
-    }, []);
-
-    // Fetch cuaca
-    useEffect(() => {
-        let mounted = true;
-        const fetchWeather = async (lat, lon) => {
-            try {
-                const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&temperature_unit=celsius`);
-                const data = await res.json();
-                if (!mounted || !data?.current_weather) return;
-                const cw = data.current_weather;
-                const { desc, icon } = mapWeatherCode(cw.weathercode || cw.weather_code || 0);
-                setWeather({ temp: cw.temperature ?? null, desc, icon });
-            } catch (e) {
-                // ignore network errors
-            }
-        };
-
-        if (navigator && navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                (pos) => fetchWeather(pos.coords.latitude, pos.coords.longitude),
-                (err) => {
-                    console.debug('Geolocation failed, using fallback location');
-                    fetchWeather(-6.2, 106.816666);
-                },
-                { maximumAge: 600000, timeout: 5000 }
-            );
-        } else {
-            fetchWeather(-6.2, 106.816666);
-        }
-
-        return () => { mounted = false; };
-    }, [mapWeatherCode]);
-
-    // Greeting logic
-    const hour = now.getHours();
-    let greeting = 'Selamat Pagi';
-    let bgColor = 'from-blue-50 to-blue-100';
-    let borderColor = 'border-blue-200';
-    let textColor = 'text-blue-900';
-    
-    if (hour >= 12 && hour < 15) {
-        greeting = 'Selamat Siang';
-        bgColor = 'from-yellow-50 to-yellow-100';
-        borderColor = 'border-yellow-200';
-        textColor = 'text-yellow-900';
-    } else if (hour >= 15 && hour < 18) {
-        greeting = 'Selamat Sore';
-        bgColor = 'from-orange-50 to-orange-100';
-        borderColor = 'border-orange-200';
-        textColor = 'text-orange-900';
-    } else if (hour >= 18 || hour < 6) {
-        greeting = 'Selamat Malam';
-        bgColor = 'from-indigo-50 to-indigo-100';
-        borderColor = 'border-indigo-200';
-        textColor = 'text-indigo-900';
-    }
-
-    return (
-        <motion.div 
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-            className="glass-panel rounded-2xl p-6 shadow-sm mb-8"
-        >
-            <div className="flex items-start justify-between">
-                <div>
-                    <h2 className="text-3xl font-black text-slate-900 mb-2">
-                        {greeting}, <span className="text-[#005E54]">{user?.name || 'Admin'}</span> 👋
-                    </h2>
-                    <p className="text-slate-600 font-medium">
-                        Selamat datang di Dashboard Admin. Berikut adalah ringkasan data dan metrics terbaru dari sistem pembelajaran kami.
-                    </p>
-
-                    <div className="mt-3 flex items-center gap-6 text-sm text-slate-700">
-                        <div className="flex items-center gap-2">
-                            <Clock size={14} />
-                            <span className="font-medium">{now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
-                        <div className="text-slate-500">
-                            {now.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' })}
-                        </div>
-                    </div>
-                </div>
-
-                <div className="flex items-center gap-4 text-right">
-                    <div className="text-4xl opacity-90 flex-shrink-0">
-                        {weather.icon ? React.createElement(weather.icon, { size: 28 }) : (hour >= 6 && hour < 12 ? '🌅' : hour >= 12 && hour < 15 ? '☀️' : hour >= 15 && hour < 18 ? '🌅' : '🌙')}
-                    </div>
-                    <div className="text-sm text-slate-700">
-                        <div className="font-bold">{weather.temp !== null ? `${Math.round(weather.temp)}°C` : '--'}</div>
-                        <div className="text-xs text-slate-500">{weather.desc || 'Cuaca tidak diketahui'}</div>
-                    </div>
-                </div>
-            </div>
-        </motion.div>
-    );
-});
-
-// 1. OVERVIEW TAB
 const OverviewTab = React.memo(({ stats, trend, enrollmentTrend, recentActivities }) => {
-    // Data Grafik: Performance Overview - Use real trend data
-    const mixedData = trend.map((t, index) => ({
-        name: t.month,
-        enrollments: enrollmentTrend[index]?.enrollments || 0,
-        rate: t.completed
-    })) || [];
+    // Build mixed data from real backend data with proper validation
+    const mixedData = useMemo(() => {
+        if (!trend || trend.length === 0 || !enrollmentTrend || enrollmentTrend.length === 0) {
+            // Data is empty - no fallback mock data
+            console.warn('[OverviewTab] No data available - blank chart will be shown');
+            return [];
+        }
+        
+        return trend.map((t, index) => {
+            const enrollment = enrollmentTrend[index];
+            return {
+                name: t.month || `Month ${index + 1}`,
+                enrollments: sanitizeNumber(enrollment?.enrollments || enrollment?.total || 0, 0),
+                rate: sanitizeNumber(t.completed || t.completion_rate || t.rate || 0, 0)
+            };
+        });
+    }, [trend, enrollmentTrend]);
 
-    // Data Grafik: Weekly Engagement - Use real weekly engagement data
-    const areaData = stats?.weekly_engagement || [
-        { day: 'Sen', active: 31 },
-        { day: 'Sel', active: 40 },
-        { day: 'Rab', active: 28 },
-        { day: 'Kam', active: 51 },
-        { day: 'Jum', active: 42 },
-        { day: 'Sab', active: 109 },
-        { day: 'Min', active: 100 },
-    ];
-
-    // Use real recent activities data
-    const activities = recentActivities || [];
+    const areaData = useMemo(() => stats?.weekly_engagement || [
+        { day: 'Sen', active: 31 }, { day: 'Sel', active: 40 }, { day: 'Rab', active: 28 },
+        { day: 'Kam', active: 51 }, { day: 'Jum', active: 42 }, { day: 'Sab', active: 109 }, { day: 'Min', active: 100 },
+    ], [stats]);
 
     return (
-        <div className="space-y-6 max-w-7xl mx-auto">
+        <div className="space-y-4 sm:space-y-5 md:space-y-6 max-w-7xl mx-auto">
             {/* KPI Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 md:gap-4">
                 {[
-                    { title: 'Total Siswa', val: stats?.total_users || 0, icon: Users, color: 'text-[#005E54]', bg: 'bg-[#F0FDF4]' },
+                    { title: 'Total Siswa', val: stats?.total_users || 0, icon: Users, color: 'text-indigo-600', bg: 'bg-indigo-50' },
                     { title: 'Tingkat Kelulusan', val: `${stats?.completion_rate || 0}%`, icon: Target, color: 'text-emerald-600', bg: 'bg-emerald-50' },
                     { title: 'Rata-rata Skor', val: stats?.average_score || 0, icon: Zap, color: 'text-amber-600', bg: 'bg-amber-50' },
                     { title: 'Kepatuhan', val: `${stats?.overall_compliance_rate || 0}%`, icon: Shield, color: 'text-pink-600', bg: 'bg-pink-50' }
                 ].map((item, i) => (
-                    <GlassCard key={i} className="p-5 flex items-center justify-between hover:shadow-md transition">
-                        <div>
-                            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">{item.title}</p>
-                            <h3 className="text-2xl font-black text-slate-800">{item.val}</h3>
+                    <GlassCard key={i} className="p-3 sm:p-4 md:p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between hover:shadow-md transition" delay={i}>
+                        <div className="min-w-0">
+                            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1 truncate">{item.title}</p>
+                            <h3 className="text-xl sm:text-2xl font-black text-slate-800 leading-tight">{item.val}</h3>
                         </div>
-                        <div className={`p-3 rounded-2xl ${item.bg} ${item.color}`}>
-                            <item.icon size={24} />
+                        <div className={`p-2 sm:p-3 rounded-2xl ${item.bg} ${item.color} mt-2 sm:mt-0 flex-shrink-0`}>
+                            <item.icon size={20} className="sm:w-6 sm:h-6" />
                         </div>
                     </GlassCard>
                 ))}
             </div>
 
-            {/* Performance Overview (Dipertahankan) */}
-            <GlassCard className="p-6" delay={0.2}>
-                <ChartHeader title="Performance Overview" subtitle="Pendaftaran vs Tingkat Penyelesaian (Tahunan)" action={true} />
-                <div className="h-[300px] w-full">
-                    <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={300}>
-                        <ComposedChart data={mixedData} margin={{ top: 10, right: 30, left: 0, bottom: 10 }}>
+            {/* Performance Overview */}
+            <GlassCard className="p-4 sm:p-5 md:p-6" delay={0.5}>
+                <ChartHeader title="Performance Overview" subtitle="Pendaftaran vs Tingkat Penyelesaian" action={true} />
+                <div className="w-full" style={{ height: '320px' }}>
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                        <ComposedChart data={mixedData} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
                             <defs>
                                 <linearGradient id="enrollmentsGradient" x1="0" y1="0" x2="0" y2="1">
                                     <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.8} />
                                     <stop offset="95%" stopColor="#3B82F6" stopOpacity={0.1} />
                                 </linearGradient>
-                                <linearGradient id="rateGradient" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.3} />
-                                    <stop offset="95%" stopColor="#F59E0B" stopOpacity={0} />
-                                </linearGradient>
-                                <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
-                                    <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.3" />
-                                </filter>
                             </defs>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
-                            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748B', fontSize: 12 }} dy={10} />
-                            <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{ fill: '#64748B', fontSize: 12 }} label={{ value: 'Pendaftaran', angle: -90, position: 'insideLeft', offset: 10 }} />
-                            <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{ fill: '#64748B', fontSize: 12 }} label={{ value: 'Tingkat Penyelesaian (%)', angle: 90, position: 'insideRight', offset: 10 }} />
-                            <Tooltip 
-                                content={<CustomTooltip />}
-                                cursor={{ strokeDasharray: '3 3', stroke: '#CBD5E0' }}
-                            />
-                            <Legend wrapperStyle={{ paddingTop: '10px' }} />
-                            <Bar 
-                                yAxisId="left" 
-                                dataKey="enrollments" 
-                                barSize={28}
-                                fill="url(#enrollmentsGradient)" 
-                                radius={[8, 8, 0, 0]} 
-                                name="Pendaftaran"
-                                filter="url(#shadow)"
-                            />
-                            <Line 
-                                yAxisId="right" 
-                                type="natural" 
-                                dataKey="rate" 
-                                stroke="#F59E0B" 
-                                strokeWidth={3}
-                                name="Tingkat Penyelesaian" 
-                                dot={(props) => {
-                                    const { cx, cy, payload } = props;
-                                    return (
-                                        <circle 
-                                            cx={cx} 
-                                            cy={cy} 
-                                            r={5} 
-                                            fill="#F59E0B" 
-                                            stroke="#fff" 
-                                            strokeWidth={2}
-                                            style={{ filter: 'drop-shadow(0 2px 3px rgba(0,0,0,0.2))' }}
-                                        />
-                                    );
-                                }}
-                                activeDot={{ r: 7, fill: '#F59E0B', stroke: '#fff', strokeWidth: 2 }}
-                                isAnimationActive={true}
-                            />
+                            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748B', fontSize: 10 }} dy={10} />
+                            <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{ fill: '#64748B', fontSize: 10 }} />
+                            <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{ fill: '#64748B', fontSize: 10 }} />
+                            <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: '3 3', stroke: '#CBD5E0' }} />
+                            <Legend wrapperStyle={{ paddingTop: '10px', fontSize: '12px' }} />
+                            <Bar yAxisId="left" dataKey="enrollments" barSize={20} fill="url(#enrollmentsGradient)" radius={[8, 8, 0, 0]} name="Pendaftaran" />
+                            <Line yAxisId="right" type="natural" dataKey="rate" stroke="#F59E0B" strokeWidth={2} name="Penyelesaian" dot={{ stroke: '#F59E0B', strokeWidth: 2, r: 3, fill: '#fff' }} />
                         </ComposedChart>
                     </ResponsiveContainer>
                 </div>
             </GlassCard>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Weekly Engagement (Dipertahankan) */}
-                <GlassCard className="p-6" delay={0.3}>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
+                <GlassCard className="p-4 sm:p-5 md:p-6" delay={0.6}>
                     <ChartHeader title="Weekly Engagement" subtitle="Pengguna aktif 7 hari terakhir" />
-                    <div className="h-[250px] w-full">
-                        <ResponsiveContainer width="100%" height="100%" minWidth={250} minHeight={250}>
+                    <div className="w-full" style={{ height: '280px' }}>
+                        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                             <AreaChart data={areaData}>
                                 <defs>
                                     <linearGradient id="colorActive" x1="0" y1="0" x2="0" y2="1">
@@ -337,38 +208,34 @@ const OverviewTab = React.memo(({ stats, trend, enrollmentTrend, recentActivitie
                                     </linearGradient>
                                 </defs>
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
-                                <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: '#64748B', fontSize: 12 }} dy={10} />
-                                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748B', fontSize: 12 }} />
+                                <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: '#64748B', fontSize: 10 }} dy={10} />
+                                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748B', fontSize: 10 }} />
                                 <Tooltip content={<CustomTooltip />} />
-                                <Area type="monotone" dataKey="active" stroke="#3B82F6" strokeWidth={3} fillOpacity={1} fill="url(#colorActive)" />
+                                <Area type="monotone" dataKey="active" stroke="#3B82F6" strokeWidth={2} fillOpacity={1} fill="url(#colorActive)" />
                             </AreaChart>
                         </ResponsiveContainer>
                     </div>
                 </GlassCard>
 
-                {/* Aktivitas Terbaru (Konten Non-Grafik) */}
-                <GlassCard className="p-6" delay={0.4}>
-                    <ChartHeader title="Aktivitas Terbaru" subtitle="Log real-time pengguna" />
-                    <div className="space-y-4">
-                        {activities.map((act, idx) => (
-                            <div key={idx} className="flex items-start gap-3 p-3 rounded-xl hover:bg-slate-50 transition">
-                                <div className={`p-2 rounded-full shrink-0 ${act.bg} ${act.color}`}>
-                                    <act.icon size={16} />
+                <GlassCard className="p-4 sm:p-5 md:p-6" delay={0.7}>
+                    <ChartHeader title="Aktivitas Terbaru" subtitle="Log real-time pengguna" action={true} actionLink="/admin/recent-activity" />
+                    <div className="space-y-2 sm:space-y-3 max-h-80 overflow-y-auto pr-2">
+                        {recentActivities.map((act, idx) => (
+                            <div key={idx} className="flex items-start gap-2 sm:gap-3 p-2 sm:p-3 rounded-lg sm:rounded-xl hover:bg-slate-50 transition">
+                                <div className={`p-1.5 sm:p-2 rounded-full shrink-0 ${act.bg} ${act.color}`}>
+                                    <act.icon size={14} className="sm:w-4 sm:h-4" />
                                 </div>
-                                <div className="flex-1">
-                                    <p className="text-sm text-slate-800">
-                                        <span className="font-bold">{act.user}</span> {act.action} <span className="font-semibold text-slate-600">{act.module}</span>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-xs sm:text-sm text-slate-800 leading-tight">
+                                        <span className="font-bold truncate">{act.user}</span> <span className="hidden sm:inline">{act.action}</span> <span className="font-semibold text-slate-600 truncate">{act.module}</span>
                                     </p>
-                                    <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
-                                        <Clock size={12} /> {act.time}
+                                    <p className="text-xs text-slate-400 mt-1 flex items-center gap-1 truncate">
+                                        <Clock size={10} className="flex-shrink-0" /> {act.time}
                                     </p>
                                 </div>
                             </div>
                         ))}
                     </div>
-                    <Link href="/admin/recent-activity" className="w-full mt-4 py-2 text-sm font-semibold text-[#005E54] hover:bg-[#F0FDF4] rounded-lg transition"> 
-                        Lihat Semua Aktivitas
-                    </Link>
                 </GlassCard>
             </div>
         </div>
@@ -380,17 +247,11 @@ const AnalyticsTab = React.memo(({ modules, stats, topLearners }) => {
     // Data Grafik: Radar - Use real skills gap data from backend
     const radarData = stats?.skills_gap || [];
     
-    // Enhanced skill gap processing from backend data
+    // Skill gap processing from REAL backend data only (no mock fallback)
     const processSkillGapData = (data) => {
         if (!data || data.length === 0) {
-            return [
-                { subject: 'Teknis', A: 80, B: 90, fullMark: 150 },
-                { subject: 'Komunikasi', A: 50, B: 80, fullMark: 150 },
-                { subject: 'Leadership', A: 30, B: 70, fullMark: 150 },
-                { subject: 'Problem Solving', A: 40, B: 80, fullMark: 150 },
-                { subject: 'Kepatuhan', A: 100, B: 100, fullMark: 150 },
-                { subject: 'Manajemen', A: 20, B: 60, fullMark: 150 },
-            ];
+            console.warn('[SkillGapAnalysis] No skill gap data from backend - chart will be empty');
+            return [];
         }
         
         // Process real data with flexible field mapping
@@ -405,17 +266,11 @@ const AnalyticsTab = React.memo(({ modules, stats, topLearners }) => {
     const skillGapProcessed = processSkillGapData(radarData);
     const departmentComplianceData = stats?.department_compliance || [];
     
-    // Enhanced data processing for department compliance
+    // Department compliance data processing from REAL backend data only
     const processDepartmentCompliance = (data) => {
         if (!data || data.length === 0) {
-            return [
-                { name: 'HR', compliance: 85, total_users: 24, compliant_users: 20, color: '#3B82F6' },
-                { name: 'IT', compliance: 92, total_users: 18, compliant_users: 16, color: '#10B981' },
-                { name: 'Sales', compliance: 78, total_users: 32, compliant_users: 25, color: '#F59E0B' },
-                { name: 'Marketing', compliance: 88, total_users: 15, compliant_users: 13, color: '#8B5CF6' },
-                { name: 'Operations', compliance: 81, total_users: 22, compliant_users: 18, color: '#EC4899' },
-                { name: 'Finance', compliance: 95, total_users: 11, compliant_users: 10, color: '#14B8A6' },
-            ];
+            console.warn('[DepartmentCompliance] No department compliance data from backend - chart will be empty');
+            return [];
         }
         
         // Process incoming data with proper calculations
@@ -433,8 +288,8 @@ const AnalyticsTab = React.memo(({ modules, stats, topLearners }) => {
     // Summary metrics for the skill gap card
     const _gaps = skillGapProcessed.map(d => ({ ...d, gap: Math.abs((d.B || 0) - (d.A || 0)) }));
     const largestGap = _gaps.length ? _gaps.reduce((a, b) => (a.gap > b.gap ? a : b)) : { subject: null, gap: 0 };
-    const avgCurrent = skillGapProcessed.length ? Math.round((skillGapProcessed.reduce((s, d) => s + (d.A || 0), 0) / skillGapProcessed.length) * 10) / 10 : 0;
-    const avgTarget = skillGapProcessed.length ? Math.round((skillGapProcessed.reduce((s, d) => s + (d.B || 0), 0) / skillGapProcessed.length) * 10) / 10 : 0;
+    const avgCurrent = skillGapProcessed.length ? sanitizeNumber(Math.round((skillGapProcessed.reduce((s, d) => s + (d.A || 0), 0) / skillGapProcessed.length) * 10) / 10, 0) : 0;
+    const avgTarget = skillGapProcessed.length ? sanitizeNumber(Math.round((skillGapProcessed.reduce((s, d) => s + (d.B || 0), 0) / skillGapProcessed.length) * 10) / 10, 0) : 0;
 
     // Data Grafik: Bar Chart - Use real modules data
     const contentEffectiveness = modules?.map(m => ({
@@ -460,11 +315,33 @@ const AnalyticsTab = React.memo(({ modules, stats, topLearners }) => {
             <GlassCard className="p-6" delay={0.1}>
                 <ChartHeader title="Skill Gap Analysis" subtitle="Kompetensi Saat Ini vs Target" />
 
+                {/* Data Status Indicators */}
+                {(!skillGapProcessed || skillGapProcessed.length === 0) && (
+                    <div className="mt-4 p-4 bg-amber-50 border-l-4 border-amber-500 rounded-lg flex items-start gap-3">
+                        <AlertTriangle size={20} className="text-amber-600 flex-shrink-0 mt-0.5" />
+                        <div className="flex-1">
+                            <h3 className="font-bold text-amber-900 text-sm mb-1">Data Skill Gap Kosong</h3>
+                            <p className="text-xs text-amber-800">
+                                Grafik Skill Gap belum menampilkan data. Hal ini mungkin karena:
+                                <br/>• Module belum memiliki final_score
+                                <br/>• Jalankan: <code className="bg-amber-100 px-1 rounded">php artisan db:seed --class=DashboardTestDataSeeder</code>
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                {skillGapProcessed && skillGapProcessed.length > 0 && (
+                    <div className="mt-4 p-3 bg-green-50 border-l-4 border-green-600 rounded-lg flex items-center gap-2 text-xs text-green-800">
+                        <CheckCircle size={16} className="flex-shrink-0" />
+                        <span>Data real dari database ({skillGapProcessed.length} skills dari module performance)</span>
+                    </div>
+                )}
+
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-4">
                     {/* Radar Chart */}
                     <div className="lg:col-span-7">
-                        <div className="h-[280px]">
-                            <ResponsiveContainer width="100%" height="100%" minWidth={280} minHeight={280}>
+                        <div className="w-full" style={{ height: '300px' }}>
+                            <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                                 <RadarChart cx="50%" cy="50%" outerRadius="75%" data={skillGapProcessed}>
                                     <PolarGrid stroke="#E2E8F0" />
                                     <PolarAngleAxis dataKey="subject" tick={{ fill: '#64748B', fontSize: 12 }} />
@@ -516,8 +393,8 @@ const AnalyticsTab = React.memo(({ modules, stats, topLearners }) => {
                 {/* 1. Content Effectiveness - Left Column (Full Height) */}
                 <GlassCard className="p-6 lg:row-span-2" delay={0.2}>
                     <ChartHeader title="Efektivitas Konten" subtitle="Pendaftar vs Kelulusan" />
-                    <div className="h-[380px] w-full mt-4">
-                        <ResponsiveContainer width="100%" height="100%" minWidth={380} minHeight={380}>
+                    <div className="w-full" style={{ height: '360px', marginTop: '16px' }}>
+                        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                             <BarChart data={contentEffectiveness} margin={{ top: 10, right: 10, left: 10, bottom: 40 }}>
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
                                 <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} tick={{ fill: '#64748B', fontSize: 10 }} />
@@ -533,7 +410,7 @@ const AnalyticsTab = React.memo(({ modules, stats, topLearners }) => {
 
                 {/* 2. Top Learners Leaderboard - Right Column (Top) */}
                 <GlassCard className="p-6" delay={0.3}>
-                    <ChartHeader title="Top Learners" subtitle="Performa Terbaik" onViewAll={() => router.visit('/admin/leaderboard')} />
+                    <ChartHeader title="Top Learners" subtitle="Performa Terbaik" />
                     <div className="space-y-3 mt-4 max-h-[380px] overflow-y-auto custom-scrollbar">
                         {learners.slice(0, 5).map((learner, i) => (
                             <motion.div key={i} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05 }}>
@@ -568,6 +445,25 @@ const AnalyticsTab = React.memo(({ modules, stats, topLearners }) => {
                 {/* 3. Department Compliance - Right Column (Bottom) */}
                 <GlassCard className="p-6" delay={0.4}>
                     <ChartHeader title="Dept Compliance" subtitle="Kepatuhan Pelatihan" />
+                    
+                    {/* Data Status Indicator */}
+                    {(!deptCompliance || deptCompliance.length === 0) && (
+                        <div className="mt-4 p-3 bg-amber-50 border-l-4 border-amber-500 rounded-lg flex items-start gap-3 text-xs">
+                            <AlertTriangle size={16} className="text-amber-600 flex-shrink-0 mt-0.5" />
+                            <div>
+                                <p className="font-bold text-amber-900 mb-1">Data Department Kosong</p>
+                                <p className="text-amber-800">Pastikan ada user dengan department yang terisi.</p>
+                            </div>
+                        </div>
+                    )}
+
+                    {deptCompliance && deptCompliance.length > 0 && (
+                        <div className="mt-4 p-2 bg-green-50 border-l-4 border-green-600 rounded-lg flex items-center gap-2 text-xs text-green-800">
+                            <CheckCircle size={14} className="flex-shrink-0" />
+                            <span>Data real: {deptCompliance.length} department dari user_trainings</span>
+                        </div>
+                    )}
+
                     <div className="space-y-4 mt-4">
                         {/* Quick Stats */}
                         <div className="grid grid-cols-2 gap-3">
@@ -575,7 +471,7 @@ const AnalyticsTab = React.memo(({ modules, stats, topLearners }) => {
                                 <div className="text-[10px] text-emerald-600 font-bold uppercase mb-1">Rata-rata</div>
                                 <div className="text-2xl font-black text-emerald-700">
                                     {deptCompliance.length > 0 
-                                    ? Math.round(deptCompliance.reduce((sum, d) => sum + d.compliance, 0) / deptCompliance.length) 
+                                    ? sanitizeNumber(Math.round(deptCompliance.reduce((sum, d) => sum + (d.compliance || 0), 0) / deptCompliance.length), 0)
                                     : 0}%
                                 </div>
                             </div>
@@ -700,8 +596,8 @@ const ReportsTab = React.memo(({ reports, stats, complianceDistribution }) => {
                 {/* Departmental Status */}
                 <GlassCard className="p-6" delay={0.1}>
                     <ChartHeader title="Departmental Status" subtitle="Status Pembuatan Laporan per Departemen" />
-                    <div className="h-[300px] w-full">
-                        <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={300}>
+                    <div className="w-full" style={{ height: '320px' }}>
+                        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                             <BarChart data={stackedData} layout="vertical">
                                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#E2E8F0" />
                                 <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#64748B' }} />
@@ -719,8 +615,8 @@ const ReportsTab = React.memo(({ reports, stats, complianceDistribution }) => {
                 {/* Compliance Distribution */}
                 <GlassCard className="p-6" delay={0.2}>
                     <ChartHeader title="Compliance Distribution" subtitle="Distribusi Status Kepatuhan" />
-                    <div className="h-[300px] w-full">
-                        <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={300}>
+                    <div className="w-full" style={{ height: '320px' }}>
+                        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                             <PieChart>
                                 <Pie
                                     data={pieData}
@@ -744,48 +640,50 @@ const ReportsTab = React.memo(({ reports, stats, complianceDistribution }) => {
             </div>
             
             {/* Daftar Laporan Lengkap */}
-            <GlassCard className="p-0" delay={0.3}>
-                <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-                     <ChartHeader title="Arsip Laporan Lengkap" subtitle="Semua laporan yang dihasilkan sistem" />
-                     <div className="flex items-center gap-3">
-                        <button
-                            onClick={downloadExcel}
-                            className="flex items-center gap-2 text-sm font-bold text-white bg-yellow-600 px-4 py-2 rounded-xl hover:bg-yellow-700 transition shadow-lg shadow-yellow-200"
-                        >
-                            <Download size={16} /> Export Excel (Tabel Berwarna)
-                        </button>
+            <GlassCard className="p-0 overflow-hidden" delay={0.3}>
+                <div className="p-4 md:p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between md:items-center gap-4 bg-slate-50/50">
+                     <div>
+                        <h3 className="text-lg font-bold text-slate-900">Arsip Laporan Lengkap</h3>
+                        <p className="text-xs text-slate-500 font-medium mt-1">Semua laporan yang dihasilkan sistem</p>
                      </div>
+                     <button
+                        onClick={downloadExcel}
+                        className="flex items-center gap-2 text-sm font-bold text-white bg-yellow-600 px-4 py-2 rounded-xl hover:bg-yellow-700 transition shadow-lg shadow-yellow-200 whitespace-nowrap"
+                    >
+                        <Download size={16} /> Export Excel
+                    </button>
                 </div>
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto custom-scrollbar">
                     <table className="w-full text-left text-sm text-slate-600">
-                        <thead className="bg-white text-slate-400 font-bold uppercase text-[10px] tracking-wider border-b border-slate-100">
+                        <thead className="bg-white text-slate-400 font-bold uppercase text-xs tracking-wider border-b border-slate-100">
                             <tr>
-                                <th className="px-6 py-4">ID Laporan</th>
-                                <th className="px-6 py-4">Nama Laporan</th>
-                                <th className="px-6 py-4">Departemen</th>
-                                <th className="px-6 py-4">Tanggal</th>
-                                <th className="px-6 py-4">Status</th>
-                                <th className="px-6 py-4 text-right">Aksi</th>
+                                <th className="px-4 md:px-6 py-4">ID</th>
+                                <th className="px-4 md:px-6 py-4">Nama Laporan</th>
+                                <th className="px-4 md:px-6 py-4 hidden sm:table-cell">Departemen</th>
+                                <th className="px-4 md:px-6 py-4 hidden md:table-cell">Tanggal</th>
+                                <th className="px-4 md:px-6 py-4">Status</th>
+                                <th className="px-4 md:px-6 py-4 text-right">Aksi</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                             {detailedReports.length > 0 ? detailedReports.map((item, i) => (
-                                <tr key={i} className="hover:bg-slate-50 transition cursor-pointer">
-                                    <td className="px-6 py-4 font-mono text-xs text-slate-400">{item.id}</td>
-                                    <td className="px-6 py-4 font-bold text-slate-800">{item.name}</td>
-                                    <td className="px-6 py-4"><span className="px-2 py-1 bg-slate-100 rounded text-xs font-semibold text-slate-600">{item.dept}</span></td>
-                                    <td className="px-6 py-4 text-slate-500">{item.date}</td>
-                                    <td className="px-6 py-4">
-                                        <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center w-fit gap-1
+                                <tr key={i} className="hover:bg-slate-50 transition">
+                                    <td className="px-4 md:px-6 py-4 font-mono text-xs text-slate-400">{item.id.substring(0, 8)}...</td>
+                                    <td className="px-4 md:px-6 py-4 font-bold text-slate-800 text-sm">{item.name}</td>
+                                    <td className="px-4 md:px-6 py-4 hidden sm:table-cell"><span className="px-2 py-1 bg-slate-100 rounded text-xs font-semibold text-slate-600">{item.dept}</span></td>
+                                    <td className="px-4 md:px-6 py-4 hidden md:table-cell text-slate-500 text-sm">{item.date}</td>
+                                    <td className="px-4 md:px-6 py-4">
+                                        <span className={`px-2.5 py-1 rounded-full text-xs font-bold inline-flex items-center gap-1
                                             ${item.status === 'Selesai' ? 'bg-emerald-50 text-emerald-600' : item.status === 'Pending' ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}
                                         `}>
                                             <div className={`w-1.5 h-1.5 rounded-full 
                                                 ${item.status === 'Selesai' ? 'bg-emerald-500' : item.status === 'Pending' ? 'bg-amber-500' : 'bg-red-500'}
                                             `}></div>
-                                            {item.status}
+                                            <span className="hidden sm:inline">{item.status}</span>
+                                            <span className="sm:hidden">{item.status.charAt(0)}</span>
                                         </span>
                                     </td>
-                                    <td className="px-6 py-4 text-right">
+                                    <td className="px-4 md:px-6 py-4 text-right">
                                         <button
                                             className="text-slate-400 hover:text-[#005E54] p-2 hover:bg-[#F0FDF4] rounded-lg transition"
                                             title="Download laporan ini"
@@ -797,7 +695,7 @@ const ReportsTab = React.memo(({ reports, stats, complianceDistribution }) => {
                                 </tr>
                             )) : (
                                 <tr>
-                                    <td colSpan="6" className="px-6 py-8 text-center text-slate-400">
+                                    <td colSpan="6" className="px-4 md:px-6 py-8 text-center text-slate-400">
                                         Belum ada laporan yang dihasilkan
                                     </td>
                                 </tr>
@@ -810,250 +708,409 @@ const ReportsTab = React.memo(({ reports, stats, complianceDistribution }) => {
     );
 });
 
-// --- MAIN LAYOUT & APP ---
-
-export default function AdminDashboard({ 
-    auth, 
-    statistics, 
-    recent_enrollments, 
-    recent_completions, 
-    recent_activity_logs = [],
-    modules_stats, 
-    top_performers, 
-    compliance_trend, 
-    enrollment_trend, 
-    alerts, 
-    reports, 
-    compliance_distribution
-}) {
-    const [activeTab, setActiveTab] = useState('overview');
-
-    const tabs = [
-        { id: 'overview', label: 'Overview', icon: LayoutGrid },
-        { id: 'analytics', label: 'Deep Analytics', icon: BarChart2 },
-        { id: 'reports', label: 'Reports', icon: FileCheck },
-    ];
-
-    // ===== DATA MAPPING FROM BACKEND (Optimized with useMemo) =====
-    // Validate and prepare statistics
-    const stats = useMemo(() => {
-        const data = statistics || {};
-        return {
-            total_users: data.total_users ?? 0,
-            completion_rate: data.completion_rate ?? 0,
-            average_score: data.average_score ?? 0,
-            overall_compliance_rate: data.overall_compliance_rate ?? 0,
-            total_programs: data.total_programs ?? 0,
-            active_programs: data.active_programs ?? 0,
-            weekly_engagement: Array.isArray(data.weekly_engagement) ? data.weekly_engagement : [],
-            skills_gap: Array.isArray(data.skills_gap) ? data.skills_gap : [],
-            department_compliance: Array.isArray(data.department_compliance) ? data.department_compliance : [],
-        };
-    }, [statistics]);
-
-    // Compliance trend data
-    const trend = useMemo(() => {
-        if (!Array.isArray(compliance_trend)) return [];
-        return compliance_trend.map(t => ({
-            month: t.month || t.date || '',
-            completed: t.completed ?? t.certified ?? 0,
-            total: t.total ?? 0,
-        }));
-    }, [compliance_trend]);
-
-    // Enrollment trend data
-    const enrollmentTrend = useMemo(() => {
-        if (!Array.isArray(enrollment_trend)) return [];
-        return enrollment_trend.map(e => ({
-            month: e.month || e.date || '',
-            enrollments: e.enrollments ?? 0,
-        }));
-    }, [enrollment_trend]);
-
-    // Modules statistics
-    const modules = useMemo(() => {
-        if (!Array.isArray(modules_stats)) return [];
-        return modules_stats.map(m => ({
-            id: m.id,
-            title: m.title || 'Unknown Module',
-            description: m.description || '',
-            total_enrollments: m.total_enrollments ?? 0,
-            completed_count: m.completed_count ?? 0,
-            completion_rate: m.completion_rate ?? 0,
-        }));
-    }, [modules_stats]);
-
-    // Top performers/learners
-    const topLearners = useMemo(() => {
-        if (!Array.isArray(top_performers)) return [];
-        return top_performers.map(p => ({
-            id: p.id,
-            name: p.name || 'Unknown',
-            nip: p.nip,
-            dept: p.dept || 'Unassigned',
-            points: p.total_points ?? 0,
-            modules: p.modules ?? 0,
-            certifications: p.certifications ?? 0,
-            avgScore: p.avg_exam_score ?? 0,
-            badge: p.certifications > 5 ? 'Gold' : p.certifications > 2 ? 'Silver' : 'Bronze'
-        }));
-    }, [top_performers]);
-
-    // Recent activities (merge enrollments, completions, and audit logs) - show up to 10 most recent
-    const recentActivities = useMemo(() => {
-        const enroll = (Array.isArray(recent_enrollments) ? recent_enrollments : []).map(e => ({
-            type: 'enroll',
-            user: e.user || e.user_name || 'Unknown User',
-            action_label: 'mendaftar di',
-            module: e.module || e.module_title || 'Unknown Module',
-            time_label: e.time || (e.enrolled_at ? new Date(e.enrolled_at).toLocaleString('id-ID') : 'Baru saja'),
-            icon: UserPlus,
-            color: 'text-blue-500',
-            bg: 'bg-blue-50',
-            timestamp: e.timestamp || (e.enrolled_at ? new Date(e.enrolled_at).getTime()/1000 : 0)
-        }));
-
-        const complete = (Array.isArray(recent_completions) ? recent_completions : []).map(c => ({
-            type: 'complete',
-            user: c.user || c.user_name || 'Unknown User',
-            action_label: 'menyelesaikan',
-            module: c.module || c.module_title || 'Unknown Module',
-            time_label: c.time || (c.completed_at ? new Date(c.completed_at).toLocaleString('id-ID') : 'Baru saja'),
-            icon: CheckCircle,
-            color: 'text-emerald-500',
-            bg: 'bg-emerald-50',
-            timestamp: c.timestamp || (c.completed_at ? new Date(c.completed_at).getTime()/1000 : 0)
-        }));
-
-        // Safety guard: recent_activity_logs may not be defined in some dev builds; default to empty array
-        const recentLogs = (typeof recent_activity_logs !== 'undefined') ? recent_activity_logs : [];
-        const logs = (Array.isArray(recentLogs) ? recentLogs : []).map(l => {
-            let icon = Activity;
-            let color = 'text-slate-600';
-            let bg = 'bg-slate-50';
-            
-            // Tentukan icon berdasarkan TYPE field dari backend (lebih reliable)
-            const activityType = String(l.type || '').toLowerCase();
-            const actionLower = String(l.action || '').toLowerCase();
-            
-            // Prioritas 1: Gunakan type field dari backend
-            if (activityType === 'login') {
-                icon = LogIn;
-                color = 'text-indigo-500';
-                bg = 'bg-indigo-50';
-            } else if (activityType === 'enrollment' || activityType === 'enroll') {
-                icon = UserPlus;
-                color = 'text-blue-500';
-                bg = 'bg-blue-50';
-            } else if (activityType === 'completion' || activityType === 'complete') {
-                icon = CheckCircle;
-                color = 'text-emerald-500';
-                bg = 'bg-emerald-50';
-            } else if (activityType === 'exam') {
-                icon = FileText;
-                color = 'text-purple-500';
-                bg = 'bg-purple-50';
-            }
-            // Fallback: Cek action text jika type tidak jelas
-            else if (actionLower.includes('login') || actionLower.includes('masuk')) {
-                icon = LogIn;
-                color = 'text-indigo-500';
-                bg = 'bg-indigo-50';
-            } else if (actionLower.includes('enroll') || actionLower.includes('enrolled') || actionLower.includes('mendaftar')) {
-                icon = UserPlus;
-                color = 'text-blue-500';
-                bg = 'bg-blue-50';
-            } else if (actionLower.includes('complet') || actionLower.includes('selesai') || actionLower.includes('finish')) {
-                icon = CheckCircle;
-                color = 'text-emerald-500';
-                bg = 'bg-emerald-50';
-            } else if (actionLower.includes('attempt') || actionLower.includes('exam') || actionLower.includes('kuis') || actionLower.includes('score')) {
-                icon = FileText;
-                color = 'text-purple-500';
-                bg = 'bg-purple-50';
-            }
-
-            return {
-                type: 'log',
-                user: l.user || 'System',
-                action_label: (l.action || 'melakukan aktivitas'),
-                module: l.module || 'System',  // Gunakan module field untuk module name, bukan type
-                time_label: l.time || 'Baru saja',
-                icon: icon,
-                color: color,
-                bg: bg,
-                timestamp: l.timestamp || 0
-            };
-        });
-
-        const merged = [...enroll, ...complete, ...logs].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-        return merged.slice(0, 10).map(item => ({
-            user: item.user,
-            action: item.action_label,
-            module: item.module,
-            time: item.time_label,
-            icon: item.icon,
-            color: item.color,
-            bg: item.bg,
-            type: item.type
-        }));
-    }, [recent_enrollments, recent_completions, recent_activity_logs]);
-
-    // Reports data
-    const reportsData = useMemo(() => Array.isArray(reports) ? reports : [], [reports]);
-
-    // Compliance distribution
-    const complianceDistData = useMemo(() => Array.isArray(compliance_distribution) ? compliance_distribution : [], [compliance_distribution]);
+// --- Organization Tab Component ---
+const OrganizationTab = React.memo(() => {
+    const [showRoleForm, setShowRoleForm] = useState(false);
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-emerald-50 font-sans text-slate-800">
-            <WondrStyles />
-            {/* Admin Sidebar */}
-            <AdminSidebar user={auth?.user} />
+        <div className="space-y-6">
+            {/* Header with Actions */}
+            <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
+                <div>
+                    <h2 className="text-2xl md:text-3xl font-bold text-slate-900">Organization Management</h2>
+                    <p className="text-slate-600 text-sm md:text-base mt-1">Kelola hirarki departemen dan penugasan peran</p>
+                </div>
+                <button
+                    onClick={() => setShowRoleForm(!showRoleForm)}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-[#005E54] text-white rounded-xl hover:bg-[#003d38] font-bold transition shrink-0"
+                >
+                    <UserPlus size={18} />
+                    Assign Role
+                </button>
+            </div>
 
-            {/* Main Content */}
-            <div className="md:ml-[280px] min-h-screen flex flex-col">
-                {/* Content Area */}
-                <main className="p-6 md:p-8 flex-1 overflow-y-auto">
-                    <div className="max-w-7xl mx-auto w-full">
-                        <DashboardHeader user={auth?.user} mapWeatherCode={mapWeatherCode} />
-                    </div>
+            {/* Two-column layout */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Department Hierarchy - 2/3 width */}
+                <div className="lg:col-span-2">
+                    <GlassCard className="p-6">
+                        <DepartmentHierarchyTree editable={true} />
+                    </GlassCard>
+                </div>
 
-                    {/* Navigasi Tab - Floating/Standalone */}
-                    <div className="flex flex-col items-center mb-8 gap-6">
-                        <div className="flex items-center gap-1 bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 overflow-x-auto">
-                            {tabs.map(tab => (
-                                <button
-                                    key={tab.id}
-                                    onClick={() => setActiveTab(tab.id)}
-                                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all duration-300 whitespace-nowrap ${
-                                        activeTab === tab.id 
-                                        ? 'bg-[#005E54] text-white shadow-md' 
-                                        : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
-                                    }`}
-                                >
-                                    <tab.icon size={18} />
-                                    {tab.label}
-                                </button>
-                            ))}
+                {/* Role Assignment - 1/3 width */}
+                <div className="lg:col-span-1">
+                    {showRoleForm ? (
+                        <GlassCard className="p-6">
+                            <RoleAssignmentForm 
+                                onSuccess={() => setShowRoleForm(false)}
+                                onClose={() => setShowRoleForm(false)}
+                            />
+                        </GlassCard>
+                    ) : (
+                        <div className="bg-white border border-slate-200 rounded-2xl p-6 text-center text-slate-500">
+                            <p className="text-sm">Klik "Assign Role" untuk tambah penugasan peran</p>
                         </div>
-                    </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+});
 
-                    {/* Konten Utama */}
-                    <div className="max-w-7xl mx-auto">
+export default function AdminDashboard({ auth, user, statistics, compliance_trend, enrollment_trend, recent_enrollments, recent_completions, recent_activity_logs, modules_stats, top_performers, reports, compliance_distribution }) {
+    const { auth: inertiaAuth } = usePage().props;
+    const [activeTab, setActiveTab] = useState('overview');
+    const [loading, setLoading] = useState(false);
+    const [weather, setWeather] = useState({ temp: null, desc: null, icon: null });
+    const [now, setNow] = useState(new Date());
+
+    // Get current user dari berbagai sumber dengan priority:
+    // 1. user prop (dari controller)
+    // 2. auth prop (dari controller)
+    // 3. inertiaAuth.user (dari Inertia middleware)
+    // 4. Fallback terakhir
+    const currentUser = (() => {
+        if (user?.name) {
+            return { ...user, name: user.name || user.full_name || 'Pengguna' };
+        }
+        if (auth?.user?.name) {
+            return { ...auth.user, name: auth.user.name || auth.user.full_name || 'Pengguna' };
+        }
+        if (inertiaAuth?.user?.name) {
+            return { ...inertiaAuth.user, name: inertiaAuth.user.name || inertiaAuth.user.full_name || 'Pengguna' };
+        }
+        
+        return { name: 'Pengguna', role: 'User' };
+    })();
+
+    // --- Weather & Time Effect ---
+    useEffect(() => {
+        const t = setInterval(() => setNow(new Date()), 1000);
+        
+        // Fetch real weather data from Open-Meteo API (free, no key needed)
+        const fetchWeather = async () => {
+            try {
+                // Using Jakarta coordinates as default
+                const response = await fetch('https://api.open-meteo.com/v1/forecast?latitude=-6.2088&longitude=106.8456&current=weather_code,temperature_2m');
+                const data = await response.json();
+                if (data.current) {
+                    const { desc, icon } = mapWeatherCode(data.current.weather_code);
+                    setWeather({ temp: data.current.temperature_2m, desc, icon });
+                }
+            } catch (error) {
+                // Fallback to default if API fails
+                const { desc, icon } = mapWeatherCode(1);
+                setWeather({ temp: 28, desc, icon });
+            }
+        };
+        fetchWeather();
+        return () => clearInterval(t);
+    }, []);
+
+    // --- Tab Switching Loading Effect ---
+    useEffect(() => {
+        setLoading(true);
+        const timer = setTimeout(() => setLoading(false), 500);
+        return () => clearTimeout(timer);
+    }, [activeTab]);
+
+    // --- Data Preparation (Real data from backend) ---
+    // Debug: Check if backend data is received
+    useEffect(() => {
+        const hasComplianceData = Array.isArray(compliance_trend) && compliance_trend.length > 0;
+        const hasEnrollmentData = Array.isArray(enrollment_trend) && enrollment_trend.length > 0;
+        
+        if (!hasComplianceData || !hasEnrollmentData) {
+            console.warn('[Dashboard Data Issue]', {
+                hasComplianceData,
+                complianceTrendLength: compliance_trend?.length || 0,
+                hasEnrollmentData, 
+                enrollmentTrendLength: enrollment_trend?.length || 0,
+                message: 'Backend trend data is empty - check DashboardMetricsController methods'
+            });
+        } else {
+            console.log('[Dashboard Data OK]', {
+                complianceTrendLength: compliance_trend.length,
+                enrollmentTrendLength: enrollment_trend.length,
+                latestCompliance: compliance_trend[compliance_trend.length - 1],
+                latestEnrollment: enrollment_trend[enrollment_trend.length - 1]
+            });
+        }
+    }, [compliance_trend, enrollment_trend]);
+
+    const stats = statistics || {
+        total_users: 0, completion_rate: 0, average_score: 0, overall_compliance_rate: 0,
+        weekly_engagement: []
+    };
+
+    // Use real backend data, only use empty array if no data
+    const trend = Array.isArray(compliance_trend) && compliance_trend.length > 0 ? compliance_trend : [];
+    
+    const enrollmentTrend = Array.isArray(enrollment_trend) && enrollment_trend.length > 0 ? enrollment_trend : [];
+
+    // --- Process Real Activity Logs from Backend ---
+    const recentActivities = (() => {
+        if (!recent_activity_logs || recent_activity_logs.length === 0) {
+            return [];
+        }
+        
+        return recent_activity_logs.slice(0, 5).map(log => {
+            // Get employee/karyawan name dari backend dengan prioritas field:
+            // 1. user (dari backend DashboardMetricsController)
+            // 2. user_name (alternative field)
+            // 3. name (direct user name)
+            // 4. full_name (full name fallback)
+            // 5. Default: 'Karyawan'
+            const employeeName = log.user || log.user_name || log.name || log.full_name || 'Karyawan';
+
+            // Determine action type and icon berdasarkan action description
+            let action = log.action || log.action_description || 'aktivitas';
+            let icon = Activity;
+            let bg = 'bg-blue-100';
+            let color = 'text-blue-600';
+
+            if (action.toLowerCase().includes('selesai') || action.toLowerCase().includes('completed')) {
+                icon = CheckCircle;
+                bg = 'bg-green-100';
+                color = 'text-green-600';
+            } else if (action.toLowerCase().includes('enrolled') || action.toLowerCase().includes('mendaftar') || action.toLowerCase().includes('enroll')) {
+                icon = UserPlus;
+                bg = 'bg-blue-100';
+                color = 'text-blue-600';
+            } else if (action.toLowerCase().includes('login')) {
+                icon = Activity;
+                bg = 'bg-purple-100';
+                color = 'text-purple-600';
+            } else if (action.toLowerCase().includes('lulus') || action.toLowerCase().includes('passed')) {
+                icon = CheckCircle;
+                bg = 'bg-emerald-100';
+                color = 'text-emerald-600';
+            } else if (action.toLowerCase().includes('gagal') || action.toLowerCase().includes('failed')) {
+                icon = AlertTriangle;
+                bg = 'bg-red-100';
+                color = 'text-red-600';
+            } else if (action.toLowerCase().includes('attempted') || action.toLowerCase().includes('coba') || action.toLowerCase().includes('exam') || action.toLowerCase().includes('score')) {
+                icon = Target;
+                bg = 'bg-amber-100';
+                color = 'text-amber-600';
+            }
+
+            // Get module/content name
+            const moduleName = log.module_name || log.course_name || log.training_name || log.content_title || log.module || 'System';
+
+            // Calculate relative time - use backend time if available
+            let logDate = null;
+            
+            if (log.time) {
+                logDate = new Date(log.time);
+            } else if (log.created_at) {
+                logDate = new Date(log.created_at);
+            } else if (log.timestamp) {
+                // Check if timestamp is in seconds (less than a reasonable year 2099 in ms)
+                // If less than 10^11, it's likely seconds, convert to milliseconds
+                const ts = Number(log.timestamp);
+                logDate = new Date(ts < 10000000000 ? ts * 1000 : ts);
+            } else {
+                logDate = new Date();
+            }
+
+            // Validate date
+            if (!logDate || isNaN(logDate.getTime())) {
+                logDate = new Date();
+            }
+
+            const now = new Date();
+            const diffMs = now - logDate;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMs / 3600000);
+            const diffDays = Math.floor(diffMs / 86400000);
+
+            let time = 'baru saja';
+            if (diffMs < 0) time = 'baru saja'; // Future date fallback
+            else if (diffMins < 1) time = 'baru saja';
+            else if (diffMins < 60) time = `${diffMins}m lalu`;
+            else if (diffHours < 24) time = `${diffHours}h lalu`;
+            else if (diffDays < 7) time = `${diffDays}d lalu`;
+            else time = logDate.toLocaleDateString('id-ID');
+
+            return {
+                user: employeeName,  // ⭐ Nama karyawan sebenarnya dari database
+                action: action,
+                module: moduleName,
+                time,
+                icon,
+                bg,
+                color
+            };
+        });
+    })();
+
+    // Greeting logic
+    const hour = now.getHours();
+    let greeting = 'Selamat Pagi';
+    if (hour >= 12 && hour < 15) greeting = 'Selamat Siang';
+    else if (hour >= 15 && hour < 18) greeting = 'Selamat Sore';
+    else if (hour >= 18 || hour < 6) greeting = 'Selamat Malam';
+
+    return (
+        <div className="min-h-screen bg-[#F8FAFC] font-sans text-slate-800">
+            <style>{`
+                @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+                body { font-family: 'Plus Jakarta Sans', sans-serif; }
+                .tab-active { 
+                    background-color: #005E54; 
+                    color: white; 
+                    box-shadow: 0 4px 12px rgba(0, 94, 84, 0.2);
+                }
+                .tab-inactive { 
+                    color: #64748B; 
+                    background: transparent;
+                    transition: all 0.2s ease;
+                }
+                .tab-inactive:hover { 
+                    background-color: #F1F5F9; 
+                    color: #1e293b; 
+                }
+                .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+                .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+                .custom-scrollbar::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+            `}</style>
+            
+            <AdminSidebar user={currentUser} />
+
+            {/* Main Content Area - Optimized Layout */}
+            <div className="min-h-screen flex flex-col md:ml-[280px] bg-[#F8FAFC]">
+                <main className="flex-1 w-full px-4 md:px-6 lg:px-8 py-6 md:py-8 overflow-x-hidden">
+                    <div className="max-w-7xl mx-auto w-full">
+                        
+                        {/* HERO HEADER */}
+                        <div className="mb-8 bg-gradient-to-r from-slate-50 to-white border border-slate-200 rounded-2xl md:rounded-3xl p-6 md:p-8 relative overflow-hidden shadow-sm">
+                            <div className="absolute top-0 right-0 w-48 h-48 md:w-96 md:h-96 bg-[#D6F84C] rounded-full blur-3xl opacity-20 -translate-y-1/2 translate-x-1/3"></div>
+                            
+                            <div className="relative z-10 flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6">
+                                <div className="flex-1">
+                                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-3">
+                                        <span className="inline-block px-3 py-1 rounded-full bg-[#002824] text-[#D6F84C] text-xs font-bold uppercase tracking-wider">
+                                            Live Dashboard
+                                        </span>
+                                        <span className="text-slate-400 text-xs font-semibold">
+                                            {now.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                                        </span>
+                                    </div>
+                                    <h1 className="text-3xl md:text-4xl font-black text-slate-900 tracking-tight mb-2 leading-tight">
+                                        {greeting}, <span className="text-[#005E54]">{currentUser.name.split(' ')[0]}!</span>
+                                    </h1>
+                                    <p className="text-slate-600 font-medium max-w-lg text-sm md:text-base">
+                                        Ringkasan kinerja pembelajaran, kepatuhan, dan aktivitas user hari ini.
+                                    </p>
+                                </div>
+                                
+                                <div className="flex items-center gap-4 bg-white/60 backdrop-blur-md p-4 rounded-2xl border border-slate-100 shadow-sm shrink-0">
+                                    <div className="text-4xl">
+                                        {weather.icon ? React.createElement(weather.icon, { size: 32, className: "text-amber-500" }) : '🌤️'}
+                                    </div>
+                                    <div>
+                                        <div className="text-xl font-bold text-slate-900">
+                                            {weather.temp !== null ? `${Math.round(weather.temp)}°C` : '28°C'}
+                                        </div>
+                                        <div className="text-xs text-slate-500">{weather.desc || 'Cerah'}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Data Status Indicator */}
+                        {(!trend || trend.length === 0 || !enrollmentTrend || enrollmentTrend.length === 0) && (
+                            <div className="mb-6 p-4 bg-amber-50 border-l-4 border-amber-500 rounded-lg flex items-start gap-3">
+                                <AlertTriangle size={20} className="text-amber-600 shrink-0 mt-0.5" />
+                                <div className="flex-1 min-w-0">
+                                    <h3 className="font-bold text-amber-900 text-sm mb-1">Data Dashboard Kosong</h3>
+                                    <p className="text-xs text-amber-800 leading-relaxed">
+                                        Grafik belum menampilkan data. Jalankan: <code className="bg-amber-100 px-1.5 py-0.5 rounded text-xs font-mono">php artisan db:seed</code>
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Data Status Success */}
+                        {trend && trend.length > 0 && enrollmentTrend && enrollmentTrend.length > 0 && (
+                            <div className="mb-6 p-3 bg-green-50 border-l-4 border-green-600 rounded-lg flex items-center gap-2 text-xs text-green-800">
+                                <CheckCircle size={16} className="shrink-0" />
+                                <span>Data real: {trend.length} data compliance, {enrollmentTrend.length} enrollment</span>
+                            </div>
+                        )}
+
+                        {/* TABS - Responsive */}
+                        <div className="mb-8 flex justify-center">
+                            <div className="bg-white p-1 rounded-full shadow-sm border border-slate-200 inline-flex flex-wrap justify-center gap-0">
+                                {[
+                                    { id: 'overview', label: 'Overview', icon: LayoutGrid },
+                                    { id: 'analytics', label: 'Analytics', icon: BarChart2 },
+                                    { id: 'reports', label: 'Reports', icon: FileCheck },
+                                    { id: 'organization', label: 'Organization', icon: GitBranch },
+                                ].map(tab => (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => setActiveTab(tab.id)}
+                                        className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-xs md:text-sm font-bold transition-all duration-300 ${
+                                            activeTab === tab.id ? 'tab-active' : 'tab-inactive'
+                                        }`}
+                                        title={tab.label}
+                                    >
+                                        <tab.icon size={16} />
+                                        <span className="hidden sm:inline">{tab.label}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* CONTENT AREA */}
                         <AnimatePresence mode="wait">
-                            <motion.div
-                                key={activeTab}
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -10 }}
-                                transition={{ duration: 0.3 }}
-                            >
-                                {activeTab === 'overview' && <OverviewTab stats={stats} trend={trend} enrollmentTrend={enrollmentTrend} recentActivities={recentActivities} />}
-                                {activeTab === 'analytics' && <AnalyticsTab modules={modules} stats={stats} topLearners={topLearners} />}
-                                {activeTab === 'reports' && <ReportsTab reports={reportsData} stats={stats} complianceDistribution={complianceDistData} />}
-                            </motion.div>
+                            {loading ? (
+                                <div className="py-20 flex items-center justify-center">
+                                    <div className="text-center">
+                                        <div className="animate-spin w-12 h-12 border-4 border-[#005E54] border-t-transparent rounded-full mx-auto mb-4"></div>
+                                        <p className="text-slate-500 font-medium">Memuat data...</p>
+                                    </div>
+                                </div>
+                            ) : (
+                                <motion.div
+                                    key={activeTab}
+                                    initial={{ opacity: 0, y: 10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -10 }}
+                                    transition={{ duration: 0.3 }}
+                                >
+                                    {activeTab === 'overview' && (
+                                        <OverviewTab 
+                                            stats={stats} 
+                                            trend={trend} 
+                                            enrollmentTrend={enrollmentTrend} 
+                                            recentActivities={recentActivities} 
+                                        />
+                                    )}
+                                    {activeTab === 'analytics' && (
+                                        <AnalyticsTab 
+                                            modules={modules_stats}
+                                            stats={stats}
+                                            topLearners={top_performers}
+                                        />
+                                    )}
+                                    {activeTab === 'reports' && (
+                                        <ReportsTab 
+                                            reports={reports}
+                                            stats={stats}
+                                            complianceDistribution={compliance_distribution}
+                                        />
+                                    )}
+                                    {activeTab === 'organization' && (
+                                        <OrganizationTab />
+                                    )}
+                                </motion.div>
+                            )}
                         </AnimatePresence>
+
                     </div>
                 </main>
             </div>

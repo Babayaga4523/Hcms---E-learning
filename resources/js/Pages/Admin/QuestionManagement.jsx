@@ -4,7 +4,7 @@ import AdminLayout from '@/Layouts/AdminLayout';
 import DOMPurify from 'dompurify';
 import {
     Save, X, Plus, Trash2, Copy, Eye, ArrowLeft, 
-    AlertCircle, Check, ChevronDown, Sparkles, Image as ImageIcon,
+    AlertCircle, Check, ChevronDown, Image as ImageIcon,
     Bold, Italic, List, Code, Type, AlignLeft, Hash,
     MoreHorizontal, HelpCircle, GripVertical, Underline,
     ListOrdered, AlignCenter, AlignRight, Strikethrough
@@ -159,6 +159,7 @@ export default function QuestionManagement({ question = null, module_id = null, 
     
     const [loading, setLoading] = useState(false);
     const [testType, setTestType] = useState(initialTestType);
+    const [draftRestored, setDraftRestored] = useState(false); // NEW: Track if draft was restored
     const editorRef = React.useRef(null);
     const initialFormData = {
         question_text: questionData?.question_text || '',
@@ -167,12 +168,10 @@ export default function QuestionManagement({ question = null, module_id = null, 
         difficulty: questionData?.difficulty || 'medium',
         options: questionData?.options || ['', '', '', ''],
         correct_answer: questionData?.correct_answer || 'a',
-        points: questionData?.points || 10,
+        points: questionData?.points || 5,
         explanation: questionData?.explanation || '',
         image_url: questionData?.image_url || null,
         image_file: null,
-        tags: [],
-        tagInput: '',
         module_id: questionData?.module_id || queryModuleId || module_id || null,
         quiz_id: questionData?.quiz_id || quiz_id || null,
     };
@@ -184,8 +183,134 @@ export default function QuestionManagement({ question = null, module_id = null, 
     });
     
     const [formData, setFormData] = useState(initialFormData);
-
     const [errors, setErrors] = useState({});
+
+    // NEW: Persist test type in URL parameters
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            const params = new URLSearchParams(window.location.search);
+            params.set('type', testType);
+            window.history.replaceState({}, '', `?${params.toString()}`);
+        }
+    }, [testType]);
+
+    /**
+     * Safe localStorage save with quota management
+     * Prevents data loss when localStorage quota is exceeded
+     */
+    const safeLocalStorageSave = (key, data) => {
+        try {
+            // Check available space first
+            const dataStr = JSON.stringify(data);
+            const dataSize = new Blob([dataStr]).size;
+            
+            // Most browsers have 5-10MB, but we use localStorage carefully
+            // If data is too large, don't save the entire draft
+            const MAX_DRAFT_SIZE = 1024 * 100; // 100KB max for a single draft
+            
+            if (dataSize > MAX_DRAFT_SIZE) {
+                console.warn(`Draft data too large (${dataSize} bytes), saving only essential fields`);
+                // Save only essential fields to reduce size
+                const minimalData = {
+                    question_text: data.question_text,
+                    difficulty: data.difficulty,
+                    testType: data.testType,
+                    savedAt: data.savedAt
+                };
+                localStorage.setItem(key, JSON.stringify(minimalData));
+                showToast('⚠️ Draft saved with limited data due to size constraints', 'warning');
+                return;
+            }
+            
+            // Try to save
+            localStorage.setItem(key, dataStr);
+            
+        } catch (e) {
+            // Handle QuotaExceededError
+            if (e.name === 'QuotaExceededError' || e.code === 22) {
+                console.error('localStorage quota exceeded:', e);
+                showToast('❌ Storage full! Unable to save draft. Please clear browser cache or save your work immediately.', 'error');
+                
+                // Try to clear old drafts to make space
+                try {
+                    const keys = Object.keys(localStorage);
+                    const draftKeys = keys.filter(k => k.startsWith('question_draft_'));
+                    
+                    if (draftKeys.length > 1) {
+                        // Remove oldest draft (keep only current one)
+                        const oldestKey = draftKeys.sort().slice(0, -1)[0];
+                        if (oldestKey) {
+                            localStorage.removeItem(oldestKey);
+                            console.log('Removed old draft to make space');
+                            // Retry saving
+                            localStorage.setItem(key, JSON.stringify(data));
+                            showToast('✅ Cleared old draft and saved current one', 'success');
+                        }
+                    }
+                } catch (clearError) {
+                    console.error('Could not clear old drafts:', clearError);
+                }
+            } else {
+                console.error('Unexpected localStorage error:', e);
+                showToast('❌ Failed to save draft locally', 'error');
+            }
+        }
+    };
+
+    // NEW: Auto-save to localStorage every 30 seconds
+    useEffect(() => {
+        const moduleKey = `question_draft_${queryModuleId || module_id}`;
+        const interval = setInterval(() => {
+            let currentQuestionText = formData.question_text;
+            if (editorRef.current) {
+                currentQuestionText = editorRef.current.innerHTML?.trim() || formData.question_text;
+            }
+            const draftData = { ...formData, question_text: currentQuestionText, testType, savedAt: new Date().toISOString() };
+            
+            // Use safe save that handles quota exceeded errors
+            safeLocalStorageSave(moduleKey, draftData);
+        }, 30000);
+        return () => clearInterval(interval);
+    }, [formData, testType, queryModuleId, module_id]);
+
+    // NEW: Restore draft on mount if no question is being edited
+    useEffect(() => {
+        if (!questionData?.id && !draftRestored) {
+            const moduleKey = `question_draft_${queryModuleId || module_id}`;
+            try {
+                const savedDraft = localStorage.getItem(moduleKey);
+                if (savedDraft) {
+                    const draft = JSON.parse(savedDraft);
+                    
+                    // Validate draft testType - ensure it's one of the expected values
+                    const validTestTypes = ['pretest', 'posttest'];
+                    if (draft.testType && !validTestTypes.includes(draft.testType)) {
+                        console.warn(`Invalid testType in draft: ${draft.testType}`);
+                        localStorage.removeItem(moduleKey); // Remove corrupted draft
+                        setDraftRestored(true);
+                        return;
+                    }
+                    
+                    setFormData(draft);
+                    setTestType(draft.testType || initialTestType);
+                    setDraftRestored(true);
+                    showToast(`✅ Draft restored from ${new Date(draft.savedAt).toLocaleTimeString()}`, 'success');
+                } else {
+                    setDraftRestored(true);
+                }
+            } catch (err) {
+                console.error('Error restoring draft:', err);
+                showToast('⚠️ Could not restore draft (file may be corrupted)', 'warning');
+                setDraftRestored(true);
+                // Optionally clear the corrupted draft
+                try {
+                    localStorage.removeItem(moduleKey);
+                } catch (e) {
+                    // Ignore cleanup errors
+                }
+            }
+        }
+    }, []);
 
     const categories = [
         { id: 'general', name: 'Umum' },
@@ -243,28 +368,36 @@ export default function QuestionManagement({ question = null, module_id = null, 
 
     const handleEditorInput = () => {
         if (editorRef.current) {
+            // Sync editor content to state without overwriting user input
+            const newContent = editorRef.current.innerHTML;
             setFormData(prev => ({
                 ...prev,
-                question_text: editorRef.current.innerHTML
+                question_text: newContent
             }));
         }
     };
 
-    // Set initial content for editor - run when component mounts or questionData changes
+    // Set initial content for editor - run ONLY when question data first loads or changes
     useEffect(() => {
-        console.log('useEffect triggered - setting editor content', {
+        console.log('useEffect triggered - setting initial editor content', {
             hasRef: !!editorRef.current,
-            questionText: formData.question_text,
             questionDataId: questionData?.id
         });
         
-        if (editorRef.current) {
-            // Always set innerHTML when formData.question_text changes or component mounts
-            const contentToSet = formData.question_text || '';
+        if (editorRef.current && questionData?.id) {
+            // Only set innerHTML when loading/editing a question (not on every state change)
+            const contentToSet = questionData.question_text || '';
             editorRef.current.innerHTML = contentToSet;
-            console.log('Editor content set to:', contentToSet);
+            setFormData(prev => ({
+                ...prev,
+                question_text: contentToSet
+            }));
+            console.log('Editor content initialized to:', contentToSet);
+        } else if (editorRef.current && !questionData?.id) {
+            // For new questions, clear editor on mount
+            editorRef.current.innerHTML = '';
         }
-    }, [formData.question_text]);
+    }, [questionData?.id]); // Only depend on question ID change, not formData.question_text
 
     const handleOptionChange = (index, value) => {
         const newOptions = [...formData.options];
@@ -286,37 +419,39 @@ export default function QuestionManagement({ question = null, module_id = null, 
         if (formData.options.length > 2) {
             const newOptions = formData.options.filter((_, i) => i !== index);
             const answerLetters = ['a', 'b', 'c', 'd'];
-            setFormData({
-                ...formData,
-                options: newOptions
-            });
-            if (formData.correct_answer === answerLetters[index]) {
-                setFormData({
-                    ...formData,
-                    correct_answer: 'a',
-                    options: newOptions
-                });
-            }
+            // Use functional update to avoid state ordering issues
+            setFormData(prev => ({
+                ...prev,
+                options: newOptions,
+                correct_answer: prev.correct_answer === answerLetters[index] ? 'a' : prev.correct_answer
+            }));
         }
     };
 
     const validateForm = () => {
         const newErrors = {};
-
-        if (!formData.question_text.trim()) {
+        let currentQuestionText = formData.question_text;
+        if (editorRef.current) {
+            currentQuestionText = editorRef.current.innerHTML?.trim() || formData.question_text;
+        }
+        if (!currentQuestionText?.trim()) {
             newErrors.question_text = 'Pertanyaan diperlukan';
         }
-
+        if (!formData.question_type) {
+            newErrors.question_type = 'Tipe pertanyaan harus dipilih';
+        }
         if (formData.question_type !== 'essay' && formData.question_type !== 'short_answer') {
-            if (formData.options.some(opt => !opt.trim())) {
-                newErrors.options = 'Semua opsi harus diisi';
+            if (formData.options.length < 2) {
+                newErrors.options = 'Minimal 2 opsi diperlukan';
+            } else if (formData.options.some(opt => !opt?.trim())) {
+                newErrors.options = 'Semua opsi harus ada teksnya';
+            } else if (!formData.correct_answer) {
+                newErrors.correct_answer = 'Pilih jawaban yang benar';
             }
         }
-
         if (!formData.difficulty) {
             newErrors.difficulty = 'Level kesulitan diperlukan';
         }
-
         setErrors(newErrors);
         return Object.keys(newErrors).length === 0;
     };
@@ -330,43 +465,8 @@ export default function QuestionManagement({ question = null, module_id = null, 
         }
     };
 
-    const handleRemoveOption = (index) => {
-        setFormData(prev => ({
-            ...prev,
-            options: prev.options.filter((_, i) => i !== index)
-        }));
-    };
-
-    const handleAddTag = (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            const trimmed = formData.tagInput.trim();
-            if (trimmed && !formData.tags.includes(trimmed)) {
-                setFormData(prev => ({
-                    ...prev,
-                    tags: [...prev.tags, trimmed],
-                    tagInput: ''
-                }));
-            }
-        }
-    };
-
     const removeTag = (index) => {
-        setFormData(prev => ({
-            ...prev,
-            tags: prev.tags.filter((_, i) => i !== index)
-        }));
-    };
-
-    const handleAIRephrase = () => {
-        if (editorRef.current) {
-            const content = editorRef.current.innerHTML;
-            editorRef.current.innerHTML = content.startsWith('✨') ? content : '✨ ' + content;
-            setFormData(prev => ({
-                ...prev,
-                question_text: editorRef.current.innerHTML
-            }));
-        }
+        // Removed - tags not used in current implementation
     };
 
     // Text formatting functions for contenteditable
@@ -392,26 +492,24 @@ export default function QuestionManagement({ question = null, module_id = null, 
     };
 
     const handleImageUpload = (file) => {
-        // Validate file type
-        if (!file.type.startsWith('image/')) {
-            showToast('Harap upload file gambar', 'warning');
+        const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
+        if (!ALLOWED_TYPES.includes(file.type)) {
+            showToast(`❌ Format gambar tidak didukung. Gunakan: JPG, PNG, atau WebP`, 'error');
             return;
         }
-
-        // Validate file size (max 5MB)
-        if (file.size > 5 * 1024 * 1024) {
-            showToast('Ukuran file maksimal 5MB', 'warning');
+        const MAX_SIZE = 5 * 1024 * 1024;
+        if (file.size > MAX_SIZE) {
+            const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+            showToast(`❌ Ukuran gambar ${sizeMB}MB terlalu besar. Maksimal 5MB`, 'error');
             return;
         }
-
-        // Create preview URL
         const reader = new FileReader();
         reader.onload = (e) => {
-            setFormData(prev => ({
-                ...prev,
-                image_url: e.target.result,
-                image_file: file
-            }));
+            setFormData(prev => ({ ...prev, image_url: e.target.result, image_file: file }));
+            showToast('✅ Gambar siap diunggah', 'success');
+        };
+        reader.onerror = () => {
+            showToast('❌ Gagal membaca file gambar', 'error');
         };
         reader.readAsDataURL(file);
     };
@@ -708,33 +806,31 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                         title="Code"
                                         onClick={() => applyFormatting('formatBlock', '<pre>')}
                                     />
-                                    <div className="flex-1" />
-                                    <button
-                                        type="button"
-                                        onClick={handleAIRephrase}
-                                        className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors uppercase tracking-wider"
-                                    >
-                                        <Sparkles size={14} /> AI Rephrase
-                                    </button>
                                 </div>
 
-                                {/* Rich Text Editor */}
-                                <div
-                                    ref={editorRef}
-                                    contentEditable
-                                    onInput={handleEditorInput}
-                                    onBlur={handleEditorInput}
-                                    suppressContentEditableWarning
-                                    placeholder="Tulis pertanyaan yang hebat..."
-                                    className={`w-full min-h-[180px] p-4 text-lg font-semibold text-slate-900 bg-slate-50 rounded-xl border-2 transition-all overflow-y-auto ${
-                                        testType === 'pretest' 
-                                            ? 'border-blue-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-200/50' 
-                                            : 'border-orange-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-200/50'
-                                    }`}
-                                    style={{
-                                        lineHeight: '1.6',
-                                    }}
-                                ></div>
+                                {/* NEW: Rich Text Editor with separate placeholder div */}
+                                <div className="relative">
+                                    {/* Placeholder - shows when editor is empty */}
+                                    {!formData.question_text && (
+                                        <div className="absolute top-4 left-4 text-slate-400 text-lg font-semibold pointer-events-none italic">
+                                            Tulis pertanyaan yang hebat...
+                                        </div>
+                                    )}
+                                    <div
+                                        ref={editorRef}
+                                        contentEditable
+                                        onInput={handleEditorInput}
+                                        suppressContentEditableWarning
+                                        className={`w-full min-h-[180px] p-4 text-lg font-semibold text-slate-900 bg-slate-50 rounded-xl border-2 transition-all overflow-y-auto focus:outline-none ${
+                                            testType === 'pretest' 
+                                                ? 'border-blue-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-200/50' 
+                                                : 'border-orange-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-200/50'
+                                        }`}
+                                        style={{
+                                            lineHeight: '1.6',
+                                        }}
+                                    ></div>
+                                </div>
 
                                 {errors.question_text && (
                                     <motion.div
@@ -828,9 +924,11 @@ export default function QuestionManagement({ question = null, module_id = null, 
 
                                     <AnimatePresence>
                                         <div className="space-y-3">
-                                            {formData.options.map((option, index) => (
+                                            {formData.options.map((option, index) => {
+                                                const optionLetter = String.fromCharCode(97 + index); // 'a', 'b', 'c', 'd'
+                                                return (
                                                 <motion.div
-                                                    key={index}
+                                                    key={`option-${optionLetter}`}
                                                     initial={{ opacity: 0, x: -20 }}
                                                     animate={{ opacity: 1, x: 0 }}
                                                     exit={{ opacity: 0, x: -20 }}
@@ -879,14 +977,15 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                                     {formData.options.length > 2 && (
                                                         <button
                                                             type="button"
-                                                            onClick={() => handleRemoveOption(index)}
+                                                            onClick={() => removeOption(index)}
                                                             className="p-2 text-red-600 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
                                                         >
                                                             <Trash2 size={16} />
                                                         </button>
                                                     )}
                                                 </motion.div>
-                                            ))}
+                                                );
+                                            })}
                                         </div>
                                     </AnimatePresence>
 
@@ -1051,69 +1150,6 @@ export default function QuestionManagement({ question = null, module_id = null, 
                                     </div>
                                 </div>
                             </div>
-
-                            {/* Tags Card */}
-                            <div className="bg-white rounded-[32px] shadow-lg p-6 border border-slate-100">
-                                <div className="flex items-center gap-2 mb-4">
-                                    <Hash size={18} className={themeColors.primaryAccent} />
-                                    <label className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                                        Smart Tags
-                                    </label>
-                                </div>
-
-                                {/* Tag Chips */}
-                                <div className="flex flex-wrap gap-2 mb-3">
-                                    <AnimatePresence>
-                                        {formData.tags.map((tag, index) => (
-                                            <TagChip
-                                                key={tag}
-                                                label={tag}
-                                                onRemove={() => removeTag(index)}
-                                            />
-                                        ))}
-                                    </AnimatePresence>
-                                </div>
-
-                                {/* Tag Input */}
-                                <input
-                                    type="text"
-                                    value={formData.tagInput}
-                                    onChange={(e) => setFormData(prev => ({
-                                        ...prev,
-                                        tagInput: e.target.value
-                                    }))}
-                                    onKeyDown={handleAddTag}
-                                    placeholder="Ketik & tekan Enter..."
-                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-semibold focus:border-slate-400 focus:ring-2 focus:ring-slate-200/50 outline-none transition-all text-sm"
-                                />
-                            </div>
-
-                            {/* Statistics Card (Edit Mode) */}
-                            {question && (
-                                <div className={`bg-gradient-to-br ${themeColors.primaryLight} rounded-[32px] shadow-lg p-6 border-2 ${themeColors.primaryBorder}`}>
-                                    <h3 className={`text-xs font-black ${themeColors.primaryAccent} uppercase tracking-wider mb-4`}>
-                                        📊 Statistik Soal
-                                    </h3>
-                                    <div className="space-y-3">
-                                        <div className="bg-white/60 backdrop-blur rounded-xl p-3">
-                                            <p className="text-xs text-slate-700 font-bold uppercase tracking-wider">Digunakan</p>
-                                            <p className="text-2xl font-black text-slate-900">{question.used_count || 0}x</p>
-                                        </div>
-                                        <div className="bg-white/60 backdrop-blur rounded-xl p-3">
-                                            <p className="text-xs text-slate-700 font-bold uppercase tracking-wider">Dijawab Benar</p>
-                                            <p className="text-2xl font-black text-emerald-600">{question.correct_count || 0}x</p>
-                                        </div>
-                                        <div className="bg-white/60 backdrop-blur rounded-xl p-3">
-                                            <p className="text-xs text-slate-700 font-bold uppercase tracking-wider">Success Rate</p>
-                                            <p className="text-2xl font-black text-slate-900">
-                                                {question.used_count > 0
-                                                    ? Math.round((question.correct_count / question.used_count) * 100)
-                                                    : 0}%
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
 
                             {/* Error Alert */}
                             {errors.general && (

@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Head, Link, router } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
 import { motion, AnimatePresence } from 'framer-motion';
+import axiosInstance from '@/Services/axiosInstance';
+import { API_ENDPOINTS } from '@/Config/api';
 import { 
     FileText, Download, Eye, Calendar, Filter, Search,
     TrendingUp, Award, Clock, BookOpen, ChevronRight,
@@ -9,8 +11,8 @@ import {
     Printer, Mail, Share2, Zap, Shield, ArrowUpRight,
     Sparkles, Loader2, X, RefreshCw
 } from 'lucide-react';
-import axios from 'axios';
 import showToast from '@/Utils/toast';
+import { handleAuthError } from '@/Utils/authGuard';
 
 // --- Wondr Style System ---
 const WondrStyles = () => (
@@ -362,7 +364,7 @@ export default function MyReports({ auth, stats = {}, trainings = [], quizzes = 
     const handleExportPDF = async () => {
         setIsExporting(true);
         try {
-            const response = await axios.get('/api/learner/reports/export-pdf', { responseType: 'blob' });
+            const response = await axiosInstance.get(API_ENDPOINTS.EXPORT_REPORT_PDF, { responseType: 'blob' });
 
             // Parse filename from content-disposition
             const disposition = response.headers['content-disposition'] || '';
@@ -382,8 +384,7 @@ export default function MyReports({ auth, stats = {}, trainings = [], quizzes = 
             showToast('Unduhan dimulai', 'success');
         } catch (error) {
             console.error('Export PDF error:', error);
-            if (error.response && error.response.status === 401) {
-                router.visit('/login');
+            if (handleAuthError(error)) {
                 return;
             }
             showToast(error.response?.data?.message || 'Gagal mengunduh laporan', 'error');

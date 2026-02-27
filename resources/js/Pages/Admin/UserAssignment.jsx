@@ -697,7 +697,7 @@ export default function UserAssignment({ program: initialProgram, users: initial
                 </div>
             )}
 
-            </div>
+        </div>
         </AdminLayout>
     );
 }

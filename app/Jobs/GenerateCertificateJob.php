@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\Certificate;
 use App\Models\Module;
 use App\Models\User;
+use App\Models\UserTraining;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -79,6 +80,10 @@ class GenerateCertificateJob implements ShouldQueue
                     'user_id' => $this->userId,
                     'module_id' => $this->moduleId
                 ]);
+                // Update is_certified flag even if certificate already exists
+                UserTraining::where('user_id', $this->userId)
+                    ->where('module_id', $this->moduleId)
+                    ->update(['is_certified' => true]);
                 return;
             }
 
@@ -86,6 +91,11 @@ class GenerateCertificateJob implements ShouldQueue
             $certificate = Certificate::createForUser($this->userId, $this->moduleId);
 
             if ($certificate) {
+                // Update is_certified flag after successfully creating certificate
+                UserTraining::where('user_id', $this->userId)
+                    ->where('module_id', $this->moduleId)
+                    ->update(['is_certified' => true]);
+
                 Log::info('Certificate generated successfully', [
                     'user_id' => $this->userId,
                     'module_id' => $this->moduleId,

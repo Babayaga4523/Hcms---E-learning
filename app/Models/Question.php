@@ -56,6 +56,30 @@ class Question extends Model
         'hard' => 7,
     ];
 
+    protected $appends = ['image_url_full'];
+
+    /**
+     * Accessor: Convert relative image path to full URL
+     * This automatically converts "questions/quiz_34_xxx.jpg" to "http://domain/storage/questions/quiz_34_xxx.jpg"
+     * Works for any environment (localhost, production, etc)
+     */
+    public function getImageUrlFullAttribute(): ?string
+    {
+        if (!($this->attributes['image_url'] ?? false)) {
+            return null;
+        }
+        
+        $imagePath = $this->attributes['image_url'];
+        
+        // If already a full URL, return as-is
+        if (str_starts_with($imagePath, 'http://') || str_starts_with($imagePath, 'https://')) {
+            return $imagePath;
+        }
+        
+        // Convert relative path to asset URL
+        return asset('storage/' . $imagePath);
+    }
+
     /**
      * Relasi ke Module (untuk backward compatibility)
      */

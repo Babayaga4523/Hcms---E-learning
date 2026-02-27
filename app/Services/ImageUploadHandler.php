@@ -116,15 +116,18 @@ class ImageUploadHandler
                 return null;
             }
 
-            $url = $disk->url($path);
+            // IMPORTANT: Return relative path only, NOT hardcoded URL
+            // This allows frontend/accessor to build proper URL for any environment
+            $relativePath = $this->folder . '/' . $filename;  // e.g., "questions/quiz_34_1770888953_698d9ef93f981.jpg"
+            
             Log::info('Image uploaded successfully', [
                 'filename' => $filename,
-                'url' => $url,
+                'relative_path' => $relativePath,
                 'size' => $disk->size($path),
                 'context' => $context
             ]);
 
-            return $url;
+            return $relativePath;
 
         } catch (\Exception $e) {
             Log::error('Image upload exception', [

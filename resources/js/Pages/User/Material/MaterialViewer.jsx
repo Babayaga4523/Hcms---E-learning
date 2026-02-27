@@ -2,13 +2,15 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Head, Link, router } from '@inertiajs/react';
 import showToast from '@/Utils/toast';
 import { motion, AnimatePresence } from 'framer-motion';
+import axiosInstance from '@/Services/axiosInstance';
+import ExcelService from '@/Services/ExcelService';
+import { API_ENDPOINTS } from '@/Config/api';
 import { 
     ArrowLeft, ChevronRight, ChevronLeft, CheckCircle2, 
     PlayCircle, FileText, Lock, Menu, X, Download, 
     Maximize2, Minimize2, Share2, Sparkles, Play, Pause, 
     Volume2, VolumeX, SkipBack, SkipForward
 } from 'lucide-react';
-import axios from 'axios';
 
 // --- Wondr Style System ---
 const WondrStyles = () => (
@@ -370,50 +372,39 @@ const ExcelViewer = ({ url, title }) => {
     useEffect(() => {
         const loadExcel = async () => {
             try {
-                // Load SheetJS library dynamically
-                const script = document.createElement('script');
-                script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-                script.async = true;
-                script.onload = async () => {
-                    try {
-                        const response = await fetch(url, {
-                            method: 'GET',
-                            credentials: 'include', // Include auth cookies
-                            headers: {
-                                'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel'
-                            }
-                        });
-                        
-                        if (!response.ok) {
-                            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                        }
-                        
-                        const arrayBuffer = await response.arrayBuffer();
-                        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-                        
-                        setSheets(workbook.SheetNames);
-                        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-                        const jsonData = XLSX.utils.sheet_to_json(firstSheet);
-                        setData(jsonData);
-                        setLoading(false);
-                    } catch (fetchErr) {
-                        console.error('Error fetching Excel:', fetchErr);
-                        setError(true);
-                        setLoading(false);
+                // Load SheetJS library (cached on first load, reused on subsequent loads)
+                const XLSX = await ExcelService.loadSheetJS();
+                
+                // Fetch the Excel file
+                const response = await fetch(url, {
+                    method: 'GET',
+                    credentials: 'include', // Include auth cookies
+                    headers: {
+                        'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel'
                     }
-                };
-                script.onerror = () => {
-                    console.error('Error loading SheetJS library');
-                    setError(true);
-                    setLoading(false);
-                };
-                document.head.appendChild(script);
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const arrayBuffer = await response.arrayBuffer();
+                const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+                
+                setSheets(workbook.SheetNames);
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+                setData(jsonData);
+                setLoading(false);
+                
             } catch (err) {
-                console.error('Error loading Excel:', err);
+                console.error('[ExcelViewer] Error loading Excel file:', err);
                 setError(true);
                 setLoading(false);
+                showToast(`Failed to load Excel file: ${err.message}`, 'error');
             }
         };
+
         loadExcel();
     }, [url]);
 
@@ -636,7 +627,7 @@ export default function MaterialViewer({ auth, trainingId, materialId }) {
     const loadMaterialData = async () => {
         try {
             setLoading(true);
-            const response = await axios.get(`/api/training/${trainingId}/material/${materialId}`);
+            const response = await axiosInstance.get(API_ENDPOINTS.MATERIAL_CONTENT(trainingId, materialId));
             
             setTraining(response.data.training);
             setMaterial(response.data.material);
@@ -655,10 +646,16 @@ export default function MaterialViewer({ auth, trainingId, materialId }) {
     const handleMarkComplete = async () => {
         if (isCompleted) return;
         
+        // Check if this is a virtual material (not trackable)
+        if (material.is_virtual) {
+            showToast('Materi referensi ini tidak dapat ditandai selesai. Gunakan materi pembelajaran resmi untuk melacak progres.', 'info');
+            return;
+        }
+        
         try {
             setActionLoading(true);
 
-            const res = await axios.post(`/api/training/${trainingId}/material/${materialId}/complete`);
+            const res = await axiosInstance.post(API_ENDPOINTS.MATERIAL_MARK_COMPLETE(trainingId, materialId));
             setIsCompleted(true);
             setConfetti(true);
 
@@ -978,15 +975,20 @@ export default function MaterialViewer({ auth, trainingId, materialId }) {
                         {!currentIsCompleted ? (
                             <button 
                                 onClick={handleMarkComplete}
-                                disabled={actionLoading}
-                                className="px-4 sm:px-5 py-2 bg-[#D6F84C] hover:bg-[#c2e43c] text-[#002824] rounded-lg font-bold shadow-lg transition hover:scale-105 flex items-center gap-2 disabled:opacity-50 text-sm"
+                                disabled={actionLoading || material.is_virtual}
+                                title={material.is_virtual ? "Materi referensi ini tidak dapat ditandai selesai" : "Tandai materi sebagai selesai"}
+                                className={`px-4 sm:px-5 py-2 rounded-lg font-bold shadow-lg transition flex items-center gap-2 text-sm ${
+                                    material.is_virtual 
+                                        ? 'bg-slate-300 text-slate-600 cursor-not-allowed opacity-50'
+                                        : 'bg-[#D6F84C] hover:bg-[#c2e43c] text-[#002824] hover:scale-105 disabled:opacity-50'
+                                }`}
                             >
                                 {actionLoading ? (
-                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-[#002824] border-t-transparent" />
+                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent" />
                                 ) : (
                                     <>
                                         <CheckCircle2 size={16} /> 
-                                        <span className="hidden sm:inline">Selesai</span>
+                                        <span className="hidden sm:inline">{material.is_virtual ? 'Referensi' : 'Selesai'}</span>
                                     </>
                                 )}
                             </button>
